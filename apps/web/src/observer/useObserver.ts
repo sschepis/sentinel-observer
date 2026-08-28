@@ -3,6 +3,16 @@ import type { SemanticObserverState } from '@sschepis/sentient-core';
 import { ObserverSession, type ObserverSessionState } from './engine';
 
 /**
+ * Ambient priming stimulus.
+ *
+ * A freshly initialized observer has an unexcited oscillator field, which is
+ * HONESTLY all zeros — but a silent, dead dashboard is useless. Priming is a
+ * real input (a starter text excitation), exactly like a resting baseline.
+ * The values shown afterwards are the real physics of that excitation.
+ */
+const PRIMING_TEXT = 'coherence, resonance, consciousness, structure, harmony, wisdom, truth, love';
+
+/**
  * React binding for an ObserverSession.
  *
  * Explicit degradation contract (inherited from the core): the status machine
@@ -12,7 +22,7 @@ import { ObserverSession, type ObserverSessionState } from './engine';
 export function useObserver(): ObserverSessionState & {
   start: () => Promise<void>;
   stop: () => void;
-  processInput: (text: string) => void;
+  excite: (text: string) => void;
 } {
   const sessionRef = useRef<ObserverSession | null>(null);
   const [status, setStatus] = useState<ObserverSessionState['status']>('idle');
@@ -32,6 +42,9 @@ export function useObserver(): ObserverSessionState & {
     setError(null);
     try {
       await session.initialize();
+      // Prime the field with a real stimulus so the dashboard is alive from
+      // the first tick, then let decay physics do its work.
+      session.processInput(PRIMING_TEXT);
       const initial = session.state();
       setMetrics(initial);
       setStatus(initial.kernel.degraded ? 'degraded' : 'ready');
@@ -51,9 +64,12 @@ export function useObserver(): ObserverSessionState & {
 
   useEffect(() => () => stop(), [stop]);
 
-  const processInput = useCallback((text: string) => {
-    sessionRef.current?.processInput(text);
-  }, []);
+  const excite = useCallback((text: string) => {
+    const session = sessionRef.current;
+    if (session === null || (status !== 'ready' && status !== 'degraded')) return;
+    session.processInput(text);
+    setMetrics(session.state());
+  }, [status]);
 
   return {
     status,
@@ -62,6 +78,6 @@ export function useObserver(): ObserverSessionState & {
     kernelLoaded: metrics?.kernel.loaded ?? false,
     start,
     stop,
-    processInput
+    excite
   };
 }

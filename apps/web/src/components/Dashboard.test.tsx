@@ -1,11 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { Dashboard } from './Dashboard';
+
+const noop = () => {};
 
 describe('Dashboard', () => {
   it('renders the degraded banner and never fabricates metrics', () => {
     render(
-      <Dashboard status="degraded" error={null} metrics={null} onStart={() => {}} onStop={() => {}} />
+      <Dashboard status="degraded" error={null} metrics={null} onStart={noop} onStop={noop} onExcite={noop} />
     );
     expect(screen.getByRole('alert').textContent).toMatch(/degraded mode/i);
     // All six metric cards render placeholders — none fabricate numbers.
@@ -34,10 +36,38 @@ describe('Dashboard', () => {
       kernel: { loaded: true, degraded: false }
     } as never;
     render(
-      <Dashboard status="ready" error={null} metrics={metrics} onStart={() => {}} onStop={() => {}} />
+      <Dashboard status="ready" error={null} metrics={metrics} onStart={noop} onStop={noop} onExcite={noop} />
     );
     expect(screen.getByText('0.834')).toBeDefined();
     expect(screen.getByText('2.100')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('delivers excitation input to the onExcite callback when running', () => {
+    let excited: string | null = null;
+    render(
+      <Dashboard
+        status="ready"
+        error={null}
+        metrics={null}
+        onStart={noop}
+        onStop={noop}
+        onExcite={(text) => {
+          excited = text;
+        }}
+      />
+    );
+    fireEvent.change(screen.getByPlaceholderText(/excite the observer/i), {
+      target: { value: 'prime resonance' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Excite' }));
+    expect(excited).toBe('prime resonance');
+  });
+
+  it('hides the excitation form when the observer is not running', () => {
+    render(
+      <Dashboard status="idle" error={null} metrics={null} onStart={noop} onStop={noop} onExcite={noop} />
+    );
+    expect(screen.queryByPlaceholderText(/excite the observer/i)).toBeNull();
   });
 });

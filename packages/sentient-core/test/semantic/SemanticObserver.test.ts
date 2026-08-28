@@ -64,6 +64,50 @@ describe('SemanticObserver', () => {
     observer.dispose();
   });
 
+  it('cold observer is honestly zero; excitation makes it live; decay returns it to rest', async () => {
+    const observer = new SemanticObserver({ kernel, primeCount: 16, gridSize: 32 });
+    await observer.initialize();
+
+    // A fresh, unexcited observer has no active primes: coherence, entropy,
+    // and the order parameter are all genuinely zero. This is real physics,
+    // not a bug — and it is exactly why consumers must excite the field.
+    const cold = observer.getState();
+    expect(cold.activePrimeCount).toBe(0);
+    expect(cold.coherence).toBe(0);
+    expect(cold.entropy).toBe(0);
+    expect(cold.orderParameter).toBe(0);
+
+    // Excitation brings the field to life: active primes appear and the
+    // coherence/entropy/order-parameter become non-trivial.
+    observer.processInput('prime resonance coherence consciousness', 0.6);
+    observer.tick(0.016);
+    const excited = observer.getState();
+    expect(excited.activePrimeCount).toBeGreaterThan(0);
+    expect(excited.coherence).toBeGreaterThan(0);
+    expect(excited.entropy).toBeGreaterThan(0);
+    expect(excited.orderParameter).toBeGreaterThan(0);
+    expect(excited.holographicEnergy).toBeGreaterThan(0);
+    const peakEnergy = excited.holographicEnergy;
+
+    // Without further excitation the field relaxes: energy decays toward
+    // rest. (Amplitudes decay per tick; after enough ticks the peak is
+    // strictly above the current value.)
+    let last = excited.holographicEnergy;
+    let decayed = false;
+    for (let i = 0; i < 200 && !decayed; i++) {
+      observer.tick(0.016);
+      const current = observer.getState().holographicEnergy;
+      if (current < last) {
+        decayed = true;
+      }
+      last = current;
+    }
+    expect(decayed).toBe(true);
+    expect(observer.getState().holographicEnergy).toBeLessThan(peakEnergy);
+
+    observer.dispose();
+  });
+
   it('passes the fail-closed safety gate with real metrics', async () => {
     const observer = new SemanticObserver({ kernel, momentThreshold: 0.9 });
     await observer.initialize();

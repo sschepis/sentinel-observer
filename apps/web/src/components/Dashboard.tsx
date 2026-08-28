@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import type { SemanticObserverState } from '@sschepis/sentient-core';
 import type { ObserverStatus } from '../observer/engine';
 
@@ -7,6 +9,7 @@ export interface DashboardProps {
   metrics: SemanticObserverState | null;
   onStart: () => void;
   onStop: () => void;
+  onExcite: (text: string) => void;
 }
 
 function MetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
@@ -24,11 +27,20 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
  * The degraded banner is a first-class citizen: when the optional tinyaleph
  * kernel cannot load, the app must say so, never fake numbers.
  */
-export function Dashboard({ status, error, metrics, onStart, onStop }: DashboardProps) {
+export function Dashboard({ status, error, metrics, onStart, onStop, onExcite }: DashboardProps) {
   const running = status === 'ready' || status === 'degraded';
   const coherence = metrics?.coherence;
   const entropy = metrics?.entropy;
   const orderParameter = metrics?.orderParameter;
+  const [excitation, setExcitation] = useState('');
+
+  const submitExcitation = (event: FormEvent) => {
+    event.preventDefault();
+    const text = excitation.trim();
+    if (text.length > 0) {
+      onExcite(text);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -84,6 +96,24 @@ export function Dashboard({ status, error, metrics, onStart, onStop }: Dashboard
           <p className="font-semibold">Observer failed to start</p>
           <p className="mt-1 text-sm font-mono">{error}</p>
         </div>
+      )}
+
+      {running && (
+        <form onSubmit={submitExcitation} className="mb-6 flex gap-2">
+          <input
+            type="text"
+            value={excitation}
+            onChange={(e) => setExcitation(e.target.value)}
+            placeholder="Excite the observer — type what you are learning about…"
+            className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+          >
+            Excite
+          </button>
+        </form>
       )}
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
