@@ -44,6 +44,7 @@
 
 import { randomUUID } from '../common/random';
 import { SedenionMemoryField } from './SedenionMemoryField';
+import type { TraceLike, MemoryBank, RecallResultLike } from './CompactMemoryBank';
 import { HolographicMemory } from './HolographicMemory';
 import { clampRange, requireFinite, safeDivide } from './numeric';
 
@@ -52,25 +53,8 @@ import { clampRange, requireFinite, safeDivide } from './numeric';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** A stored memory trace. */
-export interface MemoryTrace {
-  readonly id: string;
-  readonly content: string;
-  readonly smf: SedenionMemoryField;
-  readonly primes: readonly number[];
-  readonly amplitudes: readonly number[];
+export interface MemoryTrace extends TraceLike {
   readonly pattern: HolographicMemory;
-  readonly createdAt: number;
-  lastAccessAt: number;
-  accessCount: number;
-  /** Decaying retrieval strength in [0, 1]. */
-  strength: number;
-  /** Caller-declared importance in [0, 1]; protects a trace from pruning. */
-  importance: number;
-  /** True once the consolidation rule has fired. */
-  consolidated: boolean;
-  /** Normalized SMF entropy at the last refresh, in [0, 1]. */
-  smfEntropy: number;
-  readonly metadata: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -117,13 +101,15 @@ export interface RecallQuery {
 
 /** Scored recall hit. */
 export interface RecallResult {
-  trace: MemoryTrace;
+  trace: TraceLike;
   /** Combined weighted score. */
   score: number;
   /** SMF cosine similarity in [-1, 1]. */
   smfScore: number;
   /** Phase-aware holographic correlation in [-1, 1]. */
   holographicScore: number;
+  /** Prime-amplitude overlap in [0, 1] (0 for the full bank). */
+  overlapScore: number;
   consolidated: boolean;
 }
 
@@ -182,7 +168,7 @@ const DEFAULTS = {
   minLockStrength: 0.5
 } as const;
 
-export class SemanticMemoryBank {
+export class SemanticMemoryBank implements MemoryBank {
   private readonly traces = new Map<string, MemoryTrace>();
   private readonly config: Required<Omit<SemanticMemoryBankOptions, 'primes'>> & { primes?: readonly number[] };
   private readonly gridSize: number;
@@ -368,6 +354,7 @@ export class SemanticMemoryBank {
         score: requireFinite(safeDivide(weighted, weightTotal, 0), 'recall.score'),
         smfScore,
         holographicScore,
+        overlapScore: 0,
         consolidated: trace.consolidated
       });
     }
@@ -377,7 +364,7 @@ export class SemanticMemoryBank {
 
     // Accessing a trace reinforces it and re-evaluates consolidation with the
     // trace's REAL entropy.
-    for (const hit of hits) this.touch(hit.trace);
+    for (const hit of hits) this.touch(hit.trace as MemoryTrace);
     for (const hit of hits) hit.consolidated = hit.trace.consolidated;
 
     return hits;

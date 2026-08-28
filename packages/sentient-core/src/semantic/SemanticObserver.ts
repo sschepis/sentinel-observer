@@ -48,6 +48,7 @@ import {
   type MemoryTrace,
   type RecallResult
 } from './SemanticMemoryBank';
+import { CompactMemoryBank, type MemoryBank, type TraceLike } from './CompactMemoryBank';
 import {
   SafetyMonitor,
   type SafetyCheckResult,
@@ -99,6 +100,13 @@ export interface SemanticObserverOptions {
    * how a curriculum gives every word a real, auditable prime signature.
    */
   vocabulary?: Record<string, readonly number[]>;
+  /**
+   * Memory bank kind (default 'full').
+   *
+   * 'compact' stores lean traces (~400 bytes, no per-trace holograms) with
+   * candidate prefiltering — the scale substrate for thousands of words.
+   */
+  memoryMode?: 'full' | 'compact';
 }
 
 /** A coherence-driven moment. */
@@ -170,13 +178,13 @@ export type SemanticInput = string | readonly number[];
 export class SemanticObserver implements Initializable {
   private readonly kernel: SemanticKernel;
   private readonly options: Required<
-    Omit<SemanticObserverOptions, 'kernel' | 'safety' | 'vocabulary'>
+    Omit<SemanticObserverOptions, 'kernel' | 'safety' | 'vocabulary' | 'memoryMode'>
   > & { safety?: SafetyMonitor };
   private readonly vocabulary: Readonly<Record<string, readonly number[]>>;
 
   private readonly field: PrimeOscillatorField;
   private readonly smf = SedenionMemoryField.identity();
-  private readonly memory: SemanticMemoryBank;
+  private readonly memory: MemoryBank;
   private hologram: HolographicMemory;
   private previousHologram: HolographicMemory | null = null;
   private readonly safety: SafetyMonitor;
@@ -271,11 +279,14 @@ export class SemanticObserver implements Initializable {
       kernel: this.kernel
     });
 
-    this.memory = new SemanticMemoryBank({
-      capacity: this.options.memoryCapacity,
-      gridSize: this.options.gridSize,
-      primes: undefined // basis is chosen per encode call from the field primes
-    });
+    this.memory =
+      options.memoryMode === 'compact'
+        ? new CompactMemoryBank({ capacity: this.options.memoryCapacity })
+        : new SemanticMemoryBank({
+            capacity: this.options.memoryCapacity,
+            gridSize: this.options.gridSize,
+            primes: undefined // basis is chosen per encode call from the field primes
+          });
 
     this.hologram = new HolographicMemory({ gridSize: this.options.gridSize });
     this.safety = options.safety ?? SafetyMonitor.forObserver();
@@ -519,7 +530,7 @@ export class SemanticObserver implements Initializable {
    * Store the current orientation as a memory trace.
    * Returns the created trace (null when the field is quiescent).
    */
-  storeMemory(content: string): MemoryTrace | null {
+  storeMemory(content: string): TraceLike | null {
     this.requireInitialized();
     const state = this.field.getState();
     if (state.totalAmplitude <= 0) return null;
@@ -889,7 +900,7 @@ export class SemanticObserver implements Initializable {
   }
 
   /** The memory bank. */
-  getMemoryBank(): SemanticMemoryBank {
+  getMemoryBank(): MemoryBank {
     return this.memory;
   }
 

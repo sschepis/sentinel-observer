@@ -48,23 +48,23 @@ const memorySignal: ObserverSignal = {
 
 describe('TeacherPanel', () => {
   it('asks the user to start the observer when no teacher exists', () => {
-    render(<TeacherPanel teacher={null} diarySignals={[]} persistenceKind="memory" restoredCount={0} />);
+    render(<TeacherPanel teacher={null} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
     expect(screen.getByText(/Start the observer first/i)).toBeDefined();
   });
 
   it('renders the vocabulary list with honest states', () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
     expect(screen.getByText(/apple/)).toBeDefined();
     expect(screen.getByText('learning')).toBeDefined();
   });
 
   it("renders the observer's diary entries in the first person", () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[memorySignal]} persistenceKind="memory" restoredCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[memorySignal]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
     expect(screen.getByText(/I learned "apple: a fruit" today\./)).toBeDefined();
   });
 
   it('shows the empty diary prompt without signals', () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
     expect(screen.getByText(/The diary is empty/)).toBeDefined();
   });
 });

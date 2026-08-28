@@ -17,6 +17,8 @@ export interface TeacherPanelProps {
   persistenceKind: PersistenceKind;
   /** Traces restored from persistence this session. */
   restoredCount: number;
+  /** Stale (pre-encoding) traces detected and reset for re-teaching. */
+  staleCount: number;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface TeacherPanelProps {
  * observer's mind — its word states, its answers, its diary — and drives the
  * loop with teach/ask/grade controls.
  */
-export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredCount }: TeacherPanelProps) {
+export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredCount, staleCount }: TeacherPanelProps) {
   // tick is a refresh counter: bumping it recomputes the derived lists.
   const [tick, setTick] = useState(0);
   const [current, setCurrent] = useState<{ mode: 'quiz'; question: QuizAnswer } | null>(null);
@@ -140,6 +142,9 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
               ? 'progress is saved across sessions'
               : 'session-only: no persistent storage available'}
             {restoredCount > 0 ? ` · ${restoredCount} memories restored from previous sessions` : ''}
+            {staleCount > 0
+              ? ` · ${staleCount} stale memories detected — the observer will re-learn them under the new encoding`
+              : ''}
           </p>
         </div>
         <div className="flex gap-2">
@@ -263,8 +268,8 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
             </p>
           ) : (
             <ul className="space-y-2 text-sm">
-              {diary.map(({ entry, signal }) => (
-                <li key={signal.at} className="flex gap-2">
+              {diary.map(({ entry, signal }, index) => (
+                <li key={`${signal.kind}-${signal.at}-${index}`} className="flex gap-2">
                   <span className="shrink-0 font-mono text-xs text-slate-500">
                     {signalTimestamp(signal)}
                   </span>

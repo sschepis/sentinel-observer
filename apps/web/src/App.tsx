@@ -8,13 +8,14 @@ import { createPersistenceStore } from './persistence/store';
 import { useObserver } from './observer/useObserver';
 
 /**
- * Phase-2 encoding: a 32-prime field and whole-word prime signatures for the
- * deck. Words excite their ASSIGNED primes (audited unique), which is what
- * lets the observer discriminate 'apple' from 'apply'.
+ * Phase-2/3 encoding: a 32-prime field, whole-word prime signatures for the
+ * deck, and the COMPACT memory bank (lean traces + prefiltered recall — the
+ * scale substrate measured at 99% accuracy over 500 words).
  */
 const OBSERVER_OPTIONS = {
   primeCount: 32,
   gridSize: 64,
+  memoryMode: 'compact' as const,
   vocabulary: deckVocabulary(DECK_100, PRIME_SPACE)
 };
 
@@ -25,6 +26,7 @@ export default function App() {
     useObserver(persistence.current, OBSERVER_OPTIONS);
   const [tab, setTab] = useState<'mind' | 'school'>('mind');
   const [restored, setRestored] = useState(0);
+  const [staleCount, setStaleCount] = useState(0);
 
   // The teacher exists only when the observer (the learner) is running.
   const teacher = useMemo(
@@ -39,10 +41,14 @@ export default function App() {
     if (teacher !== null && (status === 'ready' || status === 'degraded') && !restoreGuard.current) {
       restoreGuard.current = true;
       void teacher.restoreFromPersistence().then(
-        (count) => setRestored(count),
+        (result) => {
+          setRestored(result.restored);
+          setStaleCount(result.stale);
+        },
         (reason) => {
           console.warn('learning-record restore failed — starting fresh', reason);
           setRestored(0);
+          setStaleCount(0);
         }
       );
     }
@@ -84,11 +90,12 @@ export default function App() {
         />
       ) : (
         <TeacherPanel
-          key={restored}
+          key={`${restored}-${staleCount}`}
           teacher={teacher}
           diarySignals={diarySignals}
           persistenceKind={persistence.current.kind}
           restoredCount={restored}
+          staleCount={staleCount}
         />
       )}
     </div>

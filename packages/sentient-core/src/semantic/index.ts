@@ -109,6 +109,15 @@ export type {
 
 // Semantic memory bank
 export { SemanticMemoryBank, type SerializedTrace } from './SemanticMemoryBank';
+export {
+  CompactMemoryBank,
+  type CompactMemoryBankOptions,
+  type CompactTrace,
+  type TraceLike,
+  type MemoryBank,
+  type RecallResultLike,
+  type SerializedTraceData
+} from './CompactMemoryBank';
 export type {
   MemoryTrace,
   StoreOptions,

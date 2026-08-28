@@ -13,7 +13,8 @@ import {
   SemanticKernel,
   SemanticObserver,
   SemanticObserverConfigError,
-  type SafetyMonitor
+  type SafetyMonitor,
+  type MemoryTrace
 } from '../../src/semantic';
 import { freshKernel } from './helpers';
 
@@ -217,7 +218,7 @@ describe('SemanticObserver', () => {
 
     const trace = observer.storeMemory('wide-pattern memory');
     expect(trace).not.toBeNull();
-    expect(trace!.pattern.primes).toHaveLength(32);
+    expect((trace as MemoryTrace).pattern.primes).toHaveLength(32);
     expect(trace!.primes).toHaveLength(32);
 
     const hits = observer.getMemoryBank().recall(

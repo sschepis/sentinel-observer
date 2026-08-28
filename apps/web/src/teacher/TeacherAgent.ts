@@ -86,6 +86,31 @@ function sleep(ms: number): Promise<void> {
 /** Strength below which a trace NEEDS review (the curiosity threshold). */
 export const REVIEW_STRENGTH_THRESHOLD = 0.6;
 
+/**
+ * Detect a pre-focused-encoding trace by its DATA:
+ *  - a near-identity SMF (norm below epsilon — it imprinted nothing), or
+ *  - a FLAT amplitude profile: most of the basis primes carry meaningful
+ *    excitation (the old lesson-text excitation spread across everything).
+ *
+ * A focused trace excites only the word's signature primes — a small
+ * fraction of the basis — so the active-prime ratio cleanly separates the
+ * two eras regardless of any serialization marker.
+ */
+function isStaleEncoding(data: { smf: number[]; amplitudes: number[] }): boolean {
+  let smfNormSq = 0;
+  for (const v of data.smf) {
+    if (Number.isFinite(v)) smfNormSq += v * v;
+  }
+  if (Math.sqrt(smfNormSq) < 0.05) return true;
+
+  if (data.amplitudes.length === 0) return true;
+  let active = 0;
+  for (const amplitude of data.amplitudes) {
+    if (Number.isFinite(amplitude) && amplitude > 0.05) active += 1;
+  }
+  return active / data.amplitudes.length > 0.6;
+}
+
 export class TeacherAgent {
   private readonly states = new Map<string, WordState>();
   private autoLoopToken = 0;
@@ -114,18 +139,31 @@ export class TeacherAgent {
   /**
    * Restore the observer's learning record from persistence: memory traces
    * go back into its memory bank (same ids, strengths and counters), word
-   * states rebind to them. Returns the number of traces restored.
+   * states rebind to them.
+   *
+   * Encoding-epoch migration: traces from before the focused-encoding era
+   * carry FLAT amplitude profiles (the old lesson-text excitation spread
+   * across the whole basis) and near-identity SMFs — restoring them would
+   * poison recall. The detector inspects the DATA, not a marker (a marker
+   * can be re-badged by a later persist; flat data cannot hide). Stale
+   * words are reset to 'new' so the teacher re-teaches them.
    */
-  async restoreFromPersistence(): Promise<number> {
-    if (this.persistence === null) return 0;
+  async restoreFromPersistence(): Promise<{ restored: number; stale: number }> {
+    if (this.persistence === null) return { restored: 0, stale: 0 };
     const [traces, states] = await Promise.all([
       this.persistence.loadTraces(),
       this.persistence.loadWordStates()
     ]);
 
-    let restored = 0;
     const bank = this.session.observer.getMemoryBank();
+    const staleTraceIds = new Set<string>();
+    let restored = 0;
+
     for (const data of traces) {
+      if (isStaleEncoding(data)) {
+        staleTraceIds.add(data.id);
+        continue;
+      }
       const trace = bank.restoreTrace(data);
       if (trace !== null) restored += 1;
     }
@@ -134,6 +172,17 @@ export class TeacherAgent {
       for (const state of states) {
         const current = this.states.get(state.word.word);
         if (!current) continue;
+        // Words bound to stale (pre-encoding) traces are re-learned from
+        // scratch; their historical grade counts reset with them.
+        if (state.traceId !== null && staleTraceIds.has(state.traceId)) {
+          current.traceId = null;
+          current.taughtAt = null;
+          current.lastAskedAt = null;
+          current.lastGrade = null;
+          current.successes = 0;
+          current.failures = 0;
+          continue;
+        }
         current.traceId = state.traceId;
         current.taughtAt = state.taughtAt;
         current.lastAskedAt = state.lastAskedAt;
@@ -142,7 +191,7 @@ export class TeacherAgent {
         current.failures = state.failures;
       }
     }
-    return restored;
+    return { restored, stale: staleTraceIds.size };
   }
 
   /**

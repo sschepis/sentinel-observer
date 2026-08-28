@@ -4,7 +4,7 @@ import {
   type SemanticObserverState,
   type ObserverSignal,
   type StimulusResult,
-  type MemoryTrace,
+  type TraceLike,
   type RecallResult
 } from '@sschepis/sentient-core';
 
@@ -67,7 +67,7 @@ export class ObserverSession {
    * Store the current orientation as a memory trace — the observer's way of
    * committing what it was just taught to long-term memory.
    */
-  storeMemory(content: string): MemoryTrace | null {
+  storeMemory(content: string): TraceLike | null {
     return this.observer.storeMemory(content);
   }
 
