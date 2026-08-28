@@ -199,14 +199,44 @@ describe('OpenAICompatProvider endpoint handling', () => {
 
 describe('resolveEndpoint', () => {
   it('derives chat/responses URLs for base, chat, and responses endpoints', () => {
-    expect(resolveEndpoint('http://localhost:1234/v1')).toEqual({
-      chatUrl: 'http://localhost:1234/v1/chat/completions',
-      responsesUrl: 'http://localhost:1234/v1/responses',
-      style: 'chat'
-    });
+    const resolved = resolveEndpoint('http://localhost:1234/v1');
+    expect(resolved.chatUrl).toBe('http://localhost:1234/v1/chat/completions');
+    expect(resolved.responsesUrl).toBe('http://localhost:1234/v1/responses');
+    expect(resolved.style).toBe('chat');
     expect(resolveEndpoint('http://localhost:1234/v1/chat/completions').chatUrl).toBe(
       'http://localhost:1234/v1/chat/completions'
     );
     expect(resolveEndpoint('http://localhost:1234/v1/responses').style).toBe('responses');
+  });
+});
+
+describe('LM Studio native v1 API', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+  });
+
+  it('posts to /api/v1/chat for the native endpoint and parses its choices envelope', async () => {
+    const seen: string[] = [];
+    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' } }] }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/api/v1/chat', apiKey: '', model: 'test' });
+    const content = await provider.complete('test prompt');
+
+    expect(seen).toEqual(['http://localhost:1234/api/v1/chat']);
+    expect(content).toContain('apple');
+  });
+
+  it('derives the native URL from a bare /api/v1 base', () => {
+    const resolved = resolveEndpoint('http://localhost:1234/api/v1');
+    expect(resolved.style).toBe('native');
+    expect(resolved.nativeUrl).toBe('http://localhost:1234/api/v1/chat');
   });
 });

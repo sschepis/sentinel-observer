@@ -71,13 +71,16 @@ export class OpenAICompatProvider implements ChaperoneProvider {
 
   async complete(prompt: string, options?: { signal?: AbortSignal }): Promise<string> {
     const target = resolveEndpoint(this.settings.endpoint);
-    const chat = async (style: 'chat' | 'responses') => {
-      const url = style === 'chat' ? target.chatUrl : target.responsesUrl;
+    const request = async (style: 'chat' | 'native' | 'responses') => {
+      // LM Studio's native /api/v1/chat accepts the SAME body shape as the
+      // OpenAI chat endpoint ({model, messages, temperature}); the Responses
+      // API wants {model, input}.
+      const url = style === 'chat' ? target.chatUrl : style === 'native' ? target.nativeUrl : target.responsesUrl;
       const body =
-        style === 'chat'
+        style === 'responses'
           ? {
               model: this.settings.model,
-              messages: [
+              input: [
                 {
                   role: 'system',
                   content:
@@ -89,7 +92,7 @@ export class OpenAICompatProvider implements ChaperoneProvider {
             }
           : {
               model: this.settings.model,
-              input: [
+              messages: [
                 {
                   role: 'system',
                   content:
@@ -111,13 +114,13 @@ export class OpenAICompatProvider implements ChaperoneProvider {
       });
     };
 
-    let response = await chat(target.style);
-    if (!response.ok && target.style === 'chat') {
-      // A server that speaks the Responses API rejects a chat body with
-      // "'input' is required" — retry once with the responses shape.
+    let response = await request(target.style);
+    if (!response.ok && (target.style === 'chat' || target.style === 'native')) {
+      // A server that speaks the Responses API rejects a chat/messages body
+      // with "'input' is required" — retry once with the responses shape.
       const errorBody = await response.text().catch(() => '');
       if (/input.*required|invalid_union/i.test(errorBody)) {
-        response = await chat('responses');
+        response = await request('responses');
       }
     }
 
@@ -125,10 +128,12 @@ export class OpenAICompatProvider implements ChaperoneProvider {
       throw new Error(`LLM endpoint returned ${response.status}`);
     }
     const payload = (await response.json()) as
-      | { choices?: Array<{ message?: { content?: string } }> }
+      | { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> }
       | { output?: Array<{ content?: Array<{ text?: string }> }> };
+    const chatContent = (payload as { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> }).choices?.[0]
+      ?.message?.content;
     const content =
-      (payload as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ??
+      (typeof chatContent === 'string' ? chatContent : chatContent?.[0]?.text) ??
       (payload as { output?: Array<{ content?: Array<{ text?: string }> }> }).output?.[0]?.content?.[0]?.text ??
       '';
     if (!content) {
@@ -138,20 +143,53 @@ export class OpenAICompatProvider implements ChaperoneProvider {
   }
 }
 
-/** Resolve an endpoint setting into chat/responses URLs and the preferred style. */
+/** Resolve an endpoint setting into chat/native/responses URLs and the preferred style. */
 export function resolveEndpoint(endpoint: string): {
   chatUrl: string;
+  nativeUrl: string;
   responsesUrl: string;
-  style: 'chat' | 'responses';
+  style: 'chat' | 'native' | 'responses';
 } {
   const trimmed = endpoint.trim().replace(/\/+$/, '');
+  // LM Studio native v1 API: /api/v1/chat
+  if (/\/api\/v1\/chat$/.test(trimmed)) {
+    return {
+      chatUrl: trimmed.replace(/\/api\/v1\/chat$/, '/v1/chat/completions'),
+      nativeUrl: trimmed,
+      responsesUrl: trimmed.replace(/\/api\/v1\/chat$/, '/v1/responses'),
+      style: 'native'
+    };
+  }
+  if (/\/api\/v1$/.test(trimmed)) {
+    return {
+      chatUrl: `${trimmed.replace(/\/api\/v1$/, '/v1')}/chat/completions`,
+      nativeUrl: `${trimmed}/chat`,
+      responsesUrl: `${trimmed.replace(/\/api\/v1$/, '/v1')}/responses`,
+      style: 'native'
+    };
+  }
   if (/\/responses$/.test(trimmed)) {
-    return { chatUrl: trimmed.replace(/\/responses$/, '/chat/completions'), responsesUrl: trimmed, style: 'responses' };
+    return {
+      chatUrl: trimmed.replace(/\/responses$/, '/chat/completions'),
+      nativeUrl: trimmed.replace(/\/responses$/, '/api/v1/chat'),
+      responsesUrl: trimmed,
+      style: 'responses'
+    };
   }
   if (/\/chat\/completions$/.test(trimmed)) {
-    return { chatUrl: trimmed, responsesUrl: trimmed.replace(/\/chat\/completions$/, '/responses'), style: 'chat' };
+    return {
+      chatUrl: trimmed,
+      nativeUrl: trimmed.replace(/\/v1\/chat\/completions$/, '/api/v1/chat'),
+      responsesUrl: trimmed.replace(/\/chat\/completions$/, '/responses'),
+      style: 'chat'
+    };
   }
-  return { chatUrl: `${trimmed}/chat/completions`, responsesUrl: `${trimmed}/responses`, style: 'chat' };
+  return {
+    chatUrl: `${trimmed}/chat/completions`,
+    nativeUrl: `${trimmed}/api/v1/chat`,
+    responsesUrl: `${trimmed}/responses`,
+    style: 'chat'
+  };
 }
 
 const DEFINITION_MIN = 5;
