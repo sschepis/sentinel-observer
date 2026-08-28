@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SemanticObserverState, ObserverSignal, StimulusResult } from '@sschepis/sentient-core';
 import { ObserverSession, type ObserverSessionState } from './engine';
+import type { PersistenceStore } from '../persistence/store';
 
 /**
  * Ambient priming stimulus.
@@ -25,7 +26,7 @@ const MAX_DIARY_SIGNALS = 200;
  * distinguishes ready / degraded / error — the UI must render the degraded
  * banner whenever `status === 'degraded'`, and must never fabricate metrics.
  */
-export function useObserver(): ObserverSessionState & {
+export function useObserver(persistence: PersistenceStore | null = null): ObserverSessionState & {
   session: ObserverSession | null;
   start: () => Promise<void>;
   stop: () => void;
@@ -68,10 +69,28 @@ export function useObserver(): ObserverSessionState & {
         setSignals((prev) => [...prev.slice(-(MAX_RECENT_SIGNALS - 1)), signal]);
         if (signal.kind !== 'metric') {
           setDiarySignals((prev) => [...prev.slice(-(MAX_DIARY_SIGNALS - 1)), signal]);
+          if (persistence !== null) {
+            void persistence.appendDiary([signal]).catch(() => {
+              // Persistence failure must never break the observer loop.
+            });
+          }
         }
       });
 
       session.start((next) => setMetrics(next));
+
+      // Restore the observer's diary from previous sessions (new signals
+      // append AFTER the restored entries, preserving order).
+      if (persistence !== null) {
+        void persistence.loadDiary().then((entries) => {
+          if (entries.length > 0) {
+            setDiarySignals((prev) => {
+              const merged = [...entries, ...prev];
+              return merged.slice(-MAX_DIARY_SIGNALS);
+            });
+          }
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');

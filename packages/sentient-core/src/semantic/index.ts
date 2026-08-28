@@ -108,7 +108,7 @@ export type {
 } from './HolographicMemory';
 
 // Semantic memory bank
-export { SemanticMemoryBank } from './SemanticMemoryBank';
+export { SemanticMemoryBank, type SerializedTrace } from './SemanticMemoryBank';
 export type {
   MemoryTrace,
   StoreOptions,

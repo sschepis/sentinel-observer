@@ -1,5 +1,6 @@
 import type { RecallResult } from '@sschepis/sentient-core';
 import type { ObserverSession } from '../observer/engine';
+import type { PersistenceStore } from '../persistence/store';
 import { lessonText, productionCue, recognitionCue, type DeckWord } from './deck';
 
 /**
@@ -54,7 +55,8 @@ export class TeacherAgent {
 
   constructor(
     private readonly session: ObserverSession,
-    deck: readonly DeckWord[]
+    deck: readonly DeckWord[],
+    private readonly persistence: PersistenceStore | null = null
   ) {
     for (const entry of deck) {
       this.states.set(entry.word, {
@@ -69,6 +71,63 @@ export class TeacherAgent {
     }
   }
 
+  /**
+   * Restore the observer's learning record from persistence: memory traces
+   * go back into its memory bank (same ids, strengths and counters), word
+   * states rebind to them. Returns the number of traces restored.
+   */
+  async restoreFromPersistence(): Promise<number> {
+    if (this.persistence === null) return 0;
+    const [traces, states] = await Promise.all([
+      this.persistence.loadTraces(),
+      this.persistence.loadWordStates()
+    ]);
+
+    let restored = 0;
+    const bank = this.session.observer.getMemoryBank();
+    for (const data of traces) {
+      const trace = bank.restoreTrace(data);
+      if (trace !== null) restored += 1;
+    }
+
+    if (states !== null) {
+      for (const state of states) {
+        const current = this.states.get(state.word.word);
+        if (!current) continue;
+        current.traceId = state.traceId;
+        current.taughtAt = state.taughtAt;
+        current.lastAskedAt = state.lastAskedAt;
+        current.lastGrade = state.lastGrade;
+        current.successes = state.successes;
+        current.failures = state.failures;
+      }
+    }
+    return restored;
+  }
+
+  /**
+   * Persist the complete learning record (word states + serialized traces).
+   * Failures are logged, never thrown: a broken store must not break school.
+   */
+  async persistAll(): Promise<void> {
+    if (this.persistence === null) return;
+    try {
+      const bank = this.session.observer.getMemoryBank();
+      const traces = [];
+      for (const state of this.states.values()) {
+        if (state.traceId === null) continue;
+        const data = bank.serializeTrace(state.traceId);
+        if (data !== null) traces.push(data);
+      }
+      await Promise.all([
+        this.persistence.saveWordStates([...this.states.values()]),
+        this.persistence.saveTraces(traces)
+      ]);
+    } catch (error) {
+      console.warn('persistence save failed', error);
+    }
+  }
+
   /** Present a lesson: the observer encodes the word into its field + memory. */
   teach(word: string): TeachResult {
     const state = this.requiredState(word);
@@ -79,6 +138,7 @@ export class TeacherAgent {
     if (trace !== null) {
       state.traceId = trace.id;
       state.taughtAt = Date.now();
+      void this.persistAll();
       return { word: state.word, traceId: trace.id, note: 'stored in the observer\'s memory' };
     }
     return { word: state.word, traceId: null, note: 'field was quiescent — nothing stored' };
@@ -142,6 +202,7 @@ export class TeacherAgent {
     } else {
       state.failures += 1;
     }
+    void this.persistAll();
 
     return { word: state.word, verdict, answer: question.answer, expected, confidence };
   }

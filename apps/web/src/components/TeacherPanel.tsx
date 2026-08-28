@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { TeacherAgent, type GradeResult, type QuizAnswer } from '../teacher/TeacherAgent';
-import { STARTER_DECK } from '../teacher/deck';
 import type { ObserverSignal } from '@sschepis/sentient-core';
+import type { PersistenceKind } from '../persistence/store';
 import { diaryEntry, signalTimestamp } from '../observer/interpreter';
 
 export interface TeacherPanelProps {
@@ -13,6 +13,10 @@ export interface TeacherPanelProps {
    * flooded by the tick loop.
    */
   diarySignals: ObserverSignal[];
+  /** Where the learning record is stored (honest persistence status). */
+  persistenceKind: PersistenceKind;
+  /** Traces restored from persistence this session. */
+  restoredCount: number;
 }
 
 /**
@@ -20,7 +24,7 @@ export interface TeacherPanelProps {
  * observer's mind — its word states, its answers, its diary — and drives the
  * loop with teach/ask/grade controls.
  */
-export function TeacherPanel({ teacher, diarySignals }: TeacherPanelProps) {
+export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredCount }: TeacherPanelProps) {
   // tick is a refresh counter: bumping it recomputes the derived lists.
   const [tick, setTick] = useState(0);
   const [current, setCurrent] = useState<{ mode: 'quiz'; question: QuizAnswer } | null>(null);
@@ -84,6 +88,12 @@ export function TeacherPanel({ teacher, diarySignals }: TeacherPanelProps) {
           <h1 className="text-2xl font-semibold text-slate-100">The Schoolroom</h1>
           <p className="text-sm text-slate-400">
             The teacher teaches, the observer learns. Watch its mind as it acquires English.
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            {persistenceKind === 'indexeddb'
+              ? 'progress is saved across sessions'
+              : 'session-only: no persistent storage available'}
+            {restoredCount > 0 ? ` · ${restoredCount} memories restored from previous sessions` : ''}
           </p>
         </div>
         <div className="flex gap-2">

@@ -73,6 +73,30 @@ export interface MemoryTrace {
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * Plain-data snapshot of a trace for persistence.
+ *
+ * Note: oscillator PHASES are not part of a trace (they are session state);
+ * a restored trace re-encodes its holographic pattern from the stored
+ * amplitudes, so content, SMF, strength and identity survive exactly while
+ * holographic correlation is equivalent-but-not-identical.
+ */
+export interface SerializedTrace {
+  id: string;
+  content: string;
+  smf: number[];
+  primes: number[];
+  amplitudes: number[];
+  createdAt: number;
+  lastAccessAt: number;
+  accessCount: number;
+  strength: number;
+  importance: number;
+  consolidated: boolean;
+  smfEntropy: number;
+  metadata: Record<string, unknown>;
+}
+
 /** Optional per-trace overrides for `store`. */
 export interface StoreOptions {
   /** Amplitude per prime; defaults to 1 for every prime. */
@@ -496,6 +520,74 @@ export class SemanticMemoryBank {
       oldestAt,
       newestAt
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Persistence
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Plain-data snapshot of a trace for persistence.
+   *
+   * Note: oscillator PHASES are not part of a trace (they are session
+   * state); a restored trace re-encodes its holographic pattern from the
+   * stored amplitudes, so content, SMF, strength and identity survive
+   * exactly while holographic correlation is equivalent-but-not-identical.
+   */
+  serializeTrace(traceId: string): SerializedTrace | null {
+    const trace = this.traces.get(traceId);
+    if (!trace) return null;
+    return {
+      id: trace.id,
+      content: trace.content,
+      smf: trace.smf.toArray(),
+      primes: [...trace.primes],
+      amplitudes: [...trace.amplitudes],
+      createdAt: trace.createdAt,
+      lastAccessAt: trace.lastAccessAt,
+      accessCount: trace.accessCount,
+      strength: trace.strength,
+      importance: trace.importance,
+      consolidated: trace.consolidated,
+      smfEntropy: trace.smfEntropy,
+      metadata: { ...trace.metadata }
+    };
+  }
+
+  /**
+   * Recreate a trace from a serialized snapshot (same id, content, SMF,
+   * strength and counters). Returns null when the id already exists — the
+   * bank never silently overwrites a live trace with stale data.
+   */
+  restoreTrace(data: SerializedTrace): MemoryTrace | null {
+    if (this.traces.has(data.id)) return null;
+    const primeList = Array.from(data.primes);
+    if (primeList.length === 0) return null;
+
+    const pattern = this.createPattern(primeList);
+    const amplitudes = Array.from(data.amplitudes);
+    while (amplitudes.length < primeList.length) amplitudes.push(1);
+    pattern.encode(primeList, amplitudes.slice(0, primeList.length));
+
+    const trace: MemoryTrace = {
+      id: data.id,
+      content: data.content,
+      smf: SedenionMemoryField.fromArray(data.smf),
+      primes: primeList,
+      amplitudes,
+      pattern,
+      createdAt: data.createdAt,
+      lastAccessAt: data.lastAccessAt,
+      accessCount: data.accessCount,
+      strength: data.strength,
+      importance: data.importance,
+      consolidated: data.consolidated,
+      smfEntropy: data.smfEntropy,
+      metadata: { ...data.metadata }
+    };
+    this.traces.set(trace.id, trace);
+    this.storeCount += 1;
+    return trace;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

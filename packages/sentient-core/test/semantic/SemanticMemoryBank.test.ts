@@ -271,3 +271,41 @@ describe('SemanticMemoryBank', () => {
     expect(bank.recall({ smf: SedenionMemoryField.identity() }, 5)).toEqual([]);
   });
 });
+
+describe('SemanticMemoryBank persistence', () => {
+  it('serialize/restore round-trips content, SMF, strength and identity', () => {
+    const bank = new SemanticMemoryBank({ capacity: 8 });
+    const smf = SedenionMemoryField.identity();
+    const trace = bank.store('apple: a fruit', smf, [2, 3, 5]);
+    trace.strength = 0.42;
+    trace.accessCount = 7;
+
+    const data = bank.serializeTrace(trace.id);
+    expect(data).not.toBeNull();
+    expect(data!.content).toBe('apple: a fruit');
+    expect(data!.strength).toBeCloseTo(0.42, 10);
+    expect(data!.accessCount).toBe(7);
+    expect(data!.smf).toHaveLength(16);
+
+    const bank2 = new SemanticMemoryBank({ capacity: 8 });
+    const restored = bank2.restoreTrace(data!);
+    expect(restored).not.toBeNull();
+    expect(restored!.id).toBe(trace.id);
+    expect(restored!.strength).toBeCloseTo(0.42, 10);
+    expect(restored!.content).toBe('apple: a fruit');
+    expect(restored!.primes).toEqual([2, 3, 5]);
+
+    // A restored trace is recallable.
+    const results = bank2.recall({ primes: [2, 3, 5] }, 3);
+    expect(results.length).toBe(1);
+    expect(results[0].trace.id).toBe(trace.id);
+  });
+
+  it('never overwrites a live trace with stale restored data', () => {
+    const bank = new SemanticMemoryBank({ capacity: 8 });
+    const trace = bank.store('house', SedenionMemoryField.identity(), [2, 3]);
+    const data = bank.serializeTrace(trace.id)!;
+    const duplicate = bank.restoreTrace(data);
+    expect(duplicate).toBeNull();
+  });
+});
