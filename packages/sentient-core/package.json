@@ -1,0 +1,40 @@
+{
+  "name": "@sschepis/sentient-core",
+  "version": "0.1.0",
+  "description": "The sentient-observer cognitive core: prime oscillators, sedenion memory field, holographic memory, semantic memory bank, and fail-closed safety monitoring. Browser and Node compatible.",
+  "main": "dist/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "type": "commonjs",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.esm.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "peerDependencies": {
+    "@aleph-ai/tinyaleph": ">=1.8.2"
+  },
+  "peerDependenciesMeta": {
+    "@aleph-ai/tinyaleph": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@aleph-ai/tinyaleph": "^1.8.2",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.16.5",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
+}
