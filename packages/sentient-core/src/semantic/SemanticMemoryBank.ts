@@ -311,13 +311,18 @@ export class SemanticMemoryBank {
 
     this.recallCount += 1;
 
+    // Cue primes are deduplicated defensively: text folding can map several
+    // tokens onto the same prime, and a holographic basis with duplicate
+    // primes is invalid by construction.
+    const cuePrimes = query.primes ? [...new Set(query.primes)] : undefined;
+
     let queryPattern: HolographicMemory | null = null;
-    if (query.primes && query.primes.length > 0) {
+    if (cuePrimes && cuePrimes.length > 0) {
       const amplitudes = query.amplitudes
         ? Array.from(query.amplitudes)
-        : query.primes.map(() => 1);
-      queryPattern = this.createPattern(query.primes);
-      queryPattern.encode(query.primes, amplitudes, query.phases);
+        : cuePrimes.map(() => 1);
+      queryPattern = this.createPattern(cuePrimes);
+      queryPattern.encode(cuePrimes, amplitudes, query.phases);
     }
 
     const useSmf = query.smf !== undefined;

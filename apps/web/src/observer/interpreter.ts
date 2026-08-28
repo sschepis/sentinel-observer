@@ -113,6 +113,24 @@ export function signalTimestamp(signal: ObserverSignal): string {
   return formatTime(signal.at);
 }
 
+/**
+ * The observer's diary entry for a memory signal, written in the first
+ * person: the observer is the learner, and the diary is its own record —
+ * failures included.
+ */
+export function diaryEntry(signal: ObserverSignal): string | null {
+  if (signal.kind !== 'memory') return null;
+  const { event, content } = signal.payload;
+  switch (event) {
+    case 'stored':
+      return `I learned "${content}" today.`;
+    case 'decaying':
+      return `I keep forgetting "${content}" — I should practice it again.`;
+    case 'consolidated':
+      return `"${content}" is now part of me.`;
+  }
+}
+
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }

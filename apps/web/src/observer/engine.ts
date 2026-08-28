@@ -3,7 +3,9 @@ import {
   type SemanticObserverOptions,
   type SemanticObserverState,
   type ObserverSignal,
-  type StimulusResult
+  type StimulusResult,
+  type MemoryTrace,
+  type RecallResult
 } from '@sschepis/sentient-core';
 
 export type ObserverStatus = 'idle' | 'loading' | 'ready' | 'degraded' | 'error';
@@ -54,6 +56,22 @@ export class ObserverSession {
     detail?: string
   ): StimulusResult {
     return this.observer.observe({ kind: 'event', type, outcome, detail });
+  }
+
+  /**
+   * Store the current orientation as a memory trace — the observer's way of
+   * committing what it was just taught to long-term memory.
+   */
+  storeMemory(content: string): MemoryTrace | null {
+    return this.observer.storeMemory(content);
+  }
+
+  /**
+   * The observer answers: recall memory from a cue. Returns ranked traces
+   * with similarity scores — the top result is what the observer "says".
+   */
+  recall(cue: string, topK = 5): RecallResult[] {
+    return this.observer.recallMemory(cue, topK);
   }
 
   setNoise(level: number): StimulusResult {
