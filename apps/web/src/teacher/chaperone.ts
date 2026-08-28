@@ -78,20 +78,20 @@ export class OpenAICompatProvider implements ChaperoneProvider {
       const url = style === 'chat' ? target.chatUrl : style === 'native' ? target.nativeUrl : target.responsesUrl;
 
       // Each endpoint family has its own exact contract (verified against the
-      // live server):
+      // live server, whose error messages spell out the shapes):
       //  - native /api/v1/chat: a FLAT array of discriminated parts
-      //    ({type: 'text'}) — message objects are rejected with "Invalid
-      //    discriminator value"; roles are not supported, so the system
-      //    instruction is merged into the single user part.
+      //    ({type: 'text', content: ...} — the text lives under 'content',
+      //    'text' is an unrecognized key) — roles are unsupported, so the
+      //    system instruction is merged into the single user part.
       //  - /v1/responses: message objects with PLAIN-STRING content (the
-      //    shape the live server accepted; part-tagged content is rejected
+      //    shape the live server accepts; part-tagged content is rejected
       //    with "Invalid type for 'input'").
       //  - /v1/chat/completions: standard {messages} with string content.
       const body =
         style === 'native'
           ? {
               model: this.settings.model,
-              input: [{ type: 'text', text: `${SYSTEM_PROMPT}\n\n${prompt}` }],
+              input: [{ type: 'text', content: `${SYSTEM_PROMPT}\n\n${prompt}` }],
               temperature: 0.4
             }
           : style === 'responses'

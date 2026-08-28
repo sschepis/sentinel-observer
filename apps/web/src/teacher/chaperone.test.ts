@@ -240,10 +240,12 @@ describe('LM Studio native v1 API', () => {
     expect(seen[0].url).toBe('http://localhost:1234/api/v1/chat');
     // The native endpoint takes a FLAT array of discriminated parts — the
     // exact shape the live server's 'text' | 'image' union validator accepts.
-    const input = seen[0].body.input as Array<{ type: string; text: string }>;
+    const input = seen[0].body.input as Array<{ type: string; content: string }>;
     expect(input).toHaveLength(1);
     expect(input[0].type).toBe('text');
-    expect(input[0].text).toContain('test prompt');
+    // The live server's validator: 'input.0.content' is required, 'text' is
+    // an unrecognized key.
+    expect(input[0].content).toContain('test prompt');
     // No message objects, no roles — the native API rejects them.
     expect(JSON.stringify(seen[0].body)).not.toContain('"role"');
     expect(content).toContain('apple');
