@@ -108,7 +108,8 @@ describe('encoding-epoch migration', () => {
         lastAskedAt: 2,
         lastGrade: 'correct',
         successes: 3,
-        failures: 1
+        failures: 1,
+        strengthHistory: []
       }
     ]);
 
@@ -158,7 +159,8 @@ describe('encoding-epoch migration (data-based)', () => {
         lastAskedAt: 2,
         lastGrade: null,
         successes: 2,
-        failures: 0
+        failures: 0,
+        strengthHistory: []
       }
     ]);
 

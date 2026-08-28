@@ -21,6 +21,7 @@ const fakeTeacher = {
     }
   ],
   nextReview: () => null as string | null,
+  report: () => ({ total: 12, learned: 1, consolidatedCount: 0, dueCount: 0, healthyCount: 1, words: [] }),
   nextLearnedWord: () => 'apple' as string | null,
   nextNewWord: () => null as string | null,
   teach: () => ({ word: { word: 'apple', definition: 'a fruit', example: '' }, traceId: 't1', note: '' }),

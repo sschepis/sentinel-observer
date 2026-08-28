@@ -20,6 +20,8 @@ export interface WordState {
   lastGrade: 'correct' | 'wrong' | null;
   successes: number;
   failures: number;
+  /** Strength history samples (retention record, capped at 100). */
+  strengthHistory: Array<{ at: number; strength: number }>;
 }
 
 export interface TeachResult {
@@ -86,6 +88,53 @@ function sleep(ms: number): Promise<void> {
 /** Strength below which a trace NEEDS review (the curiosity threshold). */
 export const REVIEW_STRENGTH_THRESHOLD = 0.6;
 
+/** Strength below which a trace is projected to be due within a day. */
+export const SOON_STRENGTH_THRESHOLD = 0.75;
+
+/**
+ * Apply wall-clock forgetting to every restored trace: strength decays
+ * exponentially since its last access, with a half-life that grows as the
+ * trace is reinforced (unreinforced 2 days, practiced 7 days, consolidated
+ * 30 days). This is what turns the observer's memory into a real spaced-
+ * repetition system — time passes, memories fade, the curiosity engine asks
+ * for reviews.
+ */
+function applyTimeDecay(traces: Iterable<{ lastAccessAt: number; strength: number; accessCount: number; consolidated: boolean }>, now = Date.now()): void {
+  const DAY = 24 * 60 * 60 * 1000;
+  for (const trace of traces) {
+    const elapsed = Math.max(0, now - trace.lastAccessAt);
+    if (elapsed < 60 * 1000) continue; // sub-minute: no measurable forgetting
+
+    const halfLifeDays = trace.consolidated ? 30 : trace.accessCount >= 2 ? 7 : 2;
+    const halfLifeMs = halfLifeDays * DAY;
+    trace.strength = trace.strength * Math.pow(0.5, elapsed / halfLifeMs);
+  }
+}
+
+/**
+ * Review scheduling state per word, from the trace's live strength.
+ */
+export type WordDueStatus = 'new' | 'due' | 'soon' | 'healthy' | 'consolidated';
+
+export interface WordReport {
+  word: string;
+  status: WordDueStatus;
+  strength: number | null;
+  /** Strength change since the previous session sample (null without history). */
+  delta: number | null;
+  successes: number;
+  failures: number;
+}
+
+export interface RetentionReport {
+  total: number;
+  learned: number;
+  consolidatedCount: number;
+  dueCount: number;
+  healthyCount: number;
+  words: WordReport[];
+}
+
 /**
  * Detect a pre-focused-encoding trace by its DATA:
  *  - a near-identity SMF (norm below epsilon — it imprinted nothing), or
@@ -131,7 +180,8 @@ export class TeacherAgent {
         lastAskedAt: null,
         lastGrade: null,
         successes: 0,
-        failures: 0
+        failures: 0,
+        strengthHistory: []
       });
     }
   }
@@ -168,6 +218,9 @@ export class TeacherAgent {
       if (trace !== null) restored += 1;
     }
 
+    // Wall-clock forgetting: time passed while the observer was away.
+    applyTimeDecay(bank.all());
+
     if (states !== null) {
       for (const state of states) {
         const current = this.states.get(state.word.word);
@@ -189,6 +242,7 @@ export class TeacherAgent {
         current.lastGrade = state.lastGrade;
         current.successes = state.successes;
         current.failures = state.failures;
+        current.strengthHistory = Array.isArray(state.strengthHistory) ? state.strengthHistory : [];
       }
     }
     return { restored, stale: staleTraceIds.size };
@@ -197,16 +251,22 @@ export class TeacherAgent {
   /**
    * Persist the complete learning record (word states + serialized traces).
    * Failures are logged, never thrown: a broken store must not break school.
+   * Each save also appends a strength sample to the word's retention history.
    */
   async persistAll(): Promise<void> {
     if (this.persistence === null) return;
     try {
       const bank = this.session.observer.getMemoryBank();
       const traces = [];
+      const now = Date.now();
       for (const state of this.states.values()) {
         if (state.traceId === null) continue;
         const data = bank.serializeTrace(state.traceId);
-        if (data !== null) traces.push(data);
+        if (data !== null) {
+          traces.push(data);
+          state.strengthHistory.push({ at: now, strength: data.strength });
+          while (state.strengthHistory.length > 100) state.strengthHistory.shift();
+        }
       }
       await Promise.all([
         this.persistence.saveWordStates([...this.states.values()]),
@@ -215,6 +275,68 @@ export class TeacherAgent {
     } catch (error) {
       console.warn('persistence save failed', error);
     }
+  }
+
+  /**
+   * The retention report: where every word stands, whether it is due for
+   * review, and how its strength moved since the previous session.
+   */
+  report(): RetentionReport {
+    let consolidatedCount = 0;
+    let dueCount = 0;
+    let healthyCount = 0;
+    let learned = 0;
+    const words: WordReport[] = [];
+
+    for (const state of this.states.values()) {
+      const trace = state.traceId !== null ? this.traceOf(state.traceId) : undefined;
+      if (trace === undefined) {
+        words.push({
+          word: state.word.word,
+          status: 'new',
+          strength: null,
+          delta: null,
+          successes: state.successes,
+          failures: state.failures
+        });
+        continue;
+      }
+
+      learned += 1;
+      let status: WordDueStatus;
+      if (trace.consolidated) {
+        status = 'consolidated';
+        consolidatedCount += 1;
+      } else if (trace.strength < REVIEW_STRENGTH_THRESHOLD) {
+        status = 'due';
+        dueCount += 1;
+      } else if (trace.strength < SOON_STRENGTH_THRESHOLD) {
+        status = 'soon';
+      } else {
+        status = 'healthy';
+        healthyCount += 1;
+      }
+
+      const history = state.strengthHistory;
+      const previous = history.length >= 2 ? history[history.length - 2] : null;
+      words.push({
+        word: state.word.word,
+        status,
+        strength: trace.strength,
+        delta: previous !== null ? trace.strength - previous.strength : null,
+        successes: state.successes,
+        failures: state.failures
+      });
+    }
+
+    return {
+      total: this.states.size,
+      learned,
+      consolidatedCount,
+      dueCount,
+      healthyCount,
+      words
+    };
   }
 
   /**

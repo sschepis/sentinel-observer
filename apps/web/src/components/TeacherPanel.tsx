@@ -64,6 +64,7 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
   }, [teacher]);
 
   const words = useMemo(() => teacher?.listWords() ?? [], [teacher, tick]);
+  const report = useMemo(() => teacher?.report() ?? null, [teacher, tick]);
   const diary = useMemo(
     () =>
       diarySignals
@@ -235,26 +236,52 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
           <p className="mb-2 text-xs uppercase tracking-wider text-slate-400">
             The observer's vocabulary ({words.filter((w) => w.status !== 'new').length}/{words.length})
           </p>
+          {report !== null && report.learned > 0 && (
+            <p className="mb-2 text-xs text-slate-500">
+              {report.consolidatedCount} consolidated · {report.dueCount} due for review ·{' '}
+              {report.healthyCount} healthy
+            </p>
+          )}
           <ul className="space-y-2 font-mono text-sm">
-            {words.map((entry) => (
-              <li key={entry.word.word} className="flex items-center justify-between gap-2">
-                <span className="text-slate-200">
-                  {entry.word.word}
-                  <span className="ml-2 text-xs text-slate-500">{entry.status}</span>
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="h-1.5 w-24 overflow-hidden rounded bg-slate-700">
-                    <span
-                      className="block h-full rounded bg-emerald-400"
-                      style={{ width: `${Math.round((entry.strength ?? 0) * 100)}%` }}
-                    />
+            {words.map((entry) => {
+              const reportWord = report?.words.find((w) => w.word === entry.word.word);
+              const statusColor: Record<string, string> = {
+                new: 'text-slate-500',
+                due: 'text-amber-400',
+                soon: 'text-sky-400',
+                healthy: 'text-emerald-400',
+                consolidated: 'text-emerald-300 font-semibold'
+              };
+              return (
+                <li key={entry.word.word} className="flex items-center justify-between gap-2">
+                  <span className="text-slate-200">
+                    {entry.word.word}
+                    <span className={`ml-2 text-xs ${statusColor[entry.status] ?? 'text-slate-500'}`}>
+                      {entry.status}
+                    </span>
                   </span>
-                  <span className="w-14 text-right text-xs text-slate-400">
-                    {entry.successes}✓ {entry.failures}✗
+                  <span className="flex items-center gap-2">
+                    {reportWord?.delta !== null && reportWord?.delta !== undefined && (
+                      <span
+                        className={`text-xs ${reportWord.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+                      >
+                        {reportWord.delta >= 0 ? '▲' : '▼'}
+                        {Math.abs(reportWord.delta).toFixed(2)}
+                      </span>
+                    )}
+                    <span className="h-1.5 w-24 overflow-hidden rounded bg-slate-700">
+                      <span
+                        className="block h-full rounded bg-emerald-400"
+                        style={{ width: `${Math.round((entry.strength ?? 0) * 100)}%` }}
+                      />
+                    </span>
+                    <span className="w-14 text-right text-xs text-slate-400">
+                      {entry.successes}✓ {entry.failures}✗
+                    </span>
                   </span>
-                </span>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </div>
 
