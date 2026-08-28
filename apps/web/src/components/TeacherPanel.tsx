@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { TeacherAgent, type GradeResult, type QuizAnswer } from '../teacher/TeacherAgent';
+import { useEffect, useMemo, useState } from 'react';
+import { TeacherAgent, type GradeResult, type QuizAnswer, type AutoLoopStep } from '../teacher/TeacherAgent';
 import type { ObserverSignal } from '@sschepis/sentient-core';
 import type { PersistenceKind } from '../persistence/store';
 import { diaryEntry, signalTimestamp } from '../observer/interpreter';
@@ -29,6 +29,37 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
   const [tick, setTick] = useState(0);
   const [current, setCurrent] = useState<{ mode: 'quiz'; question: QuizAnswer } | null>(null);
   const [lastGrade, setLastGrade] = useState<GradeResult | null>(null);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStep, setAutoStep] = useState<AutoLoopStep | null>(null);
+
+  // The teacher's autonomous loop drives the same question display the human
+  // sees, and stops cleanly when this panel unmounts.
+  useEffect(() => {
+    if (teacher === null) return;
+    const unsubscribe = teacher.onAutoStep((step) => {
+      setAutoStep(step);
+      setAutoRunning(step.phase !== 'done' && step.phase !== 'error' && teacher.isAutoLoopRunning());
+      if (step.phase === 'asking' && step.word !== null && step.cue !== null) {
+        const state = teacher.listWords().find((w) => w.word.word === step.word);
+        if (state !== undefined) {
+          setCurrent({
+            mode: 'quiz',
+            question: { word: state.word, cue: step.cue, answer: step.answer ?? '', recall: null }
+          });
+          setLastGrade(null);
+        }
+      } else if (step.phase === 'grading' && step.grade !== null) {
+        setLastGrade(step.grade);
+      }
+      if (step.phase === 'teaching' || step.phase === 'grading') {
+        setTick((n) => n + 1);
+      }
+    });
+    return () => {
+      unsubscribe();
+      teacher.stopAutoLoop();
+    };
+  }, [teacher]);
 
   const words = useMemo(() => teacher?.listWords() ?? [], [teacher, tick]);
   const diary = useMemo(
@@ -42,6 +73,18 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
   );
 
   const refresh = () => setTick((n) => n + 1);
+
+  const toggleAutoLoop = () => {
+    if (teacher === null) return;
+    if (teacher.isAutoLoopRunning()) {
+      teacher.stopAutoLoop();
+      setAutoRunning(false);
+    } else {
+      setAutoStep({ phase: 'idle', word: null, cue: null, answer: null, grade: null, message: 'the school begins' });
+      teacher.startAutoLoop();
+      setAutoRunning(true);
+    }
+  };
 
   if (teacher === null) {
     return (
@@ -62,7 +105,10 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
   };
 
   const askNext = (direction: 'recognition' | 'production') => {
-    const next = teacher.nextReview() ?? teacher.nextNewWord();
+    const next =
+      direction === 'recognition'
+        ? teacher.nextReview() ?? teacher.nextLearnedWord()
+        : teacher.nextLearnedWord();
     if (next === null) return;
     setCurrent({ mode: 'quiz', question: teacher.ask(next, direction) });
     setLastGrade(null);
@@ -98,25 +144,48 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
         </div>
         <div className="flex gap-2">
           <button
+            onClick={toggleAutoLoop}
+            className={`rounded-lg px-4 py-2 text-sm font-medium ${
+              autoRunning
+                ? 'bg-amber-700 text-white hover:bg-amber-600'
+                : 'bg-emerald-600 text-white hover:bg-emerald-500'
+            }`}
+          >
+            {autoRunning ? 'Pause teaching' : 'Let the teacher teach'}
+          </button>
+          <button
             onClick={teachNext}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+            disabled={autoRunning}
+            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:hover:bg-slate-700"
           >
             Teach next word
           </button>
           <button
             onClick={() => askNext('recognition')}
-            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-600"
+            disabled={autoRunning}
+            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:hover:bg-slate-700"
           >
             Quiz: word → meaning
           </button>
           <button
             onClick={() => askNext('production')}
-            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-600"
+            disabled={autoRunning}
+            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-40 disabled:hover:bg-slate-700"
           >
             Quiz: meaning → word
           </button>
         </div>
       </div>
+
+      {autoStep !== null && autoStep.phase !== 'idle' && (
+        <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
+          <p className="text-xs uppercase tracking-wider text-slate-400">
+            The teacher at work
+            <span className="ml-2 text-slate-500">({autoStep.phase})</span>
+          </p>
+          <p className="mt-1 text-sm text-slate-300">{autoStep.message}</p>
+        </div>
+      )}
 
       {current !== null && (
         <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">

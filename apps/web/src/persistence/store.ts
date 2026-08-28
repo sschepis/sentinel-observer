@@ -72,10 +72,12 @@ class SentinelDB extends Dexie {
 
   constructor() {
     super('sentinel');
-    this.version(1).stores({
+    // v2: the diary table gains an index on 'at' — orderBy('at') requires it
+    // (v1 shipped without the index and loadDiary threw SchemaError).
+    this.version(2).stores({
       wordStates: 'key',
       traces: 'id',
-      diary: '++'
+      diary: '++, at'
     });
   }
 }

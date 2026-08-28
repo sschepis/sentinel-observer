@@ -80,16 +80,22 @@ export function useObserver(persistence: PersistenceStore | null = null): Observ
       session.start((next) => setMetrics(next));
 
       // Restore the observer's diary from previous sessions (new signals
-      // append AFTER the restored entries, preserving order).
+      // append AFTER the restored entries, preserving order). A failed load
+      // degrades to an empty diary — never an unhandled rejection.
       if (persistence !== null) {
-        void persistence.loadDiary().then((entries) => {
-          if (entries.length > 0) {
-            setDiarySignals((prev) => {
-              const merged = [...entries, ...prev];
-              return merged.slice(-MAX_DIARY_SIGNALS);
-            });
+        void persistence.loadDiary().then(
+          (entries) => {
+            if (entries.length > 0) {
+              setDiarySignals((prev) => {
+                const merged = [...entries, ...prev];
+                return merged.slice(-MAX_DIARY_SIGNALS);
+              });
+            }
+          },
+          (reason) => {
+            console.warn('diary restore failed — starting with an empty diary', reason);
           }
-        });
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

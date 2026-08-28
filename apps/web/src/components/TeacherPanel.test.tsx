@@ -4,7 +4,8 @@ import { TeacherPanel } from './TeacherPanel';
 import type { TeacherAgent } from '../teacher/TeacherAgent';
 import type { ObserverSignal } from '@sschepis/sentient-core';
 
-/** Minimal structural stand-in for the teacher — the panel only calls listWords(). */
+/** Minimal structural stand-in for the teacher — the panel calls listWords()
+ * and the auto-loop subscription methods. */
 const fakeTeacher = {
   listWords: () => [
     {
@@ -18,7 +19,24 @@ const fakeTeacher = {
       strength: 0.8,
       status: 'learning'
     }
-  ]
+  ],
+  nextReview: () => null as string | null,
+  nextLearnedWord: () => 'apple' as string | null,
+  nextNewWord: () => null as string | null,
+  teach: () => ({ word: { word: 'apple', definition: 'a fruit', example: '' }, traceId: 't1', note: '' }),
+  ask: () => ({ word: { word: 'apple', definition: 'a fruit', example: '' }, cue: 'apple', answer: '', recall: null }),
+  grade: () => ({
+    word: { word: 'apple', definition: 'a fruit', example: '' },
+    verdict: 'correct' as const,
+    answer: '',
+    expected: 'a fruit',
+    confidence: 0.5
+  }),
+  onAutoStep: () => () => {},
+  stopAutoLoop: () => {},
+  isAutoLoopRunning: () => false,
+  getAutoStep: () => null,
+  startAutoLoop: () => ({ stop: () => {}, running: false })
 } as unknown as TeacherAgent;
 
 const memorySignal: ObserverSignal = {

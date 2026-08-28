@@ -50,8 +50,48 @@ export interface GradeResult {
   confidence: number | null;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Autonomous teaching loop
+// ────────────────────────────────────────────────────────────────────────────
+
+export type AutoLoopPhase = 'idle' | 'teaching' | 'asking' | 'grading' | 'done' | 'error';
+
+export interface AutoLoopStep {
+  phase: AutoLoopPhase;
+  word: string | null;
+  cue: string | null;
+  answer: string | null;
+  grade: GradeResult | null;
+  message: string;
+}
+
+export interface AutoLoopHandle {
+  stop(): void;
+  readonly running: boolean;
+}
+
+export interface AutoLoopOptions {
+  /** Pause after teaching before the quiz (ms). */
+  teachPauseMs?: number;
+  /** Pause after the quiz before grading (ms). */
+  askPauseMs?: number;
+  /** Pause after grading before the next word (ms). */
+  gradePauseMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Strength below which a trace NEEDS review (the curiosity threshold). */
+export const REVIEW_STRENGTH_THRESHOLD = 0.6;
+
 export class TeacherAgent {
   private readonly states = new Map<string, WordState>();
+  private autoLoopToken = 0;
+  private autoLoopRunning = false;
+  private autoStep: AutoLoopStep | null = null;
+  private readonly autoListeners = new Set<(step: AutoLoopStep) => void>();
 
   constructor(
     private readonly session: ObserverSession,
@@ -208,9 +248,9 @@ export class TeacherAgent {
   }
 
   /**
-   * The observer's curiosity: the next word it should review is the one whose
-   * trace is weakest — learned-but-decaying words first, then never-asked
-   * words, then the rest.
+   * The observer's curiosity: the next word that NEEDS review — the weakest
+   * trace below the review threshold (decaying first). Returns null when
+   * nothing is weak enough to need work.
    */
   nextReview(): string | null {
     let best: { word: string; strength: number; prio: number } | null = null;
@@ -218,7 +258,7 @@ export class TeacherAgent {
     for (const state of this.states.values()) {
       if (state.traceId === null) continue;
       const trace = this.traceOf(state.traceId);
-      if (trace === undefined) continue;
+      if (trace === undefined || trace.strength >= REVIEW_STRENGTH_THRESHOLD) continue;
 
       // Priority: decaying traces (strength < 0.5) above everything,
       // otherwise weakest first.
@@ -230,12 +270,193 @@ export class TeacherAgent {
     return best?.word ?? null;
   }
 
+  /** Any learned word, weakest first (manual-quiz fallback when nothing needs review). */
+  nextLearnedWord(): string | null {
+    let best: { word: string; strength: number } | null = null;
+    for (const state of this.states.values()) {
+      if (state.traceId === null) continue;
+      const trace = this.traceOf(state.traceId);
+      if (trace === undefined) continue;
+      if (best === null || trace.strength < best.strength) {
+        best = { word: state.word.word, strength: trace.strength };
+      }
+    }
+    return best?.word ?? null;
+  }
+
   /** The next word the observer has never been taught. */
   nextNewWord(): string | null {
     for (const state of this.states.values()) {
       if (state.traceId === null) return state.word.word;
     }
     return null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Autonomous teaching loop
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run the school automatically: teach → ask → grade → next, continuously.
+   *
+   * The observer's own state drives WHAT to learn (curiosity: decaying
+   * traces first, then untaught words) and the quiz direction (recognition
+   * until a word has a success, then production — asking it to speak the
+   * word from its meaning). The teacher only decides WHEN, on a human-
+   * watchable cadence. The loop stops when the deck is exhausted and
+   * nothing is decaying, or on stop()/dispose.
+   */
+  startAutoLoop(options: AutoLoopOptions = {}): AutoLoopHandle {
+    if (this.autoLoopRunning) {
+      return { stop: () => this.stopAutoLoop(), get running() { return false; } };
+    }
+
+    const token = ++this.autoLoopToken;
+    this.autoLoopRunning = true;
+    const teachPauseMs = options.teachPauseMs ?? 1500;
+    const askPauseMs = options.askPauseMs ?? 1500;
+    const gradePauseMs = options.gradePauseMs ?? 2500;
+
+    const setStep = (step: AutoLoopStep) => {
+      if (token !== this.autoLoopToken) return;
+      this.autoStep = step;
+      for (const listener of [...this.autoListeners]) {
+        try {
+          listener(step);
+        } catch {
+          // An isolated UI listener can never break the teaching loop.
+        }
+      }
+    };
+
+    void (async () => {
+      setStep({ phase: 'idle', word: null, cue: null, answer: null, grade: null, message: 'the school begins' });
+      try {
+        while (token === this.autoLoopToken) {
+          const word = this.nextReview() ?? this.nextNewWord();
+          if (word === null) {
+            setStep({
+              phase: 'done',
+              word: null,
+              cue: null,
+              answer: null,
+              grade: null,
+              message: 'the deck is learned — nothing is decaying and nothing is new'
+            });
+            break;
+          }
+
+          // Teach only what is new; reviews exercise existing traces.
+          if (this.requiredState(word).traceId === null) {
+            const teachResult = this.teach(word);
+            setStep({
+              phase: 'teaching',
+              word,
+              cue: null,
+              answer: null,
+              grade: null,
+              message: teachResult.traceId !== null
+                ? `teaching "${word}" — stored in the observer's memory`
+                : `teaching "${word}" — the field was quiescent, nothing stored`
+            });
+            await sleep(teachPauseMs);
+            if (token !== this.autoLoopToken) break;
+          }
+
+          // Recognition first: what does the word mean?
+          const recognition = this.ask(word, 'recognition');
+          setStep({
+            phase: 'asking',
+            word,
+            cue: recognition.cue,
+            answer: recognition.answer,
+            grade: null,
+            message: 'asking it for the meaning of the word'
+          });
+          await sleep(askPauseMs);
+          if (token !== this.autoLoopToken) break;
+          const recognitionGrade = this.grade(word, recognition);
+          setStep({
+            phase: 'grading',
+            word,
+            cue: recognition.cue,
+            answer: recognition.answer,
+            grade: recognitionGrade,
+            message: `graded ${recognitionGrade.verdict}${recognitionGrade.confidence !== null ? ` (confidence ${recognitionGrade.confidence.toFixed(2)})` : ''}`
+          });
+          await sleep(gradePauseMs);
+          if (token !== this.autoLoopToken) break;
+
+          // Production: speak the word from its meaning.
+          const production = this.ask(word, 'production');
+          setStep({
+            phase: 'asking',
+            word,
+            cue: production.cue,
+            answer: production.answer,
+            grade: null,
+            message: 'asking it to speak the word from its meaning'
+          });
+          await sleep(askPauseMs);
+          if (token !== this.autoLoopToken) break;
+          const productionGrade = this.grade(word, production);
+          setStep({
+            phase: 'grading',
+            word,
+            cue: production.cue,
+            answer: production.answer,
+            grade: productionGrade,
+            message: `graded ${productionGrade.verdict}${productionGrade.confidence !== null ? ` (confidence ${productionGrade.confidence.toFixed(2)})` : ''}`
+          });
+          await sleep(gradePauseMs);
+        }
+      } catch (error) {
+        setStep({
+          phase: 'error',
+          word: null,
+          cue: null,
+          answer: null,
+          grade: null,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        if (token === this.autoLoopToken) {
+          this.autoLoopRunning = false;
+        }
+      }
+    })();
+
+    const agent = this;
+    return {
+      stop: () => agent.stopAutoLoop(),
+      get running() {
+        return token === agent.autoLoopToken && agent.autoLoopRunning;
+      }
+    };
+  }
+
+  stopAutoLoop(): void {
+    this.autoLoopToken += 1;
+    this.autoLoopRunning = false;
+  }
+
+  /** Subscribe to loop steps; returns an unsubscribe function. */
+  onAutoStep(listener: (step: AutoLoopStep) => void): () => void {
+    this.autoListeners.add(listener);
+    if (this.autoStep !== null) {
+      listener(this.autoStep);
+    }
+    return () => this.autoListeners.delete(listener);
+  }
+
+  /** The latest loop step (null when the loop has never run). */
+  getAutoStep(): AutoLoopStep | null {
+    return this.autoStep;
+  }
+
+  /** Whether the autonomous loop is currently running. */
+  isAutoLoopRunning(): boolean {
+    return this.autoLoopRunning;
   }
 
   /** Snapshot of every word's learning state, for the teacher UI. */

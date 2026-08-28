@@ -26,7 +26,13 @@ export default function App() {
   useEffect(() => {
     if (teacher !== null && (status === 'ready' || status === 'degraded') && !restoreGuard.current) {
       restoreGuard.current = true;
-      void teacher.restoreFromPersistence().then((count) => setRestored(count));
+      void teacher.restoreFromPersistence().then(
+        (count) => setRestored(count),
+        (reason) => {
+          console.warn('learning-record restore failed — starting fresh', reason);
+          setRestored(0);
+        }
+      );
     }
   }, [teacher, status]);
 
