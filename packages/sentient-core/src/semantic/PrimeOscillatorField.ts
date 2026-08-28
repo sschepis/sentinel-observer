@@ -325,6 +325,26 @@ export class PrimeOscillatorField implements Initializable {
   }
 
   /**
+   * Set the Kuramoto coupling strength (attention modulation).
+   *
+   * Higher coupling makes the field follow excitation faster (focused);
+   * lower coupling lets excitations decay (idle). Non-finite or negative
+   * values are refused loudly rather than clamped silently.
+   */
+  setCoupling(k: number): void {
+    if (!Number.isFinite(k) || k < 0) {
+      throw new NonFiniteValueError('coupling', k);
+    }
+    const model = this.bank();
+    model.K = k;
+  }
+
+  /** The live coupling strength (throws before initialize). */
+  getCoupling(): number {
+    return this.bank().K;
+  }
+
+  /**
    * Metrics from the most recent tick.
    *
    * Throws `NotInitializedError` before `initialize()`: a pre-init zero is a

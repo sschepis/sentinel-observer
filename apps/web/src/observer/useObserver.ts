@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SemanticObserverState } from '@sschepis/sentient-core';
+import type { SemanticObserverState, ObserverSignal, StimulusResult } from '@sschepis/sentient-core';
 import { ObserverSession, type ObserverSessionState } from './engine';
 
 /**
@@ -12,6 +12,8 @@ import { ObserverSession, type ObserverSessionState } from './engine';
  */
 const PRIMING_TEXT = 'coherence, resonance, consciousness, structure, harmony, wisdom, truth, love';
 
+const MAX_RECENT_SIGNALS = 40;
+
 /**
  * React binding for an ObserverSession.
  *
@@ -22,12 +24,16 @@ const PRIMING_TEXT = 'coherence, resonance, consciousness, structure, harmony, w
 export function useObserver(): ObserverSessionState & {
   start: () => Promise<void>;
   stop: () => void;
-  excite: (text: string) => void;
+  excite: (text: string) => StimulusResult | null;
+  lastStimulus: StimulusResult | null;
+  signals: ObserverSignal[];
 } {
   const sessionRef = useRef<ObserverSession | null>(null);
   const [status, setStatus] = useState<ObserverSessionState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<SemanticObserverState | null>(null);
+  const [lastStimulus, setLastStimulus] = useState<StimulusResult | null>(null);
+  const [signals, setSignals] = useState<ObserverSignal[]>([]);
 
   const stop = useCallback(() => {
     sessionRef.current?.stop();
@@ -40,35 +46,37 @@ export function useObserver(): ObserverSessionState & {
     const session = sessionRef.current;
     setStatus('loading');
     setError(null);
+    setSignals([]);
     try {
       await session.initialize();
       // Prime the field with a real stimulus so the dashboard is alive from
       // the first tick, then let decay physics do its work.
-      session.processInput(PRIMING_TEXT);
+      const priming = session.observeText(PRIMING_TEXT);
+      setLastStimulus(priming);
       const initial = session.state();
       setMetrics(initial);
       setStatus(initial.kernel.degraded ? 'degraded' : 'ready');
-      session.start(
-        (next) => setMetrics(next),
-        (momentId) => {
-          // Insight moments surface in the journal (M1); for M0 we track the
-          // count via the tick state and leave the event for the UI layer.
-          void momentId;
-        }
-      );
+
+      session.onSignal((signal) => {
+        setSignals((prev) => [...prev.slice(-(MAX_RECENT_SIGNALS - 1)), signal]);
+      });
+
+      session.start((next) => setMetrics(next));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');
     }
   }, []);
 
-  useEffect(() => () => stop(), [stop]);
+  useEffect(() => () => sessionRef.current?.dispose(), []);
 
-  const excite = useCallback((text: string) => {
+  const excite = useCallback((text: string): StimulusResult | null => {
     const session = sessionRef.current;
-    if (session === null || (status !== 'ready' && status !== 'degraded')) return;
-    session.processInput(text);
+    if (session === null || (status !== 'ready' && status !== 'degraded')) return null;
+    const result = session.observeText(text);
+    setLastStimulus(result);
     setMetrics(session.state());
+    return result;
   }, [status]);
 
   return {
@@ -78,6 +86,8 @@ export function useObserver(): ObserverSessionState & {
     kernelLoaded: metrics?.kernel.loaded ?? false,
     start,
     stop,
-    excite
+    excite,
+    lastStimulus,
+    signals
   };
 }

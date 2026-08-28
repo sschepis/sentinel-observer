@@ -1,7 +1,9 @@
 import {
   SemanticObserver,
   type SemanticObserverOptions,
-  type SemanticObserverState
+  type SemanticObserverState,
+  type ObserverSignal,
+  type StimulusResult
 } from '@sschepis/sentient-core';
 
 export type ObserverStatus = 'idle' | 'loading' | 'ready' | 'degraded' | 'error';
@@ -17,8 +19,8 @@ export interface ObserverSessionState {
  * Owns a SemanticObserver instance and its tick loop.
  *
  * The observer is a pure engine: this session is the only place that couples
- * it to wall-clock time. A throwing subscriber can never kill the loop — the
- * core's IsolatedSubject pattern guarantees that.
+ * it to wall-clock time. All interaction goes through the typed stimulus
+ * contract (`observe`), never raw processInput.
  */
 export class ObserverSession {
   readonly observer: SemanticObserver;
@@ -37,15 +39,38 @@ export class ObserverSession {
     await this.observer.initialize();
   }
 
-  get isDegraded(): boolean {
-    return this.observer.getState === undefined ? false : this.safeState()?.kernel.degraded ?? false;
+  /** Observe a stimulus; returns its immediate, honest effect. */
+  observeText(content: string): StimulusResult {
+    return this.observer.observe({ kind: 'text', content, weight: 0.5 });
   }
 
-  start(onTick: (state: SemanticObserverState) => void, onMoment?: (id: string) => void): void {
+  observeAttention(focus: 'reading' | 'review' | 'quiz' | 'idle', intensity: number): StimulusResult {
+    return this.observer.observe({ kind: 'attention', focus, intensity });
+  }
+
+  observeEvent(
+    type: 'quiz.answer' | 'review.completed' | 'note.created' | 'source.ingested',
+    outcome: 'success' | 'failure',
+    detail?: string
+  ): StimulusResult {
+    return this.observer.observe({ kind: 'event', type, outcome, detail });
+  }
+
+  setNoise(level: number): StimulusResult {
+    return this.observer.observe({ kind: 'noise', level });
+  }
+
+  /** Subscribe to the observer's signal stream; returns an unsubscribe fn. */
+  onSignal(listener: (signal: ObserverSignal) => void): () => void {
+    return this.observer.getSignals().subscribe('*', listener);
+  }
+
+  signalHistory(): readonly ObserverSignal[] {
+    return this.observer.getSignals().history();
+  }
+
+  start(onTick: (state: SemanticObserverState) => void): void {
     if (this.timer !== null) return;
-    if (onMoment) {
-      this.observer.moments.subscribe((moment) => onMoment(moment.id));
-    }
     this.timer = setInterval(() => {
       try {
         this.observer.tick(this.intervalMs / 1000);
@@ -69,15 +94,8 @@ export class ObserverSession {
     return this.observer.getState();
   }
 
-  processInput(text: string): void {
-    this.observer.processInput(text);
-  }
-
-  private safeState(): SemanticObserverState | null {
-    try {
-      return this.observer.getState();
-    } catch {
-      return null;
-    }
+  dispose(): void {
+    this.stop();
+    this.observer.dispose();
   }
 }

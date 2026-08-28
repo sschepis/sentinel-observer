@@ -32,13 +32,16 @@ import { randomUUID } from '../common/random';
 import type { Initializable } from '../common/types';
 import { Observable, type Observer } from '../common/patterns/Observable';
 import { SemanticKernel, getSharedKernel } from './tinyaleph';
+import type { Stimulus, StimulusContext, StimulusResult } from './stimulus';
+import { SignalStream, type ObserverSignal } from './ObserverSignals';
 import {
   PrimeOscillatorField,
   type OscillatorFieldState,
   type OscillatorFieldTick,
   type PrimeOscillatorSnapshot
 } from './PrimeOscillatorField';
-import { SedenionMemoryField } from './SedenionMemoryField';
+import { SedenionMemoryField, SMF_DIMENSION } from './SedenionMemoryField';
+import { SMF_AXES, type SMFAxisIndex } from '../common/types';
 import { HolographicMemory } from './HolographicMemory';
 import {
   SemanticMemoryBank,
@@ -82,6 +85,12 @@ export interface SemanticObserverOptions {
   kernel?: SemanticKernel;
   /** Safety monitor override (mainly for tests). */
   safety?: SafetyMonitor;
+  /** Ticks in the drift-detection trend window (default 40). */
+  driftWindowTicks?: number;
+  /** Minimum coherence lost over the window to count as drift (default 0.03). */
+  driftDropThreshold?: number;
+  /** Fraction of window steps that must be non-increasing to count as drift (default 0.75). */
+  driftDecliningRatio?: number;
 }
 
 /** A coherence-driven moment. */
@@ -180,6 +189,15 @@ export class SemanticObserver implements Initializable {
   private readonly momentEvents = new IsolatedSubject<SemanticMoment>();
   private readonly errorEvents = new IsolatedSubject<Error>();
 
+  // ── Signal stream (typed outputs) ───────────────────────────────────────
+  private readonly signals = new SignalStream();
+  private lastStimulusId: string | null = null;
+  private ambientLevel = 0;
+  private readonly coherenceHistory: Array<{ at: number; coherence: number }> = [];
+  private driftEpisodeActive = false;
+  private readonly decayFlagged = new Set<string>();
+  private memorySweepCounter = 0;
+
   constructor(options: SemanticObserverOptions = {}) {
     this.kernel = options.kernel ?? getSharedKernel();
 
@@ -193,6 +211,9 @@ export class SemanticObserver implements Initializable {
       coupling: options.coupling ?? 0.45,
       gridSize: Math.max(8, Math.floor(rawGridSize)),
       momentThreshold: options.momentThreshold ?? 0.85,
+      driftWindowTicks: Math.max(10, Math.floor(options.driftWindowTicks ?? 40)),
+      driftDropThreshold: options.driftDropThreshold ?? 0.03,
+      driftDecliningRatio: options.driftDecliningRatio ?? 0.75,
       dt: options.dt ?? 0.016,
       memoryCapacity: Math.max(1, Math.floor(options.memoryCapacity ?? 256)),
       requireSafetyClear: options.requireSafetyClear ?? true,
@@ -257,6 +278,7 @@ export class SemanticObserver implements Initializable {
     this.tickEvents.complete();
     this.momentEvents.complete();
     this.errorEvents.complete();
+    this.signals.clear();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -304,6 +326,168 @@ export class SemanticObserver implements Initializable {
     return primes;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Stimulus interface
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Observe a typed learning stimulus and return its immediate effect.
+   *
+   * Every stimulus carries a unique id; subsequent signals reference it as
+   * `causeId`, so an interpreter can always answer "why did this change".
+   *
+   * Semantics (see docs/OBSERVER_INTERFACES.md):
+   * - text:      excite the content's primes
+   * - attention: modulate Kuramoto coupling (focus rises, idle falls)
+   * - event:     success reinforces the concept's primes and raises coupling;
+   *              failure perturbs them and lowers it
+   * - noise:     set the ambient drive level applied every tick
+   */
+  observe(stimulus: Stimulus, ctx: StimulusContext = {}): StimulusResult {
+    this.requireInitialized();
+
+    const stimulusId = randomUUID();
+    const coherenceBefore = this.currentCoherence();
+
+    let excitedPrimes: number[] = [];
+    let note: string | undefined;
+
+    switch (stimulus.kind) {
+      case 'text': {
+        const weight = this.normalizeWeight(stimulus.weight);
+        excitedPrimes = this.resolvePrimes(stimulus.content);
+        if (excitedPrimes.length > 0) this.field.excite(excitedPrimes, weight);
+        break;
+      }
+
+      case 'attention': {
+        this.applyAttention(stimulus.focus, stimulus.intensity);
+        break;
+      }
+
+      case 'event': {
+        const primes = stimulus.detail ? this.resolvePrimes(stimulus.detail) : [];
+        const baseWeight = primes.length > 0 ? (stimulus.outcome === 'success' ? 0.6 : 0.4) : 0;
+        if (primes.length > 0) {
+          this.field.excite(primes, baseWeight);
+          excitedPrimes = primes;
+        }
+        // Success tightens the field's follow-through; failure loosens it.
+        const couplingFactor = stimulus.outcome === 'success' ? 1.15 : 0.85;
+        this.applyCouplingFactor(couplingFactor);
+
+        if (stimulus.type === 'source.ingested' || stimulus.type === 'note.created') {
+          const content = stimulus.detail ?? '';
+          const trace = content.length > 0 ? this.storeMemory(content) : null;
+          note = trace ? `memory stored: ${trace.id}` : 'no memory stored (field quiescent)';
+        }
+        break;
+      }
+
+      case 'noise': {
+        this.setAmbientLevel(stimulus.level);
+        break;
+      }
+    }
+
+    const touchedAxes = this.projectTouchedAxes();
+    const coherenceAfter = this.currentCoherence();
+    this.lastStimulusId = stimulusId;
+
+    const result: StimulusResult = {
+      stimulusId,
+      kind: stimulus.kind,
+      excitedPrimes: [...new Set(excitedPrimes)],
+      touchedAxes,
+      coherenceDelta: coherenceAfter - coherenceBefore,
+      activePrimeCount: this.field.getState().activePrimes.length,
+      ...(note !== undefined ? { note } : {})
+    };
+
+    this.signals.push({
+      kind: 'stimulus',
+      at: Date.now(),
+      causeId: ctx.causeId ?? null,
+      payload: { stimulusId, stimulus }
+    });
+
+    return result;
+  }
+
+  /**
+   * The observer's signal stream: metrics, insights, drift warnings, and
+   * memory lifecycle events, each with its causal stimulus id.
+   */
+  getSignals(): SignalStream {
+    return this.signals;
+  }
+
+  /** Id of the most recent stimulus (null when nothing has been observed). */
+  getLastStimulusId(): string | null {
+    return this.lastStimulusId;
+  }
+
+  /** Set the ambient drive level applied every tick (resting baseline). */
+  setNoiseLevel(level: number): void {
+    if (!Number.isFinite(level) || level < 0) {
+      throw new NonFiniteValueError('noise level', level);
+    }
+    this.ambientLevel = level;
+  }
+
+  // ── stimulus internals ───────────────────────────────────────────────────
+
+  private currentCoherence(): number {
+    const state = this.field.getState();
+    return state.totalAmplitude > 0 ? this.field.getMetrics().coherence : 0;
+  }
+
+  private normalizeWeight(weight: number | undefined): number {
+    if (weight === undefined) return 0.5;
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new NonFiniteValueError('stimulus weight', weight);
+    }
+    return Math.min(weight, 1);
+  }
+
+  private applyAttention(focus: 'reading' | 'review' | 'quiz' | 'idle', intensity: number): void {
+    if (!Number.isFinite(intensity) || intensity < 0 || intensity > 1) {
+      throw new NonFiniteValueError('attention intensity', intensity);
+    }
+    const kindFactor: Record<string, number> = { reading: 1, review: 0.9, quiz: 1.1, idle: 0.3 };
+    const factor = (kindFactor[focus] ?? 1) * (0.5 + 0.5 * intensity);
+    this.applyCouplingFactor(factor);
+  }
+
+  /** Set coupling relative to the configured base coupling, clamped safely. */
+  private applyCouplingFactor(factor: number): void {
+    const base = this.options.coupling;
+    const next = Math.max(0.01, Math.min(base * 4, base * factor));
+    this.field.setCoupling(next);
+  }
+
+  private setAmbientLevel(level: number): void {
+    this.setNoiseLevel(level);
+  }
+
+  /**
+   * Project which SMF axes the next tick's imprint would move.
+   *
+   * Computed on a CLONE: observing is side-effect free for the SMF, and the
+   * projection uses exactly the imprint math the next tick applies.
+   */
+  private projectTouchedAxes(): string[] {
+    const projection = this.smf.clone();
+    projection.updateFromPrimeActivity(this.field.getState());
+    const touched: string[] = [];
+    for (let i = 0; i < SMF_DIMENSION; i++) {
+      if (Math.abs(projection.get(i) - this.smf.get(i)) > 1e-9) {
+        touched.push(SMF_AXES[i as SMFAxisIndex].name);
+      }
+    }
+    return touched;
+  }
+
   /**
    * Store the current orientation as a memory trace.
    * Returns the created trace (null when the field is quiescent).
@@ -314,7 +498,14 @@ export class SemanticObserver implements Initializable {
     if (state.totalAmplitude <= 0) return null;
 
     const amplitudes = this.memoryPatternAmplitudes(state);
-    return this.memory.store(content, this.smf.clone(), this.field.primes, { amplitudes });
+    const trace = this.memory.store(content, this.smf.clone(), this.field.primes, { amplitudes });
+    this.signals.push({
+      kind: 'memory',
+      at: Date.now(),
+      causeId: this.lastStimulusId,
+      payload: { event: 'stored', traceId: trace.id, content }
+    });
+    return trace;
   }
 
   /**
@@ -329,10 +520,21 @@ export class SemanticObserver implements Initializable {
     this.requireInitialized();
     const folded = content ? this.resolvePrimes(content) : undefined;
     const queryPrimes = folded ? folded.filter(p => p > 0) : undefined;
-    return this.memory.recall(
+    const results = this.memory.recall(
       { smf: this.smf.clone(), primes: queryPrimes },
       topK
     );
+    for (const result of results) {
+      if (result.consolidated) {
+        this.signals.push({
+          kind: 'memory',
+          at: Date.now(),
+          causeId: this.lastStimulusId,
+          payload: { event: 'consolidated', traceId: result.trace.id, content: result.trace.content, strength: result.trace.strength }
+        });
+      }
+    }
+    return results;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -386,6 +588,13 @@ export class SemanticObserver implements Initializable {
       lastSafetySnapshot = this.lastSafety;
 
       this.tickCount += 1;
+
+      // 0. Ambient drive: the resting baseline set via observe({kind:'noise'}).
+      //    A real constant excitation, so the field has a floor but never
+      //    fabricates activity it was not given.
+      if (this.ambientLevel > 0) {
+        this.field.excite(this.field.primes, this.ambientLevel * step);
+      }
 
       // 1. Evolve the prime oscillators.
       const metrics = this.field.tick(step);
@@ -449,6 +658,31 @@ export class SemanticObserver implements Initializable {
       };
       this.tickEvents.next(event);
 
+      // ── Signal stream emission (no throw paths after this point) ──────
+      this.signals.push({
+        kind: 'metric',
+        at: Date.now(),
+        causeId: this.lastStimulusId,
+        payload: {
+          coherence: metrics.coherence,
+          entropy: metrics.entropy,
+          orderParameter: metrics.orderParameter,
+          activePrimeCount: state.activePrimes.length,
+          totalAmplitude: state.totalAmplitude,
+          holographicEnergy: this.hologram.energy()
+        }
+      });
+      if (moment) {
+        this.signals.push({
+          kind: 'insight',
+          at: Date.now(),
+          causeId: this.lastStimulusId,
+          payload: { momentId: moment.id, axis: 'coherence', coherence: moment.coherence }
+        });
+      }
+      this.updateDriftDetection(metrics.coherence, step);
+      this.sweepMemorySignals();
+
       return event;
     } catch (err) {
       // ── Rollback: the tick either completes or leaves no trace ─────────
@@ -469,6 +703,87 @@ export class SemanticObserver implements Initializable {
       // Typed error channel: no EventEmitter 'error' semantics, no crash.
       this.errorEvents.next(error);
       throw error;
+    }
+  }
+
+  // ── signal internals (called inside the atomic tick region) ─────────────
+
+  /**
+   * Drift detection: emit a warning when coherence has trended downward
+   * across a window of ticks. Real coherence is noisy, so the criterion is a
+   * trend, not strict monotonicity: at least `driftDecliningRatio` of
+   * tick-to-tick steps must be non-increasing AND the window must lose at
+   * least `driftDropThreshold` coherence. The episode ends when the window is
+   * clearly rising again (< 60% declining), so a sustained decline emits
+   * exactly one signal. Window and thresholds are constructor options.
+   */
+  private updateDriftDetection(coherence: number, step: number): void {
+    void step;
+    const windowTicks = this.options.driftWindowTicks;
+    this.coherenceHistory.push({ at: this.elapsed, coherence });
+    while (this.coherenceHistory.length > windowTicks * 3) {
+      this.coherenceHistory.shift();
+    }
+
+    const window = this.coherenceHistory.slice(-windowTicks);
+    if (window.length < windowTicks) return;
+
+    let decliningSteps = 0;
+    for (let i = 1; i < window.length; i++) {
+      if (window[i].coherence <= window[i - 1].coherence) {
+        decliningSteps += 1;
+      }
+    }
+    const steps = window.length - 1;
+    const decliningRatio = decliningSteps / steps;
+
+    if (decliningRatio < 0.6) {
+      this.driftEpisodeActive = false;
+    }
+
+    if (this.driftEpisodeActive) return;
+    if (decliningRatio < this.options.driftDecliningRatio) return;
+
+    const start = window[0];
+    const end = window[window.length - 1];
+    if (start.coherence - end.coherence < this.options.driftDropThreshold) return;
+
+    this.driftEpisodeActive = true;
+    this.signals.push({
+      kind: 'drift',
+      at: Date.now(),
+      causeId: this.lastStimulusId,
+      payload: {
+        axis: 'coherence',
+        direction: 'down',
+        durationMs: Math.round((end.at - start.at) * 1000),
+        coherenceStart: start.coherence,
+        coherenceEnd: end.coherence
+      }
+    });
+  }
+
+  /**
+   * Memory lifecycle sweep (throttled to every 50 ticks): traces whose
+   * retrieval strength decays below the threshold emit a 'decaying' signal
+   * exactly once; a recovered trace is re-armed.
+   */
+  private sweepMemorySignals(): void {
+    this.memorySweepCounter += 1;
+    if (this.memorySweepCounter % 50 !== 0) return;
+
+    for (const trace of this.memory.all()) {
+      if (trace.strength < 0.5 && !this.decayFlagged.has(trace.id)) {
+        this.decayFlagged.add(trace.id);
+        this.signals.push({
+          kind: 'memory',
+          at: Date.now(),
+          causeId: this.lastStimulusId,
+          payload: { event: 'decaying', traceId: trace.id, content: trace.content, strength: trace.strength }
+        });
+      } else if (trace.strength >= 0.6 && this.decayFlagged.has(trace.id)) {
+        this.decayFlagged.delete(trace.id);
+      }
     }
   }
 
@@ -565,6 +880,13 @@ export class SemanticObserver implements Initializable {
     this.momentCount = 0;
     this.lastMomentId = null;
     this.lastSafety = null;
+    this.lastStimulusId = null;
+    this.ambientLevel = 0;
+    this.coherenceHistory.length = 0;
+    this.driftEpisodeActive = false;
+    this.decayFlagged.clear();
+    this.memorySweepCounter = 0;
+    this.signals.clear();
   }
 
   // ─────────────────────────────────────────────────────────────────────────

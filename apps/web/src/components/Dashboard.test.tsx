@@ -4,11 +4,19 @@ import { Dashboard } from './Dashboard';
 
 const noop = () => {};
 
+const baseProps = {
+  error: null,
+  metrics: null as never,
+  lastStimulus: null as never,
+  signals: [] as never[],
+  onStart: noop,
+  onStop: noop,
+  onExcite: noop
+};
+
 describe('Dashboard', () => {
   it('renders the degraded banner and never fabricates metrics', () => {
-    render(
-      <Dashboard status="degraded" error={null} metrics={null} onStart={noop} onStop={noop} onExcite={noop} />
-    );
+    render(<Dashboard status="degraded" {...baseProps} />);
     expect(screen.getByRole('alert').textContent).toMatch(/degraded mode/i);
     // All six metric cards render placeholders — none fabricate numbers.
     expect(screen.getAllByText('—')).toHaveLength(6);
@@ -35,9 +43,7 @@ describe('Dashboard', () => {
       safety: { allowed: true, violations: [] },
       kernel: { loaded: true, degraded: false }
     } as never;
-    render(
-      <Dashboard status="ready" error={null} metrics={metrics} onStart={noop} onStop={noop} onExcite={noop} />
-    );
+    render(<Dashboard status="ready" {...baseProps} metrics={metrics} />);
     expect(screen.getByText('0.834')).toBeDefined();
     expect(screen.getByText('2.100')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -48,10 +54,7 @@ describe('Dashboard', () => {
     render(
       <Dashboard
         status="ready"
-        error={null}
-        metrics={null}
-        onStart={noop}
-        onStop={noop}
+        {...baseProps}
         onExcite={(text) => {
           excited = text;
         }}
@@ -65,9 +68,41 @@ describe('Dashboard', () => {
   });
 
   it('hides the excitation form when the observer is not running', () => {
-    render(
-      <Dashboard status="idle" error={null} metrics={null} onStart={noop} onStop={noop} onExcite={noop} />
-    );
+    render(<Dashboard status="idle" {...baseProps} />);
     expect(screen.queryByPlaceholderText(/excite the observer/i)).toBeNull();
+  });
+
+  it('explains the latest stimulus in the "why" panel', () => {
+    const lastStimulus = {
+      stimulusId: '11111111-2222-4333-8444-555555555555',
+      kind: 'text' as const,
+      excitedPrimes: [2, 3, 5],
+      touchedAxes: ['coherence'],
+      coherenceDelta: 0.04,
+      activePrimeCount: 12
+    };
+    render(<Dashboard status="ready" {...baseProps} lastStimulus={lastStimulus} />);
+    expect(screen.getByText(/excited primes \[2, 3, 5\]/)).toBeDefined();
+    expect(screen.getByText(/Coherence moved/)).toBeDefined();
+  });
+
+  it('renders interpreted signals in the stream', () => {
+    const signals = [
+      {
+        kind: 'drift' as const,
+        at: Date.now(),
+        causeId: null,
+        payload: {
+          axis: 'coherence',
+          direction: 'down' as const,
+          durationMs: 120000,
+          coherenceStart: 0.5,
+          coherenceEnd: 0.3
+        }
+      }
+    ];
+    render(<Dashboard status="ready" {...baseProps} signals={signals} />);
+    expect(screen.getByText('Focus drift')).toBeDefined();
+    expect(screen.getByText(/coherence fell 0\.200/)).toBeDefined();
   });
 });

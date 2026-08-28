@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import type { SemanticObserverState } from '@sschepis/sentient-core';
+import type { SemanticObserverState, ObserverSignal, StimulusResult } from '@sschepis/sentient-core';
 import type { ObserverStatus } from '../observer/engine';
+import { describeStimulusResult, interpretSignal, signalTimestamp } from '../observer/interpreter';
 
 export interface DashboardProps {
   status: ObserverStatus;
   error: string | null;
   metrics: SemanticObserverState | null;
+  lastStimulus: StimulusResult | null;
+  signals: ObserverSignal[];
   onStart: () => void;
   onStop: () => void;
   onExcite: (text: string) => void;
@@ -27,7 +30,7 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
  * The degraded banner is a first-class citizen: when the optional tinyaleph
  * kernel cannot load, the app must say so, never fake numbers.
  */
-export function Dashboard({ status, error, metrics, onStart, onStop, onExcite }: DashboardProps) {
+export function Dashboard({ status, error, metrics, lastStimulus, signals, onStart, onStop, onExcite }: DashboardProps) {
   const running = status === 'ready' || status === 'degraded';
   const coherence = metrics?.coherence;
   const entropy = metrics?.entropy;
@@ -116,6 +119,20 @@ export function Dashboard({ status, error, metrics, onStart, onStop, onExcite }:
         </form>
       )}
 
+      {running && (
+        <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
+          <p className="text-xs uppercase tracking-wider text-slate-400">Why the numbers moved</p>
+          {lastStimulus !== null ? (
+            <p className="mt-1 text-sm text-slate-300">
+              {describeStimulusResult(lastStimulus)}
+              <span className="text-slate-500"> · stimulus {lastStimulus.stimulusId.slice(0, 8)}</span>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-500">no stimulus yet</p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <MetricCard
           label="Coherence"
@@ -184,6 +201,30 @@ export function Dashboard({ status, error, metrics, onStart, onStop, onExcite }:
               {metrics.kernel.degraded ? ' (degraded)' : ''}
             </p>
           </div>
+        </div>
+      )}
+
+      {running && (
+        <div className="mt-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
+          <p className="mb-2 text-xs uppercase tracking-wider text-slate-400">
+            Signal stream ({signals.length} recent)
+          </p>
+          {signals.length === 0 ? (
+            <p className="text-sm text-slate-500">waiting for the observer…</p>
+          ) : (
+            <ul className="max-h-64 space-y-1 overflow-y-auto font-mono text-xs">
+              {[...signals].reverse().map((signal, i) => {
+                const interpretation = interpretSignal(signal);
+                return (
+                  <li key={`${signal.kind}-${i}`} className="flex gap-2 py-1">
+                    <span className="shrink-0 text-slate-500">{signalTimestamp(signal)}</span>
+                    <span className="shrink-0 font-semibold text-slate-300">{interpretation.title}</span>
+                    <span className="text-slate-400">{interpretation.detail}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </div>

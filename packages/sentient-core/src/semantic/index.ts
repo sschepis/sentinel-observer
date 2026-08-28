@@ -134,6 +134,16 @@ export type {
 
 // Observer
 export { SemanticObserver, safetyScore } from './SemanticObserver';
+export type { Stimulus, StimulusContext, StimulusResult, AttentionFocus, LearningEventType } from './stimulus';
+export {
+  SignalStream,
+  type ObserverSignal,
+  type ObserverSignalKind,
+  type MetricSignalPayload,
+  type InsightSignalPayload,
+  type DriftSignalPayload,
+  type MemorySignalPayload
+} from './ObserverSignals';
 export type {
   SemanticObserverOptions,
   SemanticMoment,
