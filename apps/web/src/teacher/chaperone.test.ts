@@ -170,7 +170,9 @@ describe('OpenAICompatProvider endpoint handling', () => {
     const content = await provider.complete('test prompt');
 
     expect(seen[0].url).toBe('http://localhost:1234/v1/responses');
-    expect((seen[0].body as { input?: unknown }).input).toBeDefined();
+    const input = (seen[0].body as { input?: Array<{ content: Array<{ type: string }> }> }).input;
+    expect(input).toBeDefined();
+    expect(input![1].content[0].type).toBe('text');
     expect(content).toContain('apple');
   });
 
@@ -236,6 +238,10 @@ describe('LM Studio native v1 API', () => {
     // the body it rejected in the field logs must never be sent first again.
     expect(seen[0].body.input).toBeDefined();
     expect(seen[0].body.messages).toBeUndefined();
+    // ...and content must be DISCRIMINATED parts ({type: 'text', text}), the
+    // form that satisfies the 'text' | 'image' union validator.
+    const input = seen[0].body.input as Array<{ content: Array<{ type: string; text: string }> }>;
+    expect(input[1].content[0]).toEqual({ type: 'text', text: 'test prompt' });
     expect(content).toContain('apple');
   });
 

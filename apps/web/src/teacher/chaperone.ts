@@ -83,10 +83,21 @@ export class OpenAICompatProvider implements ChaperoneProvider {
               input: [
                 {
                   role: 'system',
-                  content:
-                    'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
+                  // LM Studio's native API validates content against a
+                  // discriminated union: each part must carry its type tag
+                  // ('text' | 'image'). Plain-string content is rejected
+                  // with "Invalid discriminator value".
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
+                    }
+                  ]
                 },
-                { role: 'user', content: prompt }
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: prompt }]
+                }
               ],
               temperature: 0.4
             }
