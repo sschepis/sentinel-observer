@@ -170,9 +170,11 @@ describe('OpenAICompatProvider endpoint handling', () => {
     const content = await provider.complete('test prompt');
 
     expect(seen[0].url).toBe('http://localhost:1234/v1/responses');
-    const input = (seen[0].body as { input?: Array<{ content: Array<{ type: string }> }> }).input;
+    // /v1/responses takes message objects with PLAIN-STRING content — the
+    // shape the live server accepted; part-tagged content is rejected there.
+    const input = (seen[0].body as { input?: Array<{ role: string; content: string }> }).input;
     expect(input).toBeDefined();
-    expect(input![1].content[0].type).toBe('text');
+    expect(input![1]).toEqual({ role: 'user', content: 'test prompt' });
     expect(content).toContain('apple');
   });
 
@@ -181,8 +183,9 @@ describe('OpenAICompatProvider endpoint handling', () => {
     (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL) => {
       const urlString = String(url);
       seen.push(urlString);
-      if (urlString.endsWith('/chat/completions')) {
-        return new Response(JSON.stringify({ error: { message: "'input' is required", param: 'input' } }), { status: 400 });
+      if (seen.length === 1) {
+        // The native endpoint rejects the first attempt — force the fallback.
+        return new Response(JSON.stringify({ error: { message: 'Invalid discriminator value', param: 'input' } }), { status: 400 });
       }
       return new Response(
         JSON.stringify({ output: [{ content: [{ text: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' }] }] }),
@@ -190,10 +193,11 @@ describe('OpenAICompatProvider endpoint handling', () => {
       );
     }) as typeof fetch;
 
-    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/v1', apiKey: '', model: 'test' });
+    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/api/v1/chat', apiKey: '', model: 'test' });
     const content = await provider.complete('test prompt');
 
     expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe('http://localhost:1234/api/v1/chat');
     expect(seen[1]).toBe('http://localhost:1234/v1/responses');
     expect(content).toContain('apple');
   });
@@ -234,14 +238,14 @@ describe('LM Studio native v1 API', () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0].url).toBe('http://localhost:1234/api/v1/chat');
-    // LM Studio's native endpoint expects the Responses-style input field —
-    // the body it rejected in the field logs must never be sent first again.
-    expect(seen[0].body.input).toBeDefined();
-    expect(seen[0].body.messages).toBeUndefined();
-    // ...and content must be DISCRIMINATED parts ({type: 'text', text}), the
-    // form that satisfies the 'text' | 'image' union validator.
-    const input = seen[0].body.input as Array<{ content: Array<{ type: string; text: string }> }>;
-    expect(input[1].content[0]).toEqual({ type: 'text', text: 'test prompt' });
+    // The native endpoint takes a FLAT array of discriminated parts — the
+    // exact shape the live server's 'text' | 'image' union validator accepts.
+    const input = seen[0].body.input as Array<{ type: string; text: string }>;
+    expect(input).toHaveLength(1);
+    expect(input[0].type).toBe('text');
+    expect(input[0].text).toContain('test prompt');
+    // No message objects, no roles — the native API rejects them.
+    expect(JSON.stringify(seen[0].body)).not.toContain('"role"');
     expect(content).toContain('apple');
   });
 

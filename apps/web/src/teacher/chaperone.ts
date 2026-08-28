@@ -71,48 +71,46 @@ export class OpenAICompatProvider implements ChaperoneProvider {
 
   async complete(prompt: string, options?: { signal?: AbortSignal }): Promise<string> {
     const target = resolveEndpoint(this.settings.endpoint);
-    const request = async (style: 'chat' | 'native' | 'responses', bodyStyle: 'messages' | 'input') => {
-      // LM Studio's native /api/v1/chat expects the Responses-style `input`
-      // field (its server rejects `{messages}` with "'input' is required");
-      // the OpenAI-compatible endpoint wants `{messages}`.
+    const SYSTEM_PROMPT =
+      'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.';
+
+    const request = async (style: 'chat' | 'native' | 'responses') => {
       const url = style === 'chat' ? target.chatUrl : style === 'native' ? target.nativeUrl : target.responsesUrl;
+
+      // Each endpoint family has its own exact contract (verified against the
+      // live server):
+      //  - native /api/v1/chat: a FLAT array of discriminated parts
+      //    ({type: 'text'}) — message objects are rejected with "Invalid
+      //    discriminator value"; roles are not supported, so the system
+      //    instruction is merged into the single user part.
+      //  - /v1/responses: message objects with PLAIN-STRING content (the
+      //    shape the live server accepted; part-tagged content is rejected
+      //    with "Invalid type for 'input'").
+      //  - /v1/chat/completions: standard {messages} with string content.
       const body =
-        bodyStyle === 'input'
+        style === 'native'
           ? {
               model: this.settings.model,
-              input: [
-                {
-                  role: 'system',
-                  // LM Studio's native API validates content against a
-                  // discriminated union: each part must carry its type tag
-                  // ('text' | 'image'). Plain-string content is rejected
-                  // with "Invalid discriminator value".
-                  content: [
-                    {
-                      type: 'text',
-                      text: 'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
-                    }
-                  ]
-                },
-                {
-                  role: 'user',
-                  content: [{ type: 'text', text: prompt }]
-                }
-              ],
+              input: [{ type: 'text', text: `${SYSTEM_PROMPT}\n\n${prompt}` }],
               temperature: 0.4
             }
-          : {
-              model: this.settings.model,
-              messages: [
-                {
-                  role: 'system',
-                  content:
-                    'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
-                },
-                { role: 'user', content: prompt }
-              ],
-              temperature: 0.4
-            };
+          : style === 'responses'
+            ? {
+                model: this.settings.model,
+                input: [
+                  { role: 'system', content: SYSTEM_PROMPT },
+                  { role: 'user', content: prompt }
+                ],
+                temperature: 0.4
+              }
+            : {
+                model: this.settings.model,
+                messages: [
+                  { role: 'system', content: SYSTEM_PROMPT },
+                  { role: 'user', content: prompt }
+                ],
+                temperature: 0.4
+              };
 
       return fetch(url, {
         method: 'POST',
@@ -125,20 +123,15 @@ export class OpenAICompatProvider implements ChaperoneProvider {
       });
     };
 
-    const bodyStyleFor = (style: 'chat' | 'native' | 'responses'): 'messages' | 'input' =>
-      style === 'chat' ? 'messages' : 'input';
-
     let style = target.style;
-    let response = await request(style, bodyStyleFor(style));
+    let response = await request(style);
 
     if (!response.ok) {
-      // A server that speaks the Responses API rejects a `messages` body with
-      // "'input' is required"; a server whose /api/v1/chat expects the input
-      // shape behaves the same. Retry ONCE with the input-shaped body at the
-      // /responses sibling — the shape every LM Studio API style accepts.
-      const alreadyInputAtResponses = style === 'responses' && bodyStyleFor(style) === 'input';
-      if (!alreadyInputAtResponses) {
-        response = await request('responses', 'input');
+      // One fallback: the /v1/responses message-object shape is the most
+      // widely accepted contract across LM Studio builds — retry there once
+      // unless that is the request that already failed.
+      if (style !== 'responses') {
+        response = await request('responses');
         style = 'responses';
       }
     }
