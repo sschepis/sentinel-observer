@@ -1,10 +1,12 @@
 /**
  * @jest-environment node
  */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, afterEach } from '@jest/globals';
 import {
   Chaperone,
   NullChaperoneProvider,
+  OpenAICompatProvider,
+  resolveEndpoint,
   parseDefinitionsResponse,
   validateGeneratedEntry,
   type ChaperoneProvider
@@ -126,5 +128,85 @@ describe('Chaperone.fillDefinitions', () => {
     expect(result.definitions).toHaveLength(0);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toMatch(/no LLM provider configured/);
+  });
+});
+
+describe('OpenAICompatProvider endpoint handling', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
+  });
+
+  it('appends /chat/completions to a bare base URL and sends a chat body', async () => {
+    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
+    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse((init?.body as string) ?? '{}') });
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' } }] }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/v1', apiKey: '', model: 'test' });
+    const content = await provider.complete('test prompt');
+
+    expect(seen[0].url).toBe('http://localhost:1234/v1/chat/completions');
+    expect(seen[0].body.messages).toBeDefined();
+    expect(content).toContain('apple');
+  });
+
+  it('uses the responses API style for /responses endpoints', async () => {
+    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
+    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse((init?.body as string) ?? '{}') });
+      return new Response(
+        JSON.stringify({ output: [{ content: [{ text: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' }] }] }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/v1/responses', apiKey: '', model: 'test' });
+    const content = await provider.complete('test prompt');
+
+    expect(seen[0].url).toBe('http://localhost:1234/v1/responses');
+    expect((seen[0].body as { input?: unknown }).input).toBeDefined();
+    expect(content).toContain('apple');
+  });
+
+  it('retries once with the responses shape when a chat request is rejected with the input-required signature', async () => {
+    const seen: string[] = [];
+    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL) => {
+      const urlString = String(url);
+      seen.push(urlString);
+      if (urlString.endsWith('/chat/completions')) {
+        return new Response(JSON.stringify({ error: { message: "'input' is required", param: 'input' } }), { status: 400 });
+      }
+      return new Response(
+        JSON.stringify({ output: [{ content: [{ text: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' }] }] }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/v1', apiKey: '', model: 'test' });
+    const content = await provider.complete('test prompt');
+
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe('http://localhost:1234/v1/responses');
+    expect(content).toContain('apple');
+  });
+});
+
+describe('resolveEndpoint', () => {
+  it('derives chat/responses URLs for base, chat, and responses endpoints', () => {
+    expect(resolveEndpoint('http://localhost:1234/v1')).toEqual({
+      chatUrl: 'http://localhost:1234/v1/chat/completions',
+      responsesUrl: 'http://localhost:1234/v1/responses',
+      style: 'chat'
+    });
+    expect(resolveEndpoint('http://localhost:1234/v1/chat/completions').chatUrl).toBe(
+      'http://localhost:1234/v1/chat/completions'
+    );
+    expect(resolveEndpoint('http://localhost:1234/v1/responses').style).toBe('responses');
   });
 });

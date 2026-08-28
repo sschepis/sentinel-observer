@@ -51,9 +51,16 @@ export class NullChaperoneProvider implements ChaperoneProvider {
 }
 
 /**
- * An OpenAI-compatible chat-completions endpoint (any provider exposing
- * POST /chat/completions with {model, messages}). The API key lives in
- * localStorage only and is sent exclusively to the configured endpoint.
+ * An OpenAI-compatible endpoint (any provider exposing POST /chat/completions
+ * or the Responses API at /responses). The API key lives in localStorage only
+ * and is sent exclusively to the configured endpoint.
+ *
+ * Endpoint URL handling: a bare base URL (`http://localhost:1234/v1`) gets
+ * `/chat/completions` appended; URLs ending in `/chat/completions` or
+ * `/responses` are used as-is. When a chat-style request is rejected with
+ * the Responses-API signature error ("'input' is required"), the provider
+ * retries once against the `/responses` sibling — so both LM Studio API
+ * styles work without configuration guesswork.
  */
 export class OpenAICompatProvider implements ChaperoneProvider {
   readonly name: string;
@@ -63,39 +70,88 @@ export class OpenAICompatProvider implements ChaperoneProvider {
   }
 
   async complete(prompt: string, options?: { signal?: AbortSignal }): Promise<string> {
-    const response = await fetch(this.settings.endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(this.settings.apiKey.length > 0 ? { authorization: `Bearer ${this.settings.apiKey}` } : {})
-      },
-      body: JSON.stringify({
-        model: this.settings.model,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
-          },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.4
-      }),
-      signal: options?.signal
-    });
+    const target = resolveEndpoint(this.settings.endpoint);
+    const chat = async (style: 'chat' | 'responses') => {
+      const url = style === 'chat' ? target.chatUrl : target.responsesUrl;
+      const body =
+        style === 'chat'
+          ? {
+              model: this.settings.model,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
+                },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.4
+            }
+          : {
+              model: this.settings.model,
+              input: [
+                {
+                  role: 'system',
+                  content:
+                    'You write plain-English learner definitions and example sentences. Respond ONLY with a JSON array of objects {"word": string, "definition": string, "example": string}. No prose, no markdown.'
+                },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.4
+            };
+
+      return fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.settings.apiKey.length > 0 ? { authorization: `Bearer ${this.settings.apiKey}` } : {})
+        },
+        body: JSON.stringify(body),
+        signal: options?.signal
+      });
+    };
+
+    let response = await chat(target.style);
+    if (!response.ok && target.style === 'chat') {
+      // A server that speaks the Responses API rejects a chat body with
+      // "'input' is required" — retry once with the responses shape.
+      const errorBody = await response.text().catch(() => '');
+      if (/input.*required|invalid_union/i.test(errorBody)) {
+        response = await chat('responses');
+      }
+    }
 
     if (!response.ok) {
       throw new Error(`LLM endpoint returned ${response.status}`);
     }
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = payload.choices?.[0]?.message?.content;
+    const payload = (await response.json()) as
+      | { choices?: Array<{ message?: { content?: string } }> }
+      | { output?: Array<{ content?: Array<{ text?: string }> }> };
+    const content =
+      (payload as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content ??
+      (payload as { output?: Array<{ content?: Array<{ text?: string }> }> }).output?.[0]?.content?.[0]?.text ??
+      '';
     if (!content) {
       throw new Error('LLM response contained no content');
     }
     return content;
   }
+}
+
+/** Resolve an endpoint setting into chat/responses URLs and the preferred style. */
+export function resolveEndpoint(endpoint: string): {
+  chatUrl: string;
+  responsesUrl: string;
+  style: 'chat' | 'responses';
+} {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+  if (/\/responses$/.test(trimmed)) {
+    return { chatUrl: trimmed.replace(/\/responses$/, '/chat/completions'), responsesUrl: trimmed, style: 'responses' };
+  }
+  if (/\/chat\/completions$/.test(trimmed)) {
+    return { chatUrl: trimmed, responsesUrl: trimmed.replace(/\/chat\/completions$/, '/responses'), style: 'chat' };
+  }
+  return { chatUrl: `${trimmed}/chat/completions`, responsesUrl: `${trimmed}/responses`, style: 'chat' };
 }
 
 const DEFINITION_MIN = 5;
