@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { TeacherPanel } from './TeacherPanel';
 import type { TeacherAgent } from '../teacher/TeacherAgent';
 import type { ObserverSignal } from '@sschepis/sentient-core';
+import { MemoryPersistenceStore } from '../persistence/store';
 
 /** Minimal structural stand-in for the teacher — the panel calls listWords()
  * and the auto-loop subscription methods. */
@@ -47,25 +48,28 @@ const memorySignal: ObserverSignal = {
   payload: { event: 'stored', traceId: 't1', content: 'apple: a fruit' }
 };
 
+const noop = () => {};
+const memoryStore = new MemoryPersistenceStore();
+
 describe('TeacherPanel', () => {
   it('asks the user to start the observer when no teacher exists', () => {
-    render(<TeacherPanel teacher={null} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
+    render(<TeacherPanel teacher={null} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} persistence={memoryStore} onDefinitionsApplied={noop} />);
     expect(screen.getByText(/Start the observer first/i)).toBeDefined();
   });
 
   it('renders the vocabulary list with honest states', () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} persistence={memoryStore} onDefinitionsApplied={noop} />);
     expect(screen.getByText(/apple/)).toBeDefined();
     expect(screen.getByText('learning')).toBeDefined();
   });
 
   it("renders the observer's diary entries in the first person", () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[memorySignal]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[memorySignal]} persistenceKind="memory" restoredCount={0} staleCount={0} persistence={memoryStore} onDefinitionsApplied={noop} />);
     expect(screen.getByText(/I learned "apple: a fruit" today\./)).toBeDefined();
   });
 
   it('shows the empty diary prompt without signals', () => {
-    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} />);
+    render(<TeacherPanel teacher={fakeTeacher} diarySignals={[]} persistenceKind="memory" restoredCount={0} staleCount={0} persistence={memoryStore} onDefinitionsApplied={noop} />);
     expect(screen.getByText(/The diary is empty/)).toBeDefined();
   });
 });

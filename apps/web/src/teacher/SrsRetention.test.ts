@@ -9,8 +9,8 @@ import { PRIME_SPACE, deckVocabulary } from './primeSignature';
 import { MemoryPersistenceStore } from '../persistence/store';
 
 const OPTIONS = {
-  primeCount: 32,
-  gridSize: 64,
+  primeCount: 64,
+  gridSize: 128,
   memoryMode: 'compact' as const,
   vocabulary: deckVocabulary(DECK_100, PRIME_SPACE)
 };

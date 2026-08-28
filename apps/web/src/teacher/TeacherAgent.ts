@@ -1,7 +1,7 @@
 import type { RecallResult } from '@sschepis/sentient-core';
 import type { ObserverSession } from '../observer/engine';
 import type { PersistenceStore } from '../persistence/store';
-import { lessonText, productionCue, recognitionCue, type DeckWord } from './deck';
+import { lessonText, productionCue, recognitionCue, hasDefinition, type DeckWord } from './deck';
 
 /**
  * The word loop: teach → test → grade → reinforce, with the OBSERVER as the
@@ -278,6 +278,24 @@ export class TeacherAgent {
   }
 
   /**
+   * Apply chaperoned (or authored) definitions to the deck in place. Words
+   * gain their meaning content and the school's quizzes upgrade from
+   * word-only recognition to full recognition + production. Content that is
+   * already defined is never overwritten by generated text.
+   */
+  applyDefinitions(definitions: ReadonlyArray<{ word: string; definition: string; example: string }>): number {
+    let applied = 0;
+    for (const generated of definitions) {
+      const state = this.states.get(generated.word);
+      if (!state || state.word.definition.trim().length > 0) continue;
+      state.word.definition = generated.definition;
+      state.word.example = generated.example;
+      applied += 1;
+    }
+    return applied;
+  }
+
+  /**
    * The retention report: where every word stands, whether it is due for
    * review, and how its strength moved since the previous session.
    */
@@ -402,7 +420,7 @@ export class TeacherAgent {
    */
   grade(word: string, question: QuizAnswer): GradeResult {
     const state = this.requiredState(word);
-    const expected = state.word.definition;
+    const expected = state.word.definition.trim().length > 0 ? state.word.definition : state.word.word;
 
     const top = question.recall;
     const matchedTrace =
@@ -571,7 +589,10 @@ export class TeacherAgent {
           await sleep(gradePauseMs);
           if (token !== this.autoLoopToken) break;
 
-          // Production: speak the word from its meaning.
+          // Production: speak the word from its meaning — only when a
+          // meaning exists. Word-only words are practiced by recognition
+          // until the Chaperone fills their definitions.
+          if (!hasDefinition(this.requiredState(word).word)) continue;
           const production = this.ask(word, 'production');
           setStep({
             phase: 'asking',

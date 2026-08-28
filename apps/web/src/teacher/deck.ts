@@ -31,7 +31,17 @@ export const STARTER_DECK: readonly DeckWord[] = [
 
 /** The lesson content the teacher presents for a word. */
 export function lessonText(entry: DeckWord): string {
+  if (entry.definition.trim().length === 0) {
+    // Word-only learning: the trace content is the word itself until the
+    // Chaperone provides a definition. Never fabricated content.
+    return entry.word;
+  }
   return `${entry.word}: ${entry.definition}. ${entry.example}`;
+}
+
+/** Whether the word has chaperoned (or authored) meaning content. */
+export function hasDefinition(entry: DeckWord): boolean {
+  return entry.definition.trim().length > 0;
 }
 
 /** The recall cue asking the observer to produce the word from its meaning. */

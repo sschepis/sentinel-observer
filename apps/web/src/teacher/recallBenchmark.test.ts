@@ -23,7 +23,7 @@ describe('recall accuracy benchmark (30 words, whole-word signatures)', () => {
   beforeAll(async () => {
     const deck = DECK_100.slice(0, BENCH_WORDS);
     session = new ObserverSession(
-      { primeCount: 32, gridSize: 64, vocabulary: deckVocabulary(deck, PRIME_SPACE) },
+      { primeCount: 64, gridSize: 128, vocabulary: deckVocabulary(deck, PRIME_SPACE) },
       100
     );
     await session.initialize();

@@ -12,6 +12,12 @@ import type { WordState } from '../teacher/TeacherAgent';
 
 export type PersistenceKind = 'indexeddb' | 'memory';
 
+export interface ChaperonedDefinition {
+  word: string;
+  definition: string;
+  example: string;
+}
+
 export interface PersistenceStore {
   readonly kind: PersistenceKind;
   saveWordStates(states: WordState[]): Promise<void>;
@@ -20,6 +26,8 @@ export interface PersistenceStore {
   loadTraces(): Promise<SerializedTrace[]>;
   appendDiary(signals: ObserverSignal[]): Promise<void>;
   loadDiary(): Promise<ObserverSignal[]>;
+  saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void>;
+  loadDefinitions(): Promise<ChaperonedDefinition[]>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -55,6 +63,16 @@ export class MemoryPersistenceStore implements PersistenceStore {
   async loadDiary(): Promise<ObserverSignal[]> {
     return [...this.diary];
   }
+
+  private definitions: ChaperonedDefinition[] = [];
+
+  async saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void> {
+    this.definitions = definitions.map((d) => ({ ...d }));
+  }
+
+  async loadDefinitions(): Promise<ChaperonedDefinition[]> {
+    return this.definitions.map((d) => ({ ...d }));
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -69,15 +87,23 @@ class SentinelDB extends Dexie {
   wordStates!: Table<WordStateRow, string>;
   traces!: Table<SerializedTrace, string>;
   diary!: Table<ObserverSignal, number>;
+  definitions!: Table<ChaperonedDefinition, string>;
 
   constructor() {
     super('sentinel');
     // v2: the diary table gains an index on 'at' — orderBy('at') requires it
     // (v1 shipped without the index and loadDiary threw SchemaError).
+    // v3: the definitions table stores chaperone-generated deck content.
     this.version(2).stores({
       wordStates: 'key',
       traces: 'id',
       diary: '++, at'
+    });
+    this.version(3).stores({
+      wordStates: 'key',
+      traces: 'id',
+      diary: '++, at',
+      definitions: 'word'
     });
   }
 }
@@ -112,6 +138,14 @@ export class IndexedDBPersistenceStore implements PersistenceStore {
 
   async loadDiary(): Promise<ObserverSignal[]> {
     return this.db.diary.orderBy('at').toArray();
+  }
+
+  async saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void> {
+    await this.db.definitions.bulkPut(definitions);
+  }
+
+  async loadDefinitions(): Promise<ChaperonedDefinition[]> {
+    return this.db.definitions.toArray();
   }
 }
 

@@ -3,29 +3,23 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
-import { PRIME_SPACE, deckVocabulary, primeSignature } from './primeSignature';
+import { PRIME_SPACE, deckVocabulary } from './primeSignature';
+import { DECK_1000 } from './decks/en-1000';
 
-const SCALE_WORDS = 500;
-
-function syntheticDeck(count: number): Array<{ word: string; definition: string; example: string }> {
-  return Array.from({ length: count }, (_, i) => {
-    const word = `w${i + 1}`;
-    return { word, definition: `meaning of ${word}`, example: `${word} in a sentence.` };
-  });
-}
+const SCALE_WORDS = 1000;
 
 /**
- * Phase-3 acceptance metric (docs/SCALING.md): the COMPACT memory bank at
- * 500 words — top-1 recognition accuracy, recall latency, and the serialized
- * footprint that makes browser residency viable.
+ * Phase-3 acceptance metric (docs/SCALING.md) at real-word scale: the
+ * COMPACT memory bank with 1,000 REAL English words (word-only traces) —
+ * top-1 recognition accuracy, recall latency, and the serialized footprint.
  */
-describe('compact-bank scale benchmark (500 words)', () => {
+describe('compact-bank scale benchmark (1000 real words)', () => {
   let session: ObserverSession;
+  const deck = DECK_1000.slice(0, SCALE_WORDS);
 
   beforeAll(async () => {
-    const deck = syntheticDeck(SCALE_WORDS);
     session = new ObserverSession(
-      { primeCount: 32, gridSize: 64, memoryMode: 'compact', vocabulary: deckVocabulary(deck, PRIME_SPACE) },
+      { primeCount: 64, gridSize: 128, memoryMode: 'compact', vocabulary: deckVocabulary(deck, PRIME_SPACE) },
       100
     );
     await session.initialize();
@@ -34,21 +28,19 @@ describe('compact-bank scale benchmark (500 words)', () => {
       session.settleField();
       session.observeText(entry.word);
       session.observer.tick(0.02);
-      session.storeMemory(`${entry.word}: ${entry.definition}`);
+      session.storeMemory(entry.word);
     }
-  }, 180000);
+  }, 300000);
 
   afterAll(() => {
     session.dispose();
   });
 
   it('recalls the right word for most cues, fast, with a lean footprint', () => {
-    const deck = syntheticDeck(SCALE_WORDS);
     const bank = session.observer.getMemoryBank();
     const traceByWord = new Map<string, string>();
     for (const trace of bank.all()) {
-      const word = trace.content.split(':')[0];
-      traceByWord.set(word, trace.id);
+      traceByWord.set(trace.content, trace.id);
     }
 
     let correct = 0;
@@ -72,23 +64,21 @@ describe('compact-bank scale benchmark (500 words)', () => {
     const meanLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
     const maxLatency = Math.max(...latencies);
 
-    // Serialized footprint: the whole bank as the persistence layer sees it.
     let footprintBytes = 0;
     for (const trace of bank.all()) {
       footprintBytes += JSON.stringify(bank.serializeTrace(trace.id)).length;
     }
 
     // eslint-disable-next-line no-console
-    console.log(`\nSCALE-500: accuracy ${(accuracy * 100).toFixed(1)}% (${correct}/${deck.length})`);
+    console.log(`\nSCALE-1000: accuracy ${(accuracy * 100).toFixed(1)}% (${correct}/${deck.length})`);
     // eslint-disable-next-line no-console
-    console.log(`SCALE-500: recall latency mean ${meanLatency.toFixed(1)}ms, max ${maxLatency.toFixed(1)}ms`);
+    console.log(`SCALE-1000: recall latency mean ${meanLatency.toFixed(1)}ms, max ${maxLatency.toFixed(1)}ms`);
     // eslint-disable-next-line no-console
-    console.log(`SCALE-500: serialized footprint ${(footprintBytes / 1024).toFixed(1)} KB (${(footprintBytes / deck.length).toFixed(0)} B/trace)`);
+    console.log(`SCALE-1000: serialized footprint ${(footprintBytes / 1024).toFixed(1)} KB (${(footprintBytes / deck.length).toFixed(0)} B/trace)`);
 
-    // CI gates: discrimination, interactivity, and memory residency.
     expect(accuracy).toBeGreaterThanOrEqual(0.7);
     expect(meanLatency).toBeLessThan(100);
     expect(maxLatency).toBeLessThan(500);
     expect(footprintBytes / deck.length).toBeLessThan(2048);
-  }, 180000);
+  }, 300000);
 });

@@ -8,7 +8,7 @@ import { DECK_100 } from './decks/en-100';
 import { MemoryPersistenceStore } from '../persistence/store';
 import { PRIME_SPACE, deckVocabulary } from './primeSignature';
 
-const OPTIONS = { primeCount: 32, gridSize: 64, memoryMode: 'compact' as const, vocabulary: deckVocabulary(DECK_100, PRIME_SPACE) };
+const OPTIONS = { primeCount: 64, gridSize: 128, memoryMode: 'compact' as const, vocabulary: deckVocabulary(DECK_100, PRIME_SPACE) };
 
 /**
  * The observer's learning record survives a restart: teach + grade, tear the

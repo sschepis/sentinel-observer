@@ -4,7 +4,9 @@ import type { ObserverSignal } from '@sschepis/sentient-core';
 import type { PersistenceKind } from '../persistence/store';
 import { diaryEntry, signalTimestamp } from '../observer/interpreter';
 import { VoiceService, matchSpokenWord, spokenAnswer } from '../speech/voice';
-import { DECK_100 } from '../teacher/decks/en-100';
+import { Chaperone, OpenAICompatProvider, NullChaperoneProvider, type ChaperoneSettings } from '../teacher/chaperone';
+import { ACTIVE_DECK } from '../teacher/decks';
+import type { PersistenceStore } from '../persistence/store';
 
 export interface TeacherPanelProps {
   /** The teacher, built over the running observer session. */
@@ -21,6 +23,10 @@ export interface TeacherPanelProps {
   restoredCount: number;
   /** Stale (pre-encoding) traces detected and reset for re-teaching. */
   staleCount: number;
+  /** The persistence store (chaperoned definitions are saved here). */
+  persistence: PersistenceStore;
+  /** Called after the chaperone applies definitions (refresh the lists). */
+  onDefinitionsApplied: () => void;
 }
 
 /**
@@ -28,7 +34,7 @@ export interface TeacherPanelProps {
  * observer's mind — its word states, its answers, its diary — and drives the
  * loop with teach/ask/grade controls.
  */
-export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredCount, staleCount }: TeacherPanelProps) {
+export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredCount, staleCount, persistence, onDefinitionsApplied }: TeacherPanelProps) {
   // tick is a refresh counter: bumping it recomputes the derived lists.
   const [tick, setTick] = useState(0);
   const [current, setCurrent] = useState<{ mode: 'quiz'; question: QuizAnswer } | null>(null);
@@ -91,12 +97,64 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
 
   useEffect(() => () => voice.stopSpeaking(), [voice]);
 
+  // ── Chaperone (LLM-generated, validated content) ────────────────────────
+  const SETTINGS_KEY = 'sentinel-chaperone-settings';
+  const [chaperoneSettings, setChaperoneSettings] = useState<ChaperoneSettings>(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) return JSON.parse(raw) as ChaperoneSettings;
+    } catch {
+      // Corrupt settings degrade to unconfigured.
+    }
+    return { endpoint: '', apiKey: '', model: 'gpt-4o-mini' };
+  });
+  const [chaperoneProgress, setChaperoneProgress] = useState<{ done: number; total: number } | null>(null);
+  const [chaperoneResult, setChaperoneResult] = useState<string | null>(null);
+
+  const saveChaperoneSettings = (next: ChaperoneSettings) => {
+    setChaperoneSettings(next);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+  };
+
+  const wordsWithoutDefinitions = useMemo(
+    () => (teacher === null ? 0 : teacher.listWords().filter((w) => w.word.definition.trim().length === 0).length),
+    [teacher, tick]
+  );
+
+  const runChaperone = async () => {
+    if (teacher === null) return;
+    const provider =
+      chaperoneSettings.endpoint.trim().length > 0
+        ? new OpenAICompatProvider(chaperoneSettings)
+        : new NullChaperoneProvider();
+    const chaperone = new Chaperone(provider);
+    const target = teacher.listWords().filter((w) => w.word.definition.trim().length === 0);
+
+    setChaperoneProgress({ done: 0, total: target.length });
+    setChaperoneResult(null);
+    const run = await chaperone.fillDefinitions(target.map((w) => w.word), {
+      onBatch: (done, total) => setChaperoneProgress({ done, total })
+    });
+
+    if (run.definitions.length > 0) {
+      teacher.applyDefinitions(run.definitions);
+      await persistence.saveDefinitions(run.definitions);
+      onDefinitionsApplied();
+    }
+    setChaperoneProgress(null);
+    setChaperoneResult(
+      run.errors.length > 0
+        ? `generated ${run.definitions.length} definitions, skipped ${run.skipped.length}, errors in ${run.errors.length} batches (${run.errors[0]})`
+        : `generated ${run.definitions.length} definitions${run.skipped.length > 0 ? `, skipped ${run.skipped.length} (invalid content rejected)` : ''}`
+    );
+  };
+
   const askAloud = () => {
     if (teacher === null) return;
     const started = voice.startListening({
       onTranscript: (heard) => {
         setTranscript(heard);
-        const match = matchSpokenWord(heard, DECK_100);
+        const match = matchSpokenWord(heard, ACTIVE_DECK);
         if (match === null) {
           // The observer honestly does not recognize the word — it must not
           // guess.
@@ -282,6 +340,60 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
           <p className="mt-1 text-sm text-slate-300">
             the observer says: <span className="font-mono text-emerald-300">“{spoken}”</span>
             {voiceStatus === 'speaking' ? ' 🔊' : ''}
+          </p>
+        )}
+      </div>
+
+      <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase tracking-wider text-slate-400">The Chaperone — LLM content, validated</p>
+          <span className="text-xs text-slate-500">
+            {chaperoneSettings.endpoint.trim().length > 0
+              ? `provider: ${chaperoneSettings.model || chaperoneSettings.endpoint}`
+              : 'no provider configured'}
+          </span>
+        </div>
+        {wordsWithoutDefinitions > 0 && (
+          <p className="mt-2 text-sm text-slate-400">
+            {wordsWithoutDefinitions} words have no meaning content yet — the observer learns them by recognition
+            until definitions exist.
+          </p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <input
+            type="text"
+            value={chaperoneSettings.endpoint}
+            onChange={(e) => saveChaperoneSettings({ ...chaperoneSettings, endpoint: e.target.value })}
+            placeholder="endpoint URL (OpenAI-compatible)"
+            className="w-64 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600"
+          />
+          <input
+            type="text"
+            value={chaperoneSettings.model}
+            onChange={(e) => saveChaperoneSettings({ ...chaperoneSettings, model: e.target.value })}
+            placeholder="model"
+            className="w-36 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600"
+          />
+          <input
+            type="password"
+            value={chaperoneSettings.apiKey}
+            onChange={(e) => saveChaperoneSettings({ ...chaperoneSettings, apiKey: e.target.value })}
+            placeholder="API key (stays in this browser)"
+            className="w-48 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600"
+          />
+          <button
+            onClick={() => void runChaperone()}
+            disabled={wordsWithoutDefinitions === 0 || chaperoneProgress !== null}
+            className="rounded-lg bg-violet-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-violet-600 disabled:opacity-40"
+          >
+            {chaperoneProgress !== null
+              ? `Filling… ${chaperoneProgress.done}/${chaperoneProgress.total}`
+              : `Fill definitions (${wordsWithoutDefinitions})`}
+          </button>
+        </div>
+        {chaperoneResult !== null && (
+          <p className="mt-2 text-xs text-slate-400">
+            {chaperoneResult} — LLM content is schema-validated and labeled; the observer's metrics remain its own.
           </p>
         )}
       </div>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { TeacherPanel } from './components/TeacherPanel';
 import { TeacherAgent } from './teacher/TeacherAgent';
-import { DECK_100 } from './teacher/decks/en-100';
+import { ACTIVE_DECK } from './teacher/decks';
 import { PRIME_SPACE, deckVocabulary } from './teacher/primeSignature';
 import { createPersistenceStore } from './persistence/store';
 import { useObserver } from './observer/useObserver';
@@ -13,10 +13,10 @@ import { useObserver } from './observer/useObserver';
  * scale substrate measured at 99% accuracy over 500 words).
  */
 const OBSERVER_OPTIONS = {
-  primeCount: 32,
-  gridSize: 64,
+  primeCount: 64,
+  gridSize: 128,
   memoryMode: 'compact' as const,
-  vocabulary: deckVocabulary(DECK_100, PRIME_SPACE)
+  vocabulary: deckVocabulary(ACTIVE_DECK, PRIME_SPACE)
 };
 
 export default function App() {
@@ -31,7 +31,7 @@ export default function App() {
   // The teacher exists only when the observer (the learner) is running.
   const teacher = useMemo(
     () =>
-      session !== null ? new TeacherAgent(session, DECK_100, persistence.current) : null,
+      session !== null ? new TeacherAgent(session, ACTIVE_DECK, persistence.current) : null,
     [session]
   );
 
@@ -40,17 +40,23 @@ export default function App() {
   useEffect(() => {
     if (teacher !== null && (status === 'ready' || status === 'degraded') && !restoreGuard.current) {
       restoreGuard.current = true;
-      void teacher.restoreFromPersistence().then(
-        (result) => {
+      void (async () => {
+        try {
+          const result = await teacher.restoreFromPersistence();
           setRestored(result.restored);
           setStaleCount(result.stale);
-        },
-        (reason) => {
+          // Chaperoned definitions load AFTER the teacher exists; applying
+          // them upgrades word-only words to full learning.
+          const definitions = await persistence.current.loadDefinitions();
+          if (definitions.length > 0) {
+            teacher.applyDefinitions(definitions);
+          }
+        } catch (reason) {
           console.warn('learning-record restore failed — starting fresh', reason);
           setRestored(0);
           setStaleCount(0);
         }
-      );
+      })();
     }
   }, [teacher, status]);
 
@@ -96,6 +102,8 @@ export default function App() {
           persistenceKind={persistence.current.kind}
           restoredCount={restored}
           staleCount={staleCount}
+          persistence={persistence.current}
+          onDefinitionsApplied={() => setRestored((n) => n + 1)}
         />
       )}
     </div>
