@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { TeacherAgent, type GradeResult, type QuizAnswer, type AutoLoopStep } from '../teacher/TeacherAgent';
 import type { ObserverSignal } from '@sschepis/sentient-core';
 import type { PersistenceKind } from '../persistence/store';
 import { diaryEntry, signalTimestamp } from '../observer/interpreter';
+import { VoiceService, matchSpokenWord, spokenAnswer } from '../speech/voice';
+import { DECK_100 } from '../teacher/decks/en-100';
 
 export interface TeacherPanelProps {
   /** The teacher, built over the running observer session. */
@@ -76,6 +78,52 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
   );
 
   const refresh = () => setTick((n) => n + 1);
+
+  // ── Voice conversation ───────────────────────────────────────────────────
+  const voiceRef = useRef<VoiceService | null>(null);
+  if (voiceRef.current === null) {
+    voiceRef.current = new VoiceService();
+  }
+  const voice = voiceRef.current;
+  const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'speaking'>('idle');
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [spoken, setSpoken] = useState<string | null>(null);
+
+  useEffect(() => () => voice.stopSpeaking(), [voice]);
+
+  const askAloud = () => {
+    if (teacher === null) return;
+    const started = voice.startListening({
+      onTranscript: (heard) => {
+        setTranscript(heard);
+        const match = matchSpokenWord(heard, DECK_100);
+        if (match === null) {
+          // The observer honestly does not recognize the word — it must not
+          // guess.
+          setSpoken("I do not recognize that word yet.");
+          setVoiceStatus('speaking');
+          voice.speak("I do not recognize that word yet.", { onEnd: () => setVoiceStatus('idle') });
+          return;
+        }
+        // The observer hears the spoken word and answers from memory.
+        const question = teacher.ask(match.word, 'recognition');
+        const answer = question.answer.length > 0 ? spokenAnswer(question.answer) : 'I do not remember that word.';
+        setSpoken(answer);
+        setVoiceStatus('speaking');
+        voice.speak(answer, { onEnd: () => setVoiceStatus('idle') });
+      },
+      onError: (error) => {
+        setTranscript(null);
+        setSpoken(`I could not hear you (${error}).`);
+        setVoiceStatus('idle');
+      }
+    });
+    if (started) {
+      setVoiceStatus('listening');
+    } else {
+      setSpoken('Speech recognition is unavailable in this browser — use the typed quizzes below.');
+    }
+  };
 
   const toggleAutoLoop = () => {
     if (teacher === null) return;
@@ -192,6 +240,51 @@ export function TeacherPanel({ teacher, diarySignals, persistenceKind, restoredC
           <p className="mt-1 text-sm text-slate-300">{autoStep.message}</p>
         </div>
       )}
+
+      <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase tracking-wider text-slate-400">Speak with the observer</p>
+          <span className="text-xs text-slate-500">
+            {voice.sttAvailable && voice.ttsAvailable
+              ? 'voice ready'
+              : `voice limited: ${!voice.sttAvailable ? 'no speech recognition' : 'no speech output'} — typed quizzes work`}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            onClick={() => {
+              if (voiceStatus === 'listening') {
+                voice.stopListening();
+                setVoiceStatus('idle');
+                return;
+              }
+              askAloud();
+            }}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${
+              voiceStatus === 'listening'
+                ? 'bg-red-700 hover:bg-red-600'
+                : 'bg-sky-700 hover:bg-sky-600 disabled:opacity-40'
+            }`}
+            disabled={voiceStatus === 'listening' ? false : !voice.sttAvailable}
+          >
+            {voiceStatus === 'listening' ? 'Cancel listening' : 'Ask aloud'}
+          </button>
+          <span className="text-xs text-slate-500">
+            say a word you have taught — the observer will answer aloud
+          </span>
+        </div>
+        {transcript !== null && (
+          <p className="mt-2 text-sm text-slate-400">
+            heard: <span className="text-slate-200">“{transcript}”</span>
+          </p>
+        )}
+        {spoken !== null && (
+          <p className="mt-1 text-sm text-slate-300">
+            the observer says: <span className="font-mono text-emerald-300">“{spoken}”</span>
+            {voiceStatus === 'speaking' ? ' 🔊' : ''}
+          </p>
+        )}
+      </div>
 
       {current !== null && (
         <div className="mb-6 rounded-lg border border-slate-700 bg-slate-900 p-4">
