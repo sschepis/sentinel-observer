@@ -217,10 +217,10 @@ describe('LM Studio native v1 API', () => {
     (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
   });
 
-  it('posts to /api/v1/chat for the native endpoint and parses its choices envelope', async () => {
-    const seen: string[] = [];
-    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL) => {
-      seen.push(String(url));
+  it('posts the INPUT-shaped body to /api/v1/chat for the native endpoint', async () => {
+    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
+    (globalThis as { fetch: typeof fetch }).fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse((init?.body as string) ?? '{}') });
       return new Response(
         JSON.stringify({ choices: [{ message: { role: 'assistant', content: '[{"word":"apple","definition":"a fruit","example":"I eat an apple."}]' } }] }),
         { status: 200 }
@@ -230,7 +230,12 @@ describe('LM Studio native v1 API', () => {
     const provider = new OpenAICompatProvider({ endpoint: 'http://localhost:1234/api/v1/chat', apiKey: '', model: 'test' });
     const content = await provider.complete('test prompt');
 
-    expect(seen).toEqual(['http://localhost:1234/api/v1/chat']);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe('http://localhost:1234/api/v1/chat');
+    // LM Studio's native endpoint expects the Responses-style input field —
+    // the body it rejected in the field logs must never be sent first again.
+    expect(seen[0].body.input).toBeDefined();
+    expect(seen[0].body.messages).toBeUndefined();
     expect(content).toContain('apple');
   });
 

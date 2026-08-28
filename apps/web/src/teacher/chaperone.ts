@@ -71,13 +71,13 @@ export class OpenAICompatProvider implements ChaperoneProvider {
 
   async complete(prompt: string, options?: { signal?: AbortSignal }): Promise<string> {
     const target = resolveEndpoint(this.settings.endpoint);
-    const request = async (style: 'chat' | 'native' | 'responses') => {
-      // LM Studio's native /api/v1/chat accepts the SAME body shape as the
-      // OpenAI chat endpoint ({model, messages, temperature}); the Responses
-      // API wants {model, input}.
+    const request = async (style: 'chat' | 'native' | 'responses', bodyStyle: 'messages' | 'input') => {
+      // LM Studio's native /api/v1/chat expects the Responses-style `input`
+      // field (its server rejects `{messages}` with "'input' is required");
+      // the OpenAI-compatible endpoint wants `{messages}`.
       const url = style === 'chat' ? target.chatUrl : style === 'native' ? target.nativeUrl : target.responsesUrl;
       const body =
-        style === 'responses'
+        bodyStyle === 'input'
           ? {
               model: this.settings.model,
               input: [
@@ -114,13 +114,21 @@ export class OpenAICompatProvider implements ChaperoneProvider {
       });
     };
 
-    let response = await request(target.style);
-    if (!response.ok && (target.style === 'chat' || target.style === 'native')) {
-      // A server that speaks the Responses API rejects a chat/messages body
-      // with "'input' is required" — retry once with the responses shape.
-      const errorBody = await response.text().catch(() => '');
-      if (/input.*required|invalid_union/i.test(errorBody)) {
-        response = await request('responses');
+    const bodyStyleFor = (style: 'chat' | 'native' | 'responses'): 'messages' | 'input' =>
+      style === 'chat' ? 'messages' : 'input';
+
+    let style = target.style;
+    let response = await request(style, bodyStyleFor(style));
+
+    if (!response.ok) {
+      // A server that speaks the Responses API rejects a `messages` body with
+      // "'input' is required"; a server whose /api/v1/chat expects the input
+      // shape behaves the same. Retry ONCE with the input-shaped body at the
+      // /responses sibling — the shape every LM Studio API style accepts.
+      const alreadyInputAtResponses = style === 'responses' && bodyStyleFor(style) === 'input';
+      if (!alreadyInputAtResponses) {
+        response = await request('responses', 'input');
+        style = 'responses';
       }
     }
 
