@@ -46,6 +46,11 @@ export class ObserverSession {
     return this.observer.observe({ kind: 'text', content, weight: 0.5 });
   }
 
+  /** Settle the field between lessons (see SemanticObserver.settleField). */
+  settleField(): void {
+    this.observer.settleField();
+  }
+
   observeAttention(focus: 'reading' | 'review' | 'quiz' | 'idle', intensity: number): StimulusResult {
     return this.observer.observe({ kind: 'attention', focus, intensity });
   }

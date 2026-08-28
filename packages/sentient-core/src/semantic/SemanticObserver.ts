@@ -91,6 +91,14 @@ export interface SemanticObserverOptions {
   driftDropThreshold?: number;
   /** Fraction of window steps that must be non-increasing to count as drift (default 0.75). */
   driftDecliningRatio?: number;
+  /**
+   * Explicit word -> primes vocabulary for the semantic backend.
+   *
+   * Words in this table excite EXACTLY their assigned primes (folded into
+   * the field basis) instead of the backend's per-character hashing. This is
+   * how a curriculum gives every word a real, auditable prime signature.
+   */
+  vocabulary?: Record<string, readonly number[]>;
 }
 
 /** A coherence-driven moment. */
@@ -162,8 +170,9 @@ export type SemanticInput = string | readonly number[];
 export class SemanticObserver implements Initializable {
   private readonly kernel: SemanticKernel;
   private readonly options: Required<
-    Omit<SemanticObserverOptions, 'kernel' | 'safety'>
+    Omit<SemanticObserverOptions, 'kernel' | 'safety' | 'vocabulary'>
   > & { safety?: SafetyMonitor };
+  private readonly vocabulary: Readonly<Record<string, readonly number[]>>;
 
   private readonly field: PrimeOscillatorField;
   private readonly smf = SedenionMemoryField.identity();
@@ -219,6 +228,24 @@ export class SemanticObserver implements Initializable {
       requireSafetyClear: options.requireSafetyClear ?? true,
       safety: options.safety
     };
+
+    // Vocabulary validation: every entry must be a finite, positive prime
+    // list; garbage is refused loudly rather than silently ignored.
+    const vocabulary: Record<string, readonly number[]> = {};
+    if (options.vocabulary !== undefined) {
+      for (const [word, primes] of Object.entries(options.vocabulary)) {
+        if (!Array.isArray(primes) || primes.length === 0) {
+          throw new NonFiniteValueError(`vocabulary[${word}]`, primes as never);
+        }
+        for (const p of primes) {
+          if (!Number.isFinite(p) || p <= 0 || !Number.isInteger(p)) {
+            throw new NonFiniteValueError(`vocabulary[${word}] prime`, p);
+          }
+        }
+        vocabulary[word.toLowerCase()] = [...primes];
+      }
+    }
+    this.vocabulary = vocabulary;
 
     // Upfront validation: the same rules the holographic layer enforces,
     // rejected here with typed errors instead of failing mid-run.
@@ -787,6 +814,22 @@ export class SemanticObserver implements Initializable {
     }
   }
 
+  /**
+   * Settle the field: reset the oscillators to rest and clear the coherence
+   * history. Used by a teacher BETWEEN lessons so the next lesson's trace
+   * records only its own excitation — without it, un-decayed amplitude from
+   * previous lessons contaminates every new memory trace.
+   *
+   * This is an intentional reset, so it also clears the drift detector: a
+   * settle is not a focus decline and must never emit a drift warning.
+   */
+  settleField(): void {
+    this.requireInitialized();
+    this.field.reset();
+    this.coherenceHistory.length = 0;
+    this.driftEpisodeActive = false;
+  }
+
   /** Tick repeatedly until `predicate` holds or `maxTicks` is reached. */
   runTicks(maxTicks: number, dt?: number, predicate?: (event: SemanticObserverTickEvent) => boolean): SemanticObserverTickEvent[] {
     const events: SemanticObserverTickEvent[] = [];
@@ -907,7 +950,9 @@ export class SemanticObserver implements Initializable {
   private resolvePrimes(input: SemanticInput): number[] {
     let primes: number[];
     if (typeof input === 'string') {
-      const backend = this.kernel.createSemanticBackend({});
+      const backend = this.kernel.createSemanticBackend({
+        vocabulary: this.vocabulary as Record<string, number[]>
+      });
       primes = backend.encode(input);
     } else {
       primes = Array.from(input);

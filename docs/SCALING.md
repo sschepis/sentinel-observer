@@ -102,3 +102,26 @@ The same contract, now with bigger numbers: the observer's competence is
 understanding. If the 5,000-word accuracy target cannot be met with the
 current physics, the system will say so — that finding itself is useful
 engineering.
+
+## 7. Phase 2 — measured results
+
+Phase 2 is implemented and measured (30-word benchmark, jest, real kernel):
+
+| Change | Top-1 recognition accuracy |
+|---|---|
+| Baseline (16-prime field, per-character hashing, lesson-text excitation, no field settling) | **6.7%** |
+| Whole-word signatures (FNV-1a, 3 primes/word, 32-prime field) + `settleField()` between lessons + word-only excitation + SMF imprint on teach/ask | **80.0%** |
+
+The 6.7% baseline was the honest demonstration that the original recall path
+could not discriminate — traces were contaminated by un-decayed amplitude
+from every previous lesson, so the earliest traces won every correlation.
+The fixes are all real physics: settling the field, focusing the excitation
+on the word's own signature, and imprinting the SMF.
+
+Remaining confusion pairs (6/30: apple/make, work/morning, sleep/friend,
+eat/friend, walk/apple, answer/apple) are 16-dim SMF orientation collisions
+between distinct 3-prime signatures — the next lever (phase 3) is candidate
+prefiltering + stronger holographic weighting rather than more primes.
+
+CI gates now enforce: 100 unique deck signatures (collision audit) and
+>= 70% top-1 recognition accuracy on 30 words.

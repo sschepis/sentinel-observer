@@ -374,3 +374,45 @@ describe('SemanticObserver', () => {
     observer.dispose();
   });
 });
+
+describe('SemanticObserver vocabulary injection', () => {
+  let vocabKernel: SemanticKernel;
+
+  beforeAll(async () => {
+    vocabKernel = await freshKernel();
+  });
+
+  it('excites the ASSIGNED primes for vocabulary words, not char-hashes', async () => {
+    const observer = new SemanticObserver({
+      kernel: vocabKernel,
+      primeCount: 32,
+      gridSize: 64,
+      vocabulary: { apple: [2, 3, 5, 7], apply: [11, 13, 17] }
+    });
+    await observer.initialize();
+
+    const applePrimes = observer.processInput('apple', 0.5);
+    const applyPrimes = observer.processInput('apply', 0.5);
+
+    // Exact signatures, folded into the (larger) field basis.
+    expect(applePrimes).toEqual([2, 3, 5, 7]);
+    expect(applyPrimes).toEqual([11, 13, 17]);
+    // Near-identical words now have DISJOINT signatures.
+    const overlap = applePrimes.filter((p) => applyPrimes.includes(p));
+    expect(overlap).toHaveLength(0);
+
+    observer.dispose();
+  });
+
+  it('rejects malformed vocabulary entries loudly', () => {
+    expect(() => {
+      new SemanticObserver({ vocabulary: { bad: [2, -3] } });
+    }).toThrow();
+    expect(() => {
+      new SemanticObserver({ vocabulary: { empty: [] } });
+    }).toThrow();
+    expect(() => {
+      new SemanticObserver({ vocabulary: { nan: [Number.NaN] } });
+    }).toThrow();
+  });
+});

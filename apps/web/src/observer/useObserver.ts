@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SemanticObserverState, ObserverSignal, StimulusResult } from '@sschepis/sentient-core';
+import type { SemanticObserverState, ObserverSignal, StimulusResult, SemanticObserverOptions } from '@sschepis/sentient-core';
 import { ObserverSession, type ObserverSessionState } from './engine';
 import type { PersistenceStore } from '../persistence/store';
 
@@ -26,7 +26,10 @@ const MAX_DIARY_SIGNALS = 200;
  * distinguishes ready / degraded / error — the UI must render the degraded
  * banner whenever `status === 'degraded'`, and must never fabricate metrics.
  */
-export function useObserver(persistence: PersistenceStore | null = null): ObserverSessionState & {
+export function useObserver(
+  persistence: PersistenceStore | null = null,
+  observerOptions: SemanticObserverOptions = {}
+): ObserverSessionState & {
   session: ObserverSession | null;
   start: () => Promise<void>;
   stop: () => void;
@@ -48,7 +51,7 @@ export function useObserver(persistence: PersistenceStore | null = null): Observ
 
   const start = useCallback(async () => {
     if (sessionRef.current === null) {
-      sessionRef.current = new ObserverSession({}, 250);
+      sessionRef.current = new ObserverSession(observerOptions, 250);
     }
     const session = sessionRef.current;
     setStatus('loading');

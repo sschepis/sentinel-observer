@@ -168,12 +168,23 @@ export class TeacherAgent {
     }
   }
 
-  /** Present a lesson: the observer encodes the word into its field + memory. */
+  /**
+   * Present a lesson: the observer encodes the word into its field + memory.
+   *
+   * Focused encoding (phase 2): the field is SETTLED first so residual
+   * amplitude from previous lessons cannot contaminate this trace, then only
+   * the WORD is excited (its whole-word prime signature via the vocabulary),
+   * the field is ticked once so the SMF imprints the word's orientation, and
+   * the trace is stored. The full lesson text still lives in the trace
+   * content — the encoding is what is focused, not the record.
+   */
   teach(word: string): TeachResult {
     const state = this.requiredState(word);
     const lesson = lessonText(state.word);
 
-    this.session.observeText(lesson);
+    this.session.settleField();
+    this.session.observeText(state.word.word);
+    this.session.observer.tick(0.02);
     const trace = this.session.storeMemory(lesson);
     if (trace !== null) {
       state.traceId = trace.id;
@@ -188,14 +199,16 @@ export class TeacherAgent {
    * Ask the observer a question: cue it, let it recall, return what it said.
    *
    * The teacher first OBSERVES the cue (the observer hears the question — its
-   * field aligns to what it is being asked), then the recall itself remains a
-   * pure read that never excites the field.
+   * field aligns to what it is being asked) and ticks once so the SMF
+   * imprints the cue's orientation; the recall itself remains a pure read
+   * that never excites the field.
    */
   ask(word: string, direction: 'recognition' | 'production' = 'recognition'): QuizAnswer {
     const state = this.requiredState(word);
     const cue = direction === 'production' ? productionCue(state.word) : recognitionCue(state.word);
 
     this.session.observeText(cue);
+    this.session.observer.tick(0.02);
     const results = this.session.recall(cue, 5);
     const top = results[0] ?? null;
     return {
