@@ -29,7 +29,6 @@ export function useObserver(): ObserverSessionState & {
   session: ObserverSession | null;
   start: () => Promise<void>;
   stop: () => void;
-  excite: (text: string) => StimulusResult | null;
   lastStimulus: StimulusResult | null;
   signals: ObserverSignal[];
   diarySignals: ObserverSignal[];
@@ -81,15 +80,6 @@ export function useObserver(): ObserverSessionState & {
 
   useEffect(() => () => sessionRef.current?.dispose(), []);
 
-  const excite = useCallback((text: string): StimulusResult | null => {
-    const session = sessionRef.current;
-    if (session === null || (status !== 'ready' && status !== 'degraded')) return null;
-    const result = session.observeText(text);
-    setLastStimulus(result);
-    setMetrics(session.state());
-    return result;
-  }, [status]);
-
   return {
     session: sessionRef.current,
     status,
@@ -98,7 +88,6 @@ export function useObserver(): ObserverSessionState & {
     kernelLoaded: metrics?.kernel.loaded ?? false,
     start,
     stop,
-    excite,
     lastStimulus,
     signals,
     diarySignals

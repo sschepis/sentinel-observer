@@ -10,8 +10,7 @@ const baseProps = {
   lastStimulus: null as never,
   signals: [] as never[],
   onStart: noop,
-  onStop: noop,
-  onExcite: noop
+  onStop: noop
 };
 
 describe('Dashboard', () => {
@@ -47,29 +46,6 @@ describe('Dashboard', () => {
     expect(screen.getByText('0.834')).toBeDefined();
     expect(screen.getByText('2.100')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('delivers excitation input to the onExcite callback when running', () => {
-    let excited: string | null = null;
-    render(
-      <Dashboard
-        status="ready"
-        {...baseProps}
-        onExcite={(text) => {
-          excited = text;
-        }}
-      />
-    );
-    fireEvent.change(screen.getByPlaceholderText(/excite the observer/i), {
-      target: { value: 'prime resonance' }
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Excite' }));
-    expect(excited).toBe('prime resonance');
-  });
-
-  it('hides the excitation form when the observer is not running', () => {
-    render(<Dashboard status="idle" {...baseProps} />);
-    expect(screen.queryByPlaceholderText(/excite the observer/i)).toBeNull();
   });
 
   it('explains the latest stimulus in the "why" panel', () => {

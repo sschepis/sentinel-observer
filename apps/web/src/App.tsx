@@ -6,7 +6,7 @@ import { STARTER_DECK } from './teacher/deck';
 import { useObserver } from './observer/useObserver';
 
 export default function App() {
-  const { session, status, error, metrics, start, stop, excite, lastStimulus, signals, diarySignals } = useObserver();
+  const { session, status, error, metrics, start, stop, lastStimulus, signals, diarySignals } = useObserver();
   const [tab, setTab] = useState<'mind' | 'school'>('mind');
 
   // The teacher exists only when the observer (the learner) is running.
@@ -48,9 +48,6 @@ export default function App() {
           signals={signals}
           onStart={() => void start()}
           onStop={stop}
-          onExcite={(text) => {
-            void excite(text);
-          }}
         />
       ) : (
         <TeacherPanel teacher={teacher} diarySignals={diarySignals} />
