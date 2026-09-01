@@ -169,7 +169,11 @@ export function neighborhoodEdges(
   index?: Map<number, string[]>
 ): number {
   const signature = vocabulary[word];
-  if (signature === undefined || signature.length === 0) return 0;
+  // HONEST NO-EVIDENCE GUARD: a word whose vocabulary entry is not a real
+  // signature array (a prototype-shadowed key, a legacy table gap) carries
+  // no neighborhood information — the curriculum scores it on the signals
+  // it has, and never crashes the queue on a malformed entry.
+  if (!Array.isArray(signature) || signature.length === 0) return 0;
   const built = index ?? neighborIndex(vocabulary);
   const neighbors = new Set<string>();
   for (const prime of new Set(signature)) {

@@ -266,7 +266,12 @@ export function semanticAssignment(
     ? assignFusionCategoryPrimes(parents, primeSpace)
     : assignCategoryPrimes(parents, primeSpace);
 
-  const vocabulary: Record<string, number[]> = {};
+  // Null-prototype record: a deck word named 'constructor' (or any other
+  // Object.prototype key) must read as ITS OWN signature — or as undefined —
+  // never as the inherited prototype function. Before this, vocabulary
+  // ['constructor'] returned Object.prototype.constructor, and the
+  // curriculum's `new Set(signature)` threw "function is not iterable".
+  const vocabulary: Record<string, number[]> = Object.create(null) as Record<string, number[]>;
   const seen = new Set<string>();
 
   for (const entry of deck) {

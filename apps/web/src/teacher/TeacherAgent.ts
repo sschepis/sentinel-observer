@@ -2365,9 +2365,12 @@ export class TeacherAgent {
     this.maybePersist();
   }
 
-  /** Consecutive failed drill rounds per concept (read-only). */
+  /** Consecutive failed drill rounds per concept (read-only). Built on a
+   *  null-prototype record: a concept named 'constructor' must read as its
+   *  own count — or undefined — never as the inherited Object.prototype
+   *  function (which made `clampRange(NaN)` throw inside the curriculum). */
   drillFailuresSnapshot(): Record<string, number> {
-    return Object.fromEntries(this.drillFailures);
+    return Object.assign(Object.create(null) as Record<string, number>, Object.fromEntries(this.drillFailures));
   }
 
   /** The pre-curriculum due-order ranking, for comparison/introspection. */

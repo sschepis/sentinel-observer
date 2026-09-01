@@ -82,7 +82,10 @@ export function primeSignature(word: string, primeSpace: readonly number[] = PRI
  * Deterministic for any given deck, so the audit always reproduces it.
  */
 export function deckVocabulary(deck: ReadonlyArray<{ word: string }>, primeSpace: readonly number[] = PRIME_SPACE): Record<string, number[]> {
-  const vocabulary: Record<string, number[]> = {};
+  // Null-prototype record: a word named 'constructor' must never read back
+  // as the inherited Object.prototype function (same guard as the semantic
+  // vocabulary — see semanticSignature.ts).
+  const vocabulary: Record<string, number[]> = Object.create(null) as Record<string, number[]>;
   const seen = new Set<string>();
   for (const entry of deck) {
     const word = entry.word.toLowerCase();
