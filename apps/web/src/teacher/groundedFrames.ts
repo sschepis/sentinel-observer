@@ -122,8 +122,8 @@ export function composeGrounded(
   negationsOrOptions: readonly Negation[] | FrameOptions = {}
 ): GroundedComposition | null {
   const options: FrameOptions = Array.isArray(negationsOrOptions)
-    ? { negations: negationsOrOptions }
-    : negationsOrOptions;
+    ? { negations: negationsOrOptions as readonly Negation[] }
+    : (negationsOrOptions as FrameOptions);
   const negations = options.negations ?? [];
   const denied = deniedFromNegations(negations);
   const candidates = groundedSubjects(seedWords, relations, denied);
