@@ -144,20 +144,26 @@ function isLearned(teacher: TeacherAgent, word: string): boolean {
 
 /**
  * The next concept worth drilling: checkable, and with every prerequisite
- * already learned. Concepts drilled least recently come first, so the loop
+ * already learned. P-curriculum: concepts that keep FAILING their drills
+ * come first (their failure streak is the strongest evidence they need
+ * another round), then concepts drilled least recently, so the loop still
  * spreads across the curriculum instead of grinding one skill.
  */
 export function nextDrillConcept(
   teacher: TeacherAgent,
-  drilledCounts: ReadonlyMap<string, number> = new Map()
+  drilledCounts: ReadonlyMap<string, number> = new Map(),
+  drillFailures?: ReadonlyMap<string, number>
 ): TechnicalConcept | null {
   const ready = CHECKABLE_CONCEPTS.filter(
     (concept) => isLearned(teacher, concept.word) && concept.dependsOn.every((p) => isLearned(teacher, p))
   );
   if (ready.length === 0) return null;
-  return ready.reduce((best, concept) =>
-    (drilledCounts.get(concept.word) ?? 0) < (drilledCounts.get(best.word) ?? 0) ? concept : best
-  );
+  return ready.reduce((best, concept) => {
+    const failures = (drillFailures?.get(concept.word) ?? 0) - (drillFailures?.get(best.word) ?? 0);
+    if (failures > 0) return concept;
+    if (failures < 0) return best;
+    return (drilledCounts.get(concept.word) ?? 0) < (drilledCounts.get(best.word) ?? 0) ? concept : best;
+  });
 }
 
 /** Ask the observer one exercise and mark it exactly. */

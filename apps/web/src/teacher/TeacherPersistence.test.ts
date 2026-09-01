@@ -114,7 +114,8 @@ describe('encoding-epoch migration', () => {
         stability: 1,
         difficulty: 5,
         dueAt: null,
-        lastIntervalDays: null
+        lastIntervalDays: null,
+        reviewHistory: []
       }
     ]);
 
@@ -169,7 +170,8 @@ describe('encoding-epoch migration (data-based)', () => {
         stability: 1,
         difficulty: 5,
         dueAt: null,
-        lastIntervalDays: null
+        lastIntervalDays: null,
+        reviewHistory: []
       }
     ]);
 

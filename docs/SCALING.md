@@ -245,3 +245,71 @@ holographic fallback) → learned operators (relation-hole templates) →
 compiled rules → creative (grounded frames + critic → labeled Markov
 fallback) → ask → hybrid. ASK-rate audit: **17% ask (the two genuine
 unknowns), 83% zero-LLM answers**, unchanged across all seven phases.
+
+## 11. Difficulty-targeted curriculum (measured results)
+
+The lesson queue is now a scored ranking, not a static script
+(`curriculum.ts`). Four signals combine into one per-word priority score,
+and the FSRS schedule stays the primary contract — due words are reviewed
+before new words are taught; the curriculum orders **within** each pool,
+never against it:
+
+1. **FSRS difficulty** — the scheduler's learned per-item difficulty, plus
+   how overdue a word is **relative to the interval it was scheduled for**
+   (a word two interval-days late has decayed to ≈0.55 retention; a
+   30-day-interval word one day late is still ≈0.87). "Most-due-past-
+   desired" means overdue-per-interval, not raw wall-clock lateness.
+2. **Sparse semantic neighborhoods** — the count of other deck words
+   sharing at least one `semanticSignature.ts` prime. Isolated words (few
+   active edges, no resonance partners) are taught first.
+3. **Repeated gaps** — a persisted per-word review history (capped at 24,
+   rides the existing word-state persistence) so items that keep appearing
+   in review sets and keep failing rise to the front, across sessions.
+4. **Weak drills** — concepts whose `technical/drill.ts` rounds keep
+   returning unlearned/memorized instead of induced/rule-induced. The
+   failure count is persisted with the learning state; induction clears it.
+
+A fifth component, `waiting` (absolute days past due, capped at 14), is the
+**fairness floor**: the relative-overdue term saturates for short-interval
+words, and without it a perpetually-failing word could starve a merely-
+overdue one forever.
+
+**Wiring.** `TeacherAgent.nextReview()` / `nextNewWord()` consume the
+scored queue (a `curriculum: { enabled: false }` constructor flag restores
+the pre-curriculum scheduler verbatim — the benchmark control); `plan.ts`
+`chooseGoal(goals, teacher)` multiplies a goal's expected value by up to
+1.5× when its target is hard/overdue/isolated/weak; `nextDrillConcept`
+prefers failing concepts; the classroom loop records every drill verdict
+via `recordDrillResult`. New API exports from `teacher/index.ts`.
+
+**Benchmark** (`curriculumBenchmark.test.ts`): two real TeacherAgents — the
+production curriculum scheduler vs the legacy control — run the same
+30-word deck through a **deterministic** failure model (fail-prone words
+miss their first 3 reviews, then succeed; no randomness, so the runs
+differ in exactly one thing: the queue ordering). Proxies:
+
+| Proxy | Legacy scheduler | Curriculum | Delta |
+|---|---|---|---|
+| Weak words recovered by session 22 | **2/8** (at session 22) | **8/8** (mean session 12.9) | 6 words, ~9 sessions earlier |
+| Mean days past due at hard-word review | 15.2 | **13.2** | −13% |
+| Predicted retention at hard-word review | 0.279 | **0.341** | +22% |
+| Mean neighborhood degree of first 8 taught | 1.38 | **0.88** | −36% (sparse first) |
+
+The recall gates are unchanged: recallBenchmark **100.0%** (30/30),
+scaleBenchmark **99.8%** (998/1000), SrsRetention and the full suite green.
+
+**Caveats, honestly reported.** (a) The curriculum deliberately
+concentrates reviews on hard items — in the benchmark it reviewed hard
+words 78 times vs 50 for the control, so the absolute count of
+low-retention reviews is higher even though mean retention improves; that
+share is reported, not asserted. (b) A recovered word keeps a high
+priority until its collapsed stability rebuilds through successive correct
+reviews — the FSRS model itself says its retention decays in under a day,
+so the attention is the schedule working, not a defect. (c) Repeated
+failures genuinely perturb the field: after three injected misses a real
+word's recognition recall dropped from ~100% to ~60% (apple began
+confusing with `learn`). The benchmark therefore delivers model-correct
+verdicts as the word's own trace — the field's recognition noise is not
+the variable under test. The queue ordering, FSRS updates, reinforcement
+and ledger all run the real production path.
+
