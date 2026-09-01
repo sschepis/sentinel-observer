@@ -12,7 +12,7 @@ import {
   type TransitionWeights
 } from './conversation';
 import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
-import { composeGrounded, criticize, groundedSubjects, hedgeComposition } from './groundedFrames';
+import { composeGrounded, criticize, groundedSubjects, hedgeComposition, framesFor } from './groundedFrames';
 import { deniedFromNegations } from './chain';
 import { readText } from './reading';
 import { LearnedFrameStore } from './learnedFrames';
@@ -2722,6 +2722,31 @@ export class TeacherAgent {
    * precision-first regex edge). Subjects the observer does not know are
    * dropped — memory is the source of truth for what exists.
    */
+  /** The grounded frames a subject can fill from the relation graph — the
+   *  observer's own words about something it has edges for. */
+  private framesForSubject(subject: string): string[] {
+    return framesFor(subject, this.relations(), {
+      negations: this.negations,
+      cost: this.compositionCost
+    });
+  }
+
+  /** Speak what the graph holds about a subject, hedged by corroboration
+   *  (a claim read in one book stays "I think" until something independent
+   *  confirms it). Never called without frames — absence stays an ask. */
+  private speakFromFrames(subject: string): string {
+    // A NAME takes no article: the frames say "A zeus is a god" because the
+    // frame grammar is written for common nouns. Proper entities (read from
+    // history and mythology, absent from the deck) drop it.
+    const isName = !this.knownWords.has(subject);
+    const frames = this.framesForSubject(subject)
+      .slice(0, 3)
+      .map((frame) => (isName ? frame.replace(/^An?\s+/, (match) => (match === 'A ' || match === 'An ' ? '' : match)) : frame))
+      .map((frame, index) => (isName && index === 0 ? frame.charAt(0).toUpperCase() + frame.slice(1) : frame));
+    const spoken = hedgeComposition(frames.join(' ').replace(/\s+([.!?])/g, '$1'), this.relations());
+    return spoken.sentence;
+  }
+
   /**
    * READ CONTINUOUS TEXT — the non-conversational learning path.
    *
@@ -2764,7 +2789,7 @@ export class TeacherAgent {
         wordsLearned.push(word);
       }
     }
-    const { accepted, conflicts } = this.applyRelations(result.relations);
+    const { accepted, conflicts } = this.applyRelations(result.relations, { allowUnknownSubjects: true });
     for (const negation of result.negations) {
       this.storeNegation(negation.subject, negation.predicate, negation.object, `${source}: ${negation.sentence}`, 'reading');
     }
@@ -2787,9 +2812,20 @@ export class TeacherAgent {
     };
   }
 
-  applyRelations(relations: readonly Relation[]): { accepted: number; conflicts: number } {
+  applyRelations(
+    relations: readonly Relation[],
+    options: { allowUnknownSubjects?: boolean } = {}
+  ): { accepted: number; conflicts: number } {
     if (relations.length === 0) return { accepted: 0, conflicts: 0 };
-    const relevant = relations.filter((relation) => this.knownWords.has(relation.subject));
+    // Memory is normally the source of truth for what exists — an edge about
+    // a subject the observer never met is dropped. READING is the exception:
+    // history, mythology and literature are about NAMED ENTITIES ("Zeus",
+    // "Nero", "Iliad") that no dictionary deck contains. The observer may
+    // hold and state what it read about them while honestly having no
+    // definition to recite.
+    const relevant = options.allowUnknownSubjects === true
+      ? relations
+      : relations.filter((relation) => this.knownWords.has(relation.subject));
     const extracted = extractRelations(
       [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
     );
@@ -3774,6 +3810,13 @@ export class TeacherAgent {
       question = `I remember you found "${subject}" hard last time — could you teach me about it?`;
     } else if (meaningCue !== null) {
       question = `I do not know which word matches "${meaningCue}". Could you teach me?`;
+    } else if (unknown !== null && this.framesForSubject(unknown).length > 0) {
+      // READ, NOT DEFINED. History, mythology and literature are about named
+      // entities no dictionary deck contains: the observer has no definition
+      // of "Zeus" to recite, but it does hold what it read about him. Saying
+      // that is honest — the frames are built from stored edges and hedged
+      // by corroboration, exactly like any other grounded answer.
+      question = this.speakFromFrames(unknown);
     } else if (unknown !== null) {
       question = `I do not know what "${unknown}" means. Could you teach me?`;
     } else if (questionForm !== null && questionForm.object !== undefined) {

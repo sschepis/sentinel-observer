@@ -19,7 +19,8 @@
  * corroboration — the claim stops being hedged), which conflicted (those
  * become beliefs to verify), and which words it met but does not know.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, statSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { ObserverSession } from '../observer/engine'
 import { OBSERVER_OPTIONS } from '../observer/options'
 import { TeacherAgent } from '../teacher/TeacherAgent'
@@ -52,17 +53,34 @@ for (let i = 2; i < process.argv.length; i += 1) {
 
 const SHIPPED_BOOTSTRAP = new URL('../../public/bootstrap.json', import.meta.url).pathname
 
-function readInput(): { text: string; label: string } {
-  if (positional.length > 0) {
-    return { text: readFileSync(positional[0], 'utf8'), label: positional[0].split('/').pop() ?? positional[0] }
+/** Every .txt file under a directory, recursively (a curriculum is a tree
+ *  of subjects). */
+function textFiles(root: string): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) out.push(...textFiles(path))
+    else if (entry.name.endsWith('.txt')) out.push(path)
   }
-  return { text: readFileSync(0, 'utf8'), label: 'stdin' }
+  return out.sort()
+}
+
+function readInput(): Array<{ text: string; label: string }> {
+  if (positional.length === 0) return [{ text: readFileSync(0, 'utf8'), label: 'stdin' }]
+  const target = positional[0]
+  if (statSync(target).isDirectory()) {
+    return textFiles(target).map((path) => ({
+      text: readFileSync(path, 'utf8'),
+      label: path.slice(target.length + 1)
+    }))
+  }
+  return [{ text: readFileSync(target, 'utf8'), label: target.split('/').pop() ?? target }]
 }
 
 async function main(): Promise<void> {
-  const { text, label } = readInput()
-  if (text.trim().length === 0) {
-    console.error('nothing to read (pass a file path or pipe text in)')
+  const documents = readInput().filter((doc) => doc.text.trim().length > 0)
+  if (documents.length === 0) {
+    console.error('nothing to read (pass a file path, a directory, or pipe text in)')
     process.exit(1)
   }
 
@@ -86,24 +104,54 @@ async function main(): Promise<void> {
     // Extraction only: report what WOULD be learned, store nothing.
     const { readText } = await import('../teacher/reading')
     const known = new Set(teacher.listWords().map((w) => w.word.word))
-    const result = readText(text, { vocabulary: known, source: label })
-    console.log(bold(`\nread ${label} (dry run)`))
-    console.log(`  sentences parsed   ${result.sentencesParsed}/${result.sentencesRead}`)
-    console.log(`  relations found    ${result.relations.length}`)
-    console.log(`  explicit denials   ${result.negations.length}`)
-    for (const relation of result.relations.slice(0, 20)) {
-      console.log(`    ${green(relation.subject)} ${relation.predicate} ${green(relation.object)}  ${dim(relation.source.slice(0, 70))}`)
+    let sentences = 0
+    let parsed = 0
+    let found = 0
+    let denials = 0
+    for (const doc of documents) {
+      const result = readText(doc.text, { vocabulary: known, source: doc.label })
+      sentences += result.sentencesRead
+      parsed += result.sentencesParsed
+      found += result.relations.length
+      denials += result.negations.length
+      if (documents.length === 1) {
+        for (const relation of result.relations.slice(0, 20)) {
+          console.log(`    ${green(relation.subject)} ${relation.predicate} ${green(relation.object)}  ${dim(relation.source.slice(0, 70))}`)
+        }
+        if (result.relations.length > 20) console.log(dim(`    … and ${result.relations.length - 20} more`))
+      }
     }
-    if (result.relations.length > 20) console.log(dim(`    … and ${result.relations.length - 20} more`))
+    console.log(bold(`\nread ${documents.length} document(s) (dry run)`))
+    console.log(`  sentences parsed   ${parsed}/${sentences}`)
+    console.log(`  relations found    ${found}`)
+    console.log(`  explicit denials   ${denials}`)
     session.dispose()
     return
   }
 
-  const report = teacher.readFrom(text, label)
+  const report = { sentencesRead: 0, sentencesParsed: 0, relationsFound: 0, accepted: 0, conflicts: 0, negations: 0, wordsLearned: [] as string[], unknownWords: [] as Array<{ word: string; count: number }> }
+  const unknownTotals = new Map<string, number>()
+  let done = 0
+  for (const doc of documents) {
+    const one = teacher.readFrom(doc.text, doc.label)
+    report.sentencesRead += one.sentencesRead
+    report.sentencesParsed += one.sentencesParsed
+    report.relationsFound += one.relationsFound
+    report.accepted += one.accepted
+    report.conflicts += one.conflicts
+    report.negations += one.negations
+    for (const word of one.wordsLearned) if (!report.wordsLearned.includes(word)) report.wordsLearned.push(word)
+    for (const { word, count } of one.unknownWords) unknownTotals.set(word, (unknownTotals.get(word) ?? 0) + count)
+    done += 1
+    if (documents.length > 1 && done % 100 === 0) console.log(dim(`  … ${done}/${documents.length} documents`))
+  }
+  report.unknownWords = [...unknownTotals.entries()]
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count)
   const edgesAfter = teacher.relations().length
   const conflictsAfter = sweepConflicts(teacher).length
 
-  console.log(bold(`\nread ${label}`))
+  console.log(bold(`\nread ${documents.length} document(s)`))
   console.log(`  sentences parsed   ${report.sentencesParsed}/${report.sentencesRead} ${dim(`(${((report.sentencesParsed / Math.max(1, report.sentencesRead)) * 100).toFixed(0)}% of the text stated something the observer can verify)`)}`)
   console.log(`  relations found    ${report.relationsFound}`)
   console.log(`  new to the graph   ${green(String(report.accepted))} ${dim('(spoken hedged until an independent source confirms them)')}`)

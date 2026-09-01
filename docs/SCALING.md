@@ -656,3 +656,62 @@ disagreements as beliefs to verify, and left the contradiction sweep at 0.
 The observer then answered `can an eagle fly` -> "Yes, an eagle can fly."
 and `is an eagle a fish` -> "No, eagle is not a fish", from text it read
 rather than pairs it was taught.
+
+### 16b. A real curriculum: history, mythology, literature
+
+**The corpus.** 1,203 articles / 471k words from Simple English Wikipedia
+(`wikimedia/wikipedia` 20231101.simple via Hugging Face, CC BY-SA 4.0),
+selected by curated title seeds plus opening-sentence patterns ("… is a
+god", "… was a Roman emperor", "… is an epic poem"). Simple English is
+deliberate: its declarative prose is the shape the claim grammar can read
+AND say. `scripts/build-curriculum.py`, then `npm run read -- corpus/`.
+
+**Two blockers this exposed**, both fatal on the first attempt (the Zeus
+article yielded ZERO edges):
+
+1. *Named entities.* History and mythology are about Zeus, Nero, the
+   Iliad — none of which a dictionary deck contains, so the vocabulary
+   gate refused every subject. Entities are now recognized as the head of a
+   capitalized run ("Ancient Rome" -> rome) and may carry edges without a
+   definition: the observer states what it read about Zeus while honestly
+   having no definition of "Zeus" to recite.
+2. *Encyclopedic past tense.* "Nero was a Roman emperor" is timeless
+   knowledge; "the bird was hungry" is an episode. Past tense is now read
+   ONLY when the subject is a named entity — articles are about entities,
+   narrative episodes usually are not.
+
+**Precision on real prose was the honest surprise.** The hand-written
+benchmark passage scored 100%, but a hand-check of 28 edges from actual
+articles scored 82%, and every error was a distinct class:
+
+| error | example | fix |
+|---|---|---|
+| long post-modifiers harvested | `zeus is-a lightning` from "god of the sky, lightning, and thunder" | cut the noun phrase at the first post-modifier |
+| narrative events read as facts | `zeus has-part war` from "had a big war" | no past-tense possession; events/abstractions are not parts |
+| people as parts | `hera has-part hebe` from "has two daughters … Hebe" | an entity is never a part |
+| plural pronoun bound to one entity | `zeus capable-of make` from "They can make themselves…" | only singular pronouns take the narrative subject |
+| possessive subjects | `athenas is-a owl` from "Athena's symbol is the owl" | possessive subjects are dropped |
+| fronted phrases as subjects | `reality has-part invented`, `therefore is-a guess` | strip leading adverbials |
+
+After the fixes: 19/20 correct on the same sample (**95%**), and the full
+corpus ingest added 1,313 edges with the contradiction sweep still at 0.
+
+**The conversation** (`npm run chat -- --load observer.json`):
+
+```
+you> what is zeus
+sentinel> Zeus is a god.
+you> is hera a goddess
+sentinel> Probably, hera is a goddess.
+you> what is nero
+sentinel> Nero is Roman Emperor notorious for his monstrous vice…
+you> can an eagle fly
+sentinel> Yes, an eagle can fly.
+```
+
+Everything read from one source is spoken hedged ("Probably") because a
+single encyclopedia is ONE source class; the Nero definition is unhedged
+because it is corroborated by the deck. Residual noise remains visible
+("It is noun") — the reader is at ~95% precision, not 100%, and the honest
+consequence is that a few weak claims are held and hedged rather than
+silently dropped.

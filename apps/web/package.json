@@ -24,7 +24,8 @@
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/",
     "template-bench": "tsx src/cli/template-bench.ts",
     "chat": "tsx src/cli/chat.ts",
-    "read": "tsx src/cli/read.ts"
+    "read": "tsx src/cli/read.ts",
+    "fetch-curriculum": "tsx src/cli/fetch-curriculum.ts"
   },
   "dependencies": {
     "@aleph-ai/tinyaleph": "^1.8.2",
