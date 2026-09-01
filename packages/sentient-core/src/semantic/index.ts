@@ -75,12 +75,18 @@ export type {
 } from './tinyaleph';
 
 // Prime oscillator field
-export { PrimeOscillatorField } from './PrimeOscillatorField';
+export {
+  PrimeOscillatorField,
+  phaseClusterMetrics,
+  PHASE_CLUSTER_DEFAULTS
+} from './PrimeOscillatorField';
 export type {
   PrimeOscillatorFieldOptions,
   OscillatorFieldTick,
   OscillatorFieldState,
-  PrimeOscillatorSnapshot
+  PrimeOscillatorSnapshot,
+  PhaseClusterMetrics,
+  PhaseClusterOptions
 } from './PrimeOscillatorField';
 
 // Sedenion memory field
@@ -159,7 +165,7 @@ export type {
 } from './SafetyMonitor';
 
 // Observer
-export { SemanticObserver, safetyScore } from './SemanticObserver';
+export { SemanticObserver, safetyScore, CLUSTER_MOMENT_DEFAULTS } from './SemanticObserver';
 export type { Stimulus, StimulusContext, StimulusResult, AttentionFocus, LearningEventType } from './stimulus';
 export {
   SignalStream,
@@ -175,7 +181,9 @@ export type {
   SemanticMoment,
   SemanticObserverState,
   SemanticObserverTickEvent,
-  SemanticInput
+  SemanticInput,
+  MomentCriterion,
+  ClusterMomentCriterionOptions
 } from './SemanticObserver';
 
 // Numeric guards

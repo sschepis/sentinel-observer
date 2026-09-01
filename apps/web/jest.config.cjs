@@ -11,7 +11,8 @@ module.exports = {
     '<rootDir>/src/teacher/scale20kBenchmark.test.ts',
     '<rootDir>/src/teacher/fullDeckPruning.test.ts',
     '<rootDir>/src/teacher/ciGates.test.ts',
-    '<rootDir>/src/teacher/semanticRecall.test.ts'
+    '<rootDir>/src/teacher/semanticRecall.test.ts',
+    '<rootDir>/src/teacher/clusterMomentBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

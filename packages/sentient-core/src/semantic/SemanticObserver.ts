@@ -36,8 +36,11 @@ import type { Stimulus, StimulusContext, StimulusResult } from './stimulus';
 import { SignalStream, type ObserverSignal } from './ObserverSignals';
 import {
   PrimeOscillatorField,
+  phaseClusterMetrics,
+  PHASE_CLUSTER_DEFAULTS,
   type OscillatorFieldState,
   type OscillatorFieldTick,
+  type PhaseClusterMetrics,
   type PrimeOscillatorSnapshot
 } from './PrimeOscillatorField';
 import { SedenionMemoryField, SMF_DIMENSION, MAX_SMF_WIDTH } from './SedenionMemoryField';
@@ -73,6 +76,72 @@ import {
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Which physical event counts as a MOMENT.
+ *
+ * - `'global-R'` (default, the honest control): the global Kuramoto order
+ *   parameter over the active oscillators crosses `momentThreshold` going up.
+ *   This is the historical criterion and every shipped measurement was taken
+ *   under it.
+ * - `'phase-clusters'`: the field enters a stable PARTIAL-synchronization
+ *   (cluster / chimera) partition — see `ClusterMomentCriterionOptions`.
+ *
+ * MEASURED, and kept default-off as a documented control (docs/SCALING.md
+ * §17): the two criteria produce IDENTICAL retrieval (mean margin +0.1351
+ * both, top-1 100% both) because emission is decoupled from storage — the
+ * teacher calls `storeMemory` directly and 0 moments are emitted across a
+ * full training run under EITHER criterion. Worse, the cluster criterion
+ * fires 54% MORE OFTEN on an UNCOUPLED (K = 0) field than on the coupled
+ * one, so what it detects in this field is frequency dispersion rather than
+ * locking. `'phase-clusters'` is a refused hypothesis kept as a control, not
+ * a recommended setting.
+ */
+export type MomentCriterion = 'global-R' | 'phase-clusters';
+
+/**
+ * The cluster-structure emission criterion (`momentCriterion:
+ * 'phase-clusters'`).
+ *
+ * A tick SATISFIES the criterion when the live phase-cluster reading
+ * (`phaseClusterMetrics`, exact definition in `PrimeOscillatorField.ts`)
+ * meets ALL of:
+ *
+ *   clusterCount >= minClusters    — at least two groups exist at all
+ *   withinR      >= minWithinR     — each group is internally locked
+ *   betweenR     <= maxBetweenR    — the groups sit at DIFFERENT phases
+ *
+ * and the partition SIGNATURE (occupied-bin pattern + cluster sizes) has been
+ * identical for `stabilityTicks` consecutive satisfying ticks. Stability is
+ * what separates a locked partition from oscillators drifting past each other:
+ * an uncoupled ensemble sweeps through many transient partitions and holds
+ * none of them.
+ *
+ * Emission is a RISING EDGE, exactly like the global-R crossing: the moment
+ * fires on the tick the criterion becomes satisfied, not on every tick it
+ * stays satisfied.
+ */
+export interface ClusterMomentCriterionOptions {
+  /** Phase bins spanning [0, 2π) (default 12, clamped to [2, 360]). */
+  phaseBins?: number;
+  /** Minimum number of phase clusters (default 2). */
+  minClusters?: number;
+  /** Minimum size-weighted within-cluster order parameter (default 0.9). */
+  minWithinR?: number;
+  /** Maximum between-cluster order parameter (default 0.5). */
+  maxBetweenR?: number;
+  /** Consecutive ticks the partition signature must hold (default 2, min 1). */
+  stabilityTicks?: number;
+}
+
+/** Resolved cluster-criterion configuration. */
+export const CLUSTER_MOMENT_DEFAULTS = {
+  phaseBins: PHASE_CLUSTER_DEFAULTS.phaseBins,
+  minClusters: 2,
+  minWithinR: 0.9,
+  maxBetweenR: 0.5,
+  stabilityTicks: 2
+} as const;
+
 /** Construction options. */
 export interface SemanticObserverOptions {
   /** Oscillator count (default 16, matching the SMF axes). */
@@ -83,6 +152,19 @@ export interface SemanticObserverOptions {
   gridSize?: number;
   /** Coherence threshold for moment emission, in (0, 1] (default 0.85). */
   momentThreshold?: number;
+  /**
+   * Which physical event counts as a moment (default `'global-R'`, the
+   * honest control — the historical global-Kuramoto threshold crossing).
+   *
+   * `'phase-clusters'` gates emission on stable PARTIAL synchronization
+   * instead; `momentThreshold` is then unused. See `MomentCriterion`.
+   */
+  momentCriterion?: MomentCriterion;
+  /**
+   * Tuning for `momentCriterion: 'phase-clusters'`. Ignored under the
+   * default global-R criterion.
+   */
+  clusterCriterion?: ClusterMomentCriterionOptions;
   /** Default integration step for `tick()` (default 0.016). */
   dt?: number;
   /** Memory bank capacity (default 256). */
@@ -161,6 +243,17 @@ export interface SemanticMoment {
   smf: number[];
   /** Safety verdict for the crossing tick. */
   safety: SafetyCheckResult;
+  /**
+   * Which criterion produced this moment. Present on every moment so the two
+   * emission regimes can be told apart in a mixed recording.
+   */
+  criterion: MomentCriterion;
+  /**
+   * The phase-cluster structure at emission. Read-only and computed ONLY on
+   * the tick a moment actually fires, so recording it costs the control
+   * nothing and cannot influence which ticks emit.
+   */
+  clusters: PhaseClusterMetrics;
 }
 
 /** Aggregate observer state. */
@@ -222,6 +315,7 @@ export class SemanticObserver implements Initializable {
         | 'memoryBankOptions'
         | 'smfProjectionSeed'
         | 'smfProjectionDensity'
+        | 'clusterCriterion'
       >
     >,
     never
@@ -247,6 +341,16 @@ export class SemanticObserver implements Initializable {
 
   private momentThreshold: number;
   private previousCoherence: number | null = null;
+  /**
+   * Cluster-criterion state (unused under the default global-R criterion):
+   * the partition signature currently being held, how many consecutive ticks
+   * it has held for, and whether the criterion was already satisfied on the
+   * previous tick — the rising-edge memory that mirrors `previousCoherence`.
+   */
+  private readonly clusterCriterion: Required<ClusterMomentCriterionOptions>;
+  private clusterSignature: string | null = null;
+  private clusterStableTicks = 0;
+  private clusterSatisfied = false;
   private tickCount = 0;
   private elapsed = 0;
   private momentCount = 0;
@@ -284,6 +388,7 @@ export class SemanticObserver implements Initializable {
       coupling: options.coupling ?? 0.45,
       gridSize: Math.max(8, Math.floor(rawGridSize)),
       momentThreshold: options.momentThreshold ?? 0.85,
+      momentCriterion: options.momentCriterion ?? 'global-R',
       driftWindowTicks: Math.max(10, Math.floor(options.driftWindowTicks ?? 40)),
       driftDropThreshold: options.driftDropThreshold ?? 0.03,
       driftDecliningRatio: options.driftDecliningRatio ?? 0.75,
@@ -336,6 +441,21 @@ export class SemanticObserver implements Initializable {
     }
 
     this.momentThreshold = clampRange(this.options.momentThreshold, Number.EPSILON, 1);
+
+    // Cluster criterion: resolved once, bounded here, so a hot tick never
+    // re-validates. Order parameters are clamped to [0, 1]; the bin count and
+    // stability window are clamped by `phaseClusterMetrics` / `Math.max`.
+    const cluster = options.clusterCriterion ?? {};
+    this.clusterCriterion = {
+      phaseBins: Math.min(360, Math.max(2, Math.floor(cluster.phaseBins ?? CLUSTER_MOMENT_DEFAULTS.phaseBins))),
+      minClusters: Math.max(1, Math.floor(cluster.minClusters ?? CLUSTER_MOMENT_DEFAULTS.minClusters)),
+      minWithinR: clampRange(cluster.minWithinR ?? CLUSTER_MOMENT_DEFAULTS.minWithinR, 0, 1),
+      maxBetweenR: clampRange(cluster.maxBetweenR ?? CLUSTER_MOMENT_DEFAULTS.maxBetweenR, 0, 1),
+      stabilityTicks: Math.max(1, Math.floor(cluster.stabilityTicks ?? CLUSTER_MOMENT_DEFAULTS.stabilityTicks))
+    };
+    for (const [key, value] of Object.entries(this.clusterCriterion)) {
+      if (!Number.isFinite(value)) throw new NonFiniteValueError(`clusterCriterion.${key}`, value);
+    }
 
     this.field = new PrimeOscillatorField({
       primeCount: this.options.primeCount,
@@ -738,6 +858,9 @@ export class SemanticObserver implements Initializable {
     let tickCountSnapshot = 0;
     let elapsedSnapshot = 0;
     let previousCoherenceSnapshot: number | null = null;
+    let clusterSignatureSnapshot: string | null = null;
+    let clusterStableTicksSnapshot = 0;
+    let clusterSatisfiedSnapshot = false;
     let momentCountSnapshot = 0;
     let lastMomentIdSnapshot: string | null = null;
     let lastSafetySnapshot: SafetyCheckResult | null = null;
@@ -755,6 +878,9 @@ export class SemanticObserver implements Initializable {
       tickCountSnapshot = this.tickCount;
       elapsedSnapshot = this.elapsed;
       previousCoherenceSnapshot = this.previousCoherence;
+      clusterSignatureSnapshot = this.clusterSignature;
+      clusterStableTicksSnapshot = this.clusterStableTicks;
+      clusterSatisfiedSnapshot = this.clusterSatisfied;
       momentCountSnapshot = this.momentCount;
       lastMomentIdSnapshot = this.lastMomentId;
       lastSafetySnapshot = this.lastSafety;
@@ -788,26 +914,41 @@ export class SemanticObserver implements Initializable {
       });
       this.lastSafety = safety;
 
-      // 5. Moment detection: coherence must CROSS the threshold going up.
+      // 5. Moment detection. Two criteria, one rising-edge contract:
+      //    'global-R'       — coherence CROSSES momentThreshold going up.
+      //    'phase-clusters' — the field ENTERS a stable multi-cluster
+      //                       partition (partial synchronization).
+      //    Both fire on the transition, never on every tick they hold.
       let moment: SemanticMoment | null = null;
-      if (this.previousCoherence !== null) {
-        const crossed = this.previousCoherence <= this.momentThreshold && metrics.coherence > this.momentThreshold;
-        if (crossed && (!this.options.requireSafetyClear || safety.allowed)) {
-          this.momentCount += 1;
-          this.lastMomentId = randomUUID();
-          moment = {
-            id: this.lastMomentId,
-            tick: this.tickCount,
-            time: this.elapsed,
-            coherence: metrics.coherence,
-            previousCoherence: this.previousCoherence,
-            threshold: this.momentThreshold,
-            field: state,
-            smf: this.smf.toArray(),
-            safety
-          };
-          this.momentEvents.next(moment);
-        }
+      const emit =
+        this.options.momentCriterion === 'phase-clusters'
+          ? this.evaluateClusterCriterion(state)
+          : this.previousCoherence !== null &&
+            this.previousCoherence <= this.momentThreshold &&
+            metrics.coherence > this.momentThreshold;
+
+      if (emit && (!this.options.requireSafetyClear || safety.allowed)) {
+        this.momentCount += 1;
+        this.lastMomentId = randomUUID();
+        moment = {
+          id: this.lastMomentId,
+          tick: this.tickCount,
+          time: this.elapsed,
+          coherence: metrics.coherence,
+          previousCoherence: this.previousCoherence ?? metrics.coherence,
+          threshold: this.momentThreshold,
+          field: state,
+          smf: this.smf.toArray(),
+          safety,
+          criterion: this.options.momentCriterion,
+          // Read-only, and computed only on the tick a moment actually
+          // fires: recording the partition costs the control nothing and
+          // cannot influence which ticks emit.
+          clusters: phaseClusterMetrics(state.phases, state.amplitudes, {
+            phaseBins: this.clusterCriterion.phaseBins
+          })
+        };
+        this.momentEvents.next(moment);
       }
 
       // 6. Accumulate clock AFTER the event so the moment carries tick-start time.
@@ -866,6 +1007,9 @@ export class SemanticObserver implements Initializable {
         this.tickCount = tickCountSnapshot;
         this.elapsed = elapsedSnapshot;
         this.previousCoherence = previousCoherenceSnapshot;
+        this.clusterSignature = clusterSignatureSnapshot;
+        this.clusterStableTicks = clusterStableTicksSnapshot;
+        this.clusterSatisfied = clusterSatisfiedSnapshot;
         this.momentCount = momentCountSnapshot;
         this.lastMomentId = lastMomentIdSnapshot;
         this.lastSafety = lastSafetySnapshot;
@@ -879,6 +1023,57 @@ export class SemanticObserver implements Initializable {
   }
 
   // ── signal internals (called inside the atomic tick region) ─────────────
+
+  /**
+   * The cluster emission criterion, evaluated on the live field state.
+   *
+   * STRUCTURE: the partition must have at least `minClusters` groups, a
+   * size-weighted within-cluster order parameter of at least `minWithinR`,
+   * and a between-cluster order parameter no greater than `maxBetweenR` —
+   * groups that lock internally at DIFFERENT phases.
+   *
+   * STABILITY: that partition's signature must hold for `stabilityTicks`
+   * consecutive ticks. Oscillators drifting past each other sweep through
+   * many transient partitions and hold none, so stability is what separates
+   * a locked chimera from accidental bunching.
+   *
+   * EDGE: returns true only on the tick the criterion becomes satisfied. A
+   * CHANGE of partition re-arms the edge — a different partition is a
+   * different code and earns its own moment once it has held.
+   *
+   * The bookkeeping it mutates is part of the tick's atomic region and is
+   * rolled back with everything else if the tick throws.
+   */
+  private evaluateClusterCriterion(state: OscillatorFieldState): boolean {
+    const clusters = phaseClusterMetrics(state.phases, state.amplitudes, {
+      phaseBins: this.clusterCriterion.phaseBins
+    });
+
+    const structured =
+      clusters.clusterCount >= this.clusterCriterion.minClusters &&
+      clusters.withinR >= this.clusterCriterion.minWithinR &&
+      clusters.betweenR <= this.clusterCriterion.maxBetweenR;
+
+    if (!structured) {
+      this.clusterSignature = null;
+      this.clusterStableTicks = 0;
+      this.clusterSatisfied = false;
+      return false;
+    }
+
+    if (clusters.signature !== this.clusterSignature) {
+      this.clusterSignature = clusters.signature;
+      this.clusterStableTicks = 1;
+      this.clusterSatisfied = false;
+    } else {
+      this.clusterStableTicks += 1;
+    }
+
+    const satisfied = this.clusterStableTicks >= this.clusterCriterion.stabilityTicks;
+    const rising = satisfied && !this.clusterSatisfied;
+    this.clusterSatisfied = satisfied;
+    return rising;
+  }
 
   /**
    * Drift detection: emit a warning when coherence has trended downward
@@ -982,6 +1177,12 @@ export class SemanticObserver implements Initializable {
     this.field.reset();
     this.coherenceHistory.length = 0;
     this.driftEpisodeActive = false;
+    // The reset destroys the phase partition, so the cluster criterion's
+    // stability memory is stale: a settle must not let a pre-settle partition
+    // count toward a post-settle moment.
+    this.clusterSignature = null;
+    this.clusterStableTicks = 0;
+    this.clusterSatisfied = false;
   }
 
   /** Tick repeatedly until `predicate` holds or `maxTicks` is reached. */
@@ -1057,6 +1258,23 @@ export class SemanticObserver implements Initializable {
     return this.momentThreshold;
   }
 
+  /** Which criterion currently gates moment emission. */
+  getMomentCriterion(): MomentCriterion {
+    return this.options.momentCriterion;
+  }
+
+  /**
+   * Live phase-cluster structure of the oscillator field (read-only).
+   *
+   * Available under BOTH criteria: the control can be audited for cluster
+   * structure it is not gating on, which is what makes the two arms
+   * comparable on the same measurement.
+   */
+  getClusterStructure(): PhaseClusterMetrics {
+    this.requireInitialized();
+    return this.field.clusterStructure({ phaseBins: this.clusterCriterion.phaseBins });
+  }
+
   /** Change the moment threshold. */
   setMomentThreshold(threshold: number): void {
     this.momentThreshold = clampRange(threshold, Number.EPSILON, 1);
@@ -1072,6 +1290,9 @@ export class SemanticObserver implements Initializable {
     this.previousHologram = null;
     this.memory.clear();
     this.previousCoherence = null;
+    this.clusterSignature = null;
+    this.clusterStableTicks = 0;
+    this.clusterSatisfied = false;
     this.tickCount = 0;
     this.elapsed = 0;
     this.momentCount = 0;
