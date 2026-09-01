@@ -11,7 +11,9 @@ module.exports = {
     '<rootDir>/src/teacher/scale20kBenchmark.test.ts',
     '<rootDir>/src/teacher/fullDeckPruning.test.ts',
     '<rootDir>/src/teacher/ciGates.test.ts',
-    '<rootDir>/src/teacher/semanticRecall.test.ts'
+    '<rootDir>/src/teacher/semanticRecall.test.ts',
+    // 10 arms x (200 words + 728 pairs): a physics sweep, not a unit test.
+    '<rootDir>/src/teacher/sparseExcitationBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

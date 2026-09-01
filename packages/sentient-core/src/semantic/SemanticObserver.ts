@@ -108,6 +108,27 @@ export interface SemanticObserverOptions {
    */
   vocabulary?: Record<string, readonly number[]>;
   /**
+   * SPARSE EXCITATION (default undefined = OFF, the honest control).
+   *
+   * When set, a stimulus excites only its top-`k` basis primes instead of
+   * every prime its tokens resolve to. The selection is DETERMINISTIC and
+   * CONTENT-DERIVED — never random:
+   *
+   *   1. weight each folded basis prime by how many of the stimulus's own
+   *      token-emitted primes land on it (a prime carried by several tokens
+   *      of the utterance is more central to that utterance);
+   *   2. break ties by first appearance in the utterance;
+   *   3. break remaining ties by the prime itself.
+   *
+   * The same selection runs on BOTH sides of the encoder — the excitation
+   * that produces a stored trace and the cue resolution that queries it —
+   * so the two arms differ in sparsity, not in symmetry.
+   *
+   * Note the ambient-noise drive (`observe({kind:'noise'})`) is deliberately
+   * excluded: it is a basis-wide resting floor by definition, not a stimulus.
+   */
+  excitationTopK?: number;
+  /**
    * Memory bank kind (default 'full').
    *
    * 'compact' stores lean traces (~400 bytes, no per-trace holograms) with
@@ -217,6 +238,7 @@ export class SemanticObserver implements Initializable {
         | 'kernel'
         | 'safety'
         | 'vocabulary'
+        | 'excitationTopK'
         | 'memoryMode'
         | 'memoryCapacity'
         | 'memoryBankOptions'
@@ -227,6 +249,13 @@ export class SemanticObserver implements Initializable {
     never
   > & { memoryCapacity: number | undefined; safety?: SafetyMonitor };
   private readonly vocabulary: Readonly<Record<string, readonly number[]>>;
+  /**
+   * Sparse-excitation budget, or null when the option is off (the control).
+   * Read from the raw options like `memoryMode` — it is not defaulted into
+   * `this.options`, so "unset" stays distinguishable from "set to the basis
+   * size".
+   */
+  private readonly excitationTopK: number | null;
 
   private readonly field: PrimeOscillatorField;
   private readonly smf: SedenionMemoryField;
@@ -315,6 +344,20 @@ export class SemanticObserver implements Initializable {
       }
     }
     this.vocabulary = vocabulary;
+
+    // Sparse excitation: opt-in, and refused loudly when it is not a usable
+    // budget. A silently clamped k would make the arm unreadable — the whole
+    // point of the option is that the number in the report is the number the
+    // encoder used.
+    if (options.excitationTopK === undefined) {
+      this.excitationTopK = null;
+    } else {
+      const k = options.excitationTopK;
+      if (!Number.isFinite(k) || !Number.isInteger(k) || k < 1) {
+        throw new NonFiniteValueError('excitationTopK', k);
+      }
+      this.excitationTopK = k;
+    }
 
     // Upfront validation: the same rules the holographic layer enforces,
     // rejected here with typed errors instead of failing mid-run.
@@ -1099,10 +1142,13 @@ export class SemanticObserver implements Initializable {
   /**
    * Resolve an input into folded basis primes WITHOUT mutating any state.
    * Shared by `processInput` (which then excites the field) and
-   * `recallMemory` (which must stay a pure read).
+   * `recallMemory` (which must stay a pure read) — so when sparse excitation
+   * is on, the stored side and the cue side are encoded by the same rule.
    */
   private resolvePrimes(input: SemanticInput): number[] {
     let primes: number[];
+    // Pre-dedup emission order, kept only to weight the sparse selection.
+    let emitted: readonly number[];
     if (typeof input === 'string') {
       const backend = this.kernel.createSemanticBackend({
         vocabulary: this.vocabulary as Record<string, number[]>
@@ -1113,27 +1159,80 @@ export class SemanticObserver implements Initializable {
       // dropping stop words here would silence a large share of a frequency
       // deck — nothing stored, nothing recalled. Unknown stop tokens are
       // still excluded, preserving default behavior for ordinary sentences.
-      primes = [
-        ...new Set(
-          backend
-            .tokenize(input, false)
-            .filter((token) => token.known || !token.isStop)
-            .flatMap((token) => token.primes)
-        )
-      ];
+      const tokenPrimes = backend
+        .tokenize(input, false)
+        .filter((token) => token.known || !token.isStop)
+        .flatMap((token) => token.primes);
+      emitted = tokenPrimes;
+      primes = [...new Set(tokenPrimes)];
     } else {
       primes = Array.from(input);
+      emitted = primes;
     }
     if (primes.length === 0) return [];
 
+    const folded = primes.map(p => this.foldPrime(p));
+    if (this.excitationTopK === null) return folded;
+    return this.selectSparseExcitation(folded, emitted);
+  }
+
+  /**
+   * Fold a source prime into the field basis (prime rank mod N).
+   * Integers only: a fractional prime would index `basis[2.5]` -> undefined,
+   * so it is mapped to the -1 sentinel the excite path already ignores.
+   */
+  private foldPrime(p: number): number {
     const basis = this.field.primes;
-    return primes.map(p => {
-      // Integers only: a fractional prime would index `basis[2.5]` -> undefined.
-      if (!Number.isInteger(p) || p <= 0) return -1;
-      const rank = this.kernel.primeRankOf(p);
-      if (rank >= 0) return basis[rank % basis.length];
-      return basis[p % basis.length];
+    if (!Number.isInteger(p) || p <= 0) return -1;
+    const rank = this.kernel.primeRankOf(p);
+    if (rank >= 0) return basis[rank % basis.length];
+    return basis[p % basis.length];
+  }
+
+  /**
+   * The `excitationTopK` selection: the k basis primes a stimulus excites.
+   *
+   * Deterministic and content-derived, in this exact order:
+   *   1. WEIGHT — how many of the stimulus's own token-emitted primes fold
+   *      onto this basis prime. This is the stimulus's own signature mass on
+   *      that oscillator, so it is the "highest-amplitude" reading available
+   *      at encode time (the field itself excites every stimulus prime to
+   *      the SAME scalar amplitude, so field amplitude cannot rank them).
+   *   2. FIRST APPEARANCE in the utterance.
+   *   3. The prime itself.
+   *
+   * Same input -> same primes, always. Nothing here consults the field, the
+   * clock, or a random source.
+   */
+  private selectSparseExcitation(folded: readonly number[], emitted: readonly number[]): number[] {
+    const k = this.excitationTopK;
+    if (k === null) return [...folded];
+
+    const weight = new Map<number, number>();
+    for (const p of emitted) {
+      const f = this.foldPrime(p);
+      if (f <= 0) continue;
+      weight.set(f, (weight.get(f) ?? 0) + 1);
+    }
+
+    const firstSeen = new Map<number, number>();
+    const unique: number[] = [];
+    for (let i = 0; i < folded.length; i += 1) {
+      const p = folded[i];
+      if (p <= 0 || firstSeen.has(p)) continue;
+      firstSeen.set(p, i);
+      unique.push(p);
+    }
+    if (unique.length <= k) return unique;
+
+    unique.sort((a, b) => {
+      const byWeight = (weight.get(b) ?? 0) - (weight.get(a) ?? 0);
+      if (byWeight !== 0) return byWeight;
+      const byOrder = (firstSeen.get(a) ?? 0) - (firstSeen.get(b) ?? 0);
+      if (byOrder !== 0) return byOrder;
+      return a - b;
     });
+    return unique.slice(0, k);
   }
 
   /**

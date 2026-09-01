@@ -715,3 +715,179 @@ because it is corroborated by the deck. Residual noise remains visible
 ("It is noun") — the reader is at ~95% precision, not 100%, and the honest
 consequence is that a few weak claims are held and hedged rather than
 silently dropped.
+
+## 17. Sparse excitation: a REJECTED intervention that located the real cause
+
+**Verdict: REJECT** as a retrieval change. `excitationTopK` ships as an
+opt-in, default OFF, and the honest control is the shipped dense encoder.
+Every budget that actually binds costs ranking: top-1 falls 99.0% -> 66.4%
+and conversation competency 99.3% -> 56.3% at k=8. The experiment is kept
+because its *mechanism* claim held and, in holding, told us where the
+collapse is not.
+
+### 17a. The diagnosis was half an artifact
+
+The premise was that the field sits in a GLOBAL SYNCHRONY regime: "every
+stored trace carries all 256 primes, so prime overlap is a clique and the
+inverted index has zero discriminative power." Measuring it first:
+
+| reading | value |
+|---|---|
+| `trace.primes.length` | 256 (the whole basis) |
+| primes with amplitude >= the index gate (1e-4) | **13.3 of 256 (5.2%)** |
+| mean Jaccard of the raw `trace.primes` ARRAY | 1.000 |
+| **mean Jaccard of the ACTIVE (amplitude-gated) set** | **0.071** |
+
+The clique is a **measurement artifact**. `SemanticObserver.storeMemory`
+passes `this.field.primes` — the full basis — as the trace's prime array,
+but the parallel amplitude vector is already sparse, and
+`CompactMemoryBank.indexTrace` skips any prime under `indexThreshold`, as
+does the phase store. So the inverted index is built from the ACTIVE set by
+construction, never from the 256-long array: the index whose discriminative
+power was called zero is keyed on a set that is 5% dense with 0.071
+Jaccard between unrelated traces. The oscillators start quiescent,
+`settleField()` returns them to zero, and Kuramoto `tick` moves phase, not
+amplitude — nothing in the loop ever spreads excitation across the basis.
+
+Excitation was therefore **already sparse**, which sets the ceiling on the
+whole experiment: k in {16, 32, 64} of 256 sits at or above the control's
+own 13.3 active primes, so those arms are near-no-ops by construction. The
+sweep was extended DOWN to k in {4, 2} to get any binding points at all.
+
+A second obstacle, from the code rather than a measurement:
+`PrimeOscillatorField.excite(primes, amplitude)` takes ONE scalar amplitude
+and applies it to every index, so all of a stimulus's excited oscillators
+carry the same value and "the k highest-amplitude primes" cannot be read
+off the field at all. The option ranks instead by the stimulus's own
+signature mass — how many of its tokens' primes fold onto each basis
+prime — then by first appearance, then by the prime. Deterministic,
+content-derived, and applied to BOTH the stored side and the recall cue so
+an arm differs from the control in sparsity alone.
+
+### 17b. The measurements (200 words + 728 pairs, 928 traces, 200 cues)
+
+`sparseExcitationBenchmark.test.ts`. `act` = mean active primes per trace,
+`Jraw`/`Jact` = prime-set Jaccard on the raw array vs the active set, `DC`
+= ||corpus mean sketch|| / mean ||sketch||, `cos`/`cosC` = mean pairwise
+sketch cosine between unrelated traces raw and mean-centered, `comp` =
+conversation competency.
+
+| arm | act/256 | Jraw | Jact | DC | cos | cosC | top-1 | true | distractor | margin | comp |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **control (dense)** | 13.3 | 1.000 | 0.071 | 0.732 | 0.436 | 0.005 | **99.0%** | 0.816 | 0.684 | **+0.133** | **99.3%** |
+| topK=64 | 13.3 | 1.000 | 0.071 | 0.732 | 0.436 | 0.005 | 99.0% | 0.816 | 0.684 | +0.133 | 99.3% |
+| topK=32 | 13.3 | 1.000 | 0.071 | 0.732 | 0.436 | 0.005 | 99.0% | 0.816 | 0.684 | +0.133 | 99.3% |
+| topK=16 | 11.8 | 1.000 | 0.074 | 0.723 | 0.427 | 0.003 | 93.0% | 0.818 | 0.701 | +0.117 | 96.0% |
+| topK=8 | 7.0 | 1.000 | 0.078 | 0.662 | 0.379 | 0.004 | 66.4% | 0.801 | 0.735 | +0.066 | 56.3% |
+| topK=4 | 4.0 | 1.000 | 0.049 | 0.514 | 0.253 | −0.000 | 58.0% | 0.793 | 0.746 | +0.047 | 42.6% |
+| topK=2 | 2.0 | 1.000 | 0.035 | 0.454 | 0.187 | −0.001 | 64.7% | 0.844 | 0.778 | +0.066 | 50.4% |
+
+The control reproduces §15 (98.5% top-1, +0.104 margin) at 99.0% and
++0.133; absolute scores read higher here because the harness excites and
+converges the cue exactly as production `respond` does before recalling.
+k=32 and k=64 are bit-identical to the control, which is the expected
+no-op and a useful self-check on the harness.
+
+**What sparsity DID do (the mechanism claim, confirmed).** DC ratio and the
+cosine floor are *caused* by excitation density, monotonically:
+0.732 -> 0.662 -> 0.514 -> 0.454 as k goes 8 -> 4 -> 2, and the raw cosine
+floor with it, 0.436 -> 0.379 -> 0.253 -> 0.187. The shared mode is real and
+it is the excitation's footprint.
+
+**What it cost.** Every one of those reductions was paid for out of
+ranking. Nothing in the sweep beat the control on any retrieval column, and
+the response is not even monotonic in k (k=2 ranks better than k=4), which
+is what a starved code looks like rather than a tuned one.
+
+### 17c. The falsifier: centering stops being catastrophic — below DC ~0.6
+
+§15 measured `centerSketches` (CompactMemoryBank, default off) as a
+catastrophe. The prediction was that a decollapsed encoding would make it
+neutral or positive. Re-run on every arm:
+
+| base arm | DC | top-1 off -> on | margin off -> on | Δmargin |
+|---|---|---|---|---|
+| control (dense) | 0.732 | 99.0% -> 48.2% | +0.133 -> **−0.005** | −0.138 |
+| topK=16 | 0.723 | 93.0% -> 42.1% | +0.117 -> **−0.020** | −0.136 |
+| topK=8 | 0.662 | 66.4% -> 18.0% | +0.066 -> **−0.088** | −0.154 |
+| topK=4 | 0.514 | 58.0% -> 43.7% | +0.047 -> **+0.012** | **−0.035** |
+| topK=2 | 0.454 | 64.7% -> 45.9% | +0.066 -> **+0.007** | **−0.059** |
+
+**The prediction held.** Centering flips from margin-destroying to
+margin-preserving between DC 0.662 and DC 0.514, and the damage it does
+collapses from −0.138 to −0.035. The shared component really is what makes
+centering destructive, and excitation density really is what produces the
+shared component. The causal chain in the diagnosis was right.
+
+**And it does not matter.** The cheapest arm where centering is survivable
+(k=4) ranks 43.7% top-1 against the control's 99.0%. Removing the DC by
+starving the excitation destroys ~4x more ranking than the DC was ever
+costing. The geometry columns are identical between each arm and its
+`+ center` twin, confirming centering is readout-only — the intervention
+that moves the geometry is the sparsity, and the sparsity is the thing
+that hurts.
+
+### 17d. So the collapse has another cause, and here it is
+
+If the prime code was never a clique (Jact 0.071) and the DC is not noise
+the readout can subtract, then the "collapsed representation" is not in the
+excitation. It is in the SMF sketch's **update rule**. The benchmark probes
+it on every arm:
+
+| arm | consecutive | unrelated | ratio | first-vs-last |
+|---|---|---|---|---|
+| control (dense) | **0.919** | 0.436 | 2.11 | 0.117 |
+| topK=16 | 0.916 | 0.427 | 2.14 | 0.125 |
+| topK=8 | 0.909 | 0.379 | 2.40 | 0.094 |
+| topK=4 | 0.887 | 0.253 | 3.51 | 0.088 |
+| topK=2 | 0.872 | 0.187 | **4.66** | 0.093 |
+
+Two traces taught BACK TO BACK are 0.919 similar regardless of content,
+against a 0.436 floor for unrelated traces — while the first and last
+traces of the same run sit at 0.117, *below* that floor.
+`SedenionMemoryField.updateFromPrimeActivity` is an EMA
+(`s <- (1-alpha) s + alpha * P(a . cos phi)`, alpha ~ 0.2 * (0.5 + 0.5 *
+coherence)) and **nothing ever resets it** — `settleField()` resets the
+oscillators, not the sketch. So a trace's sketch is not its content: it is
+the observer's slowly-drifting trajectory *at the moment* it was taught,
+with the current content mixed in at ~10-20% per tick.
+
+**And this is exactly why sparse excitation fails.** The ratio column is
+the whole verdict in one number: as k falls, the content variance drains
+out of the sketch (unrelated cosine 0.436 -> 0.187) while the temporal
+trajectory barely moves (consecutive 0.919 -> 0.872), so the recency
+component becomes MORE dominant, 2.11x -> 4.66x. Starving the excitation
+does not decollapse the code. It makes the sketch a better clock and a
+worse code, which is precisely the ranking loss the retrieval table
+measures.
+
+That also reframes both prior readings. The DC is a TRAJECTORY, not a
+corpus constant, which is why subtracting a single global mean is
+destructive: it re-references every trace against a point its own local
+neighborhood never occupied. And the 0.7 sketch-cosine neighborhood the
+auto-sharder partitions on (§14) is partly a RECENCY neighborhood, which is
+a better explanation for why sharding cut interference 20.5% without
+helping the paraphrase probes at all.
+
+The next experiment is therefore not about excitation. It is about whether
+the sketch should be imprinted from the moment alone rather than
+accumulated across the curriculum.
+
+### 17e. The controls (none regressed)
+
+| control | before | after |
+|---|---|---|
+| `npm run typecheck` (both workspaces) | clean | clean |
+| core suite | 199 tests | **209 tests** (199 + 10 for the new option) |
+| web suite | 818 tests | **818 tests** |
+| conversation competency | 99.0% | **99.3%** (control arm) |
+| word recognition, 30-word deck | 100.0% | **100.0% (30/30)** |
+| word recognition, 1k deck | 99.8% | **99.8% (998/1000)** |
+| word recognition, 20k deck | 99.8% | **99.8% (399/400)** |
+
+The option is off by default, so the shipped encoder is untouched; three
+independent full-sweep runs produced bit-identical numbers on every shared
+arm, so the readings above are deterministic and not a single lucky
+sample. The benchmark is excluded from the default suite (12 arms x 928
+traces, ~11.5 min) and runs as `npm run test:sparse-bench`.
+
