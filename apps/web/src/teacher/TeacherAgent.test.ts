@@ -11,6 +11,7 @@ import { OperatorLearner } from './operators/learning';
 import { TokenCostModel } from './mdl';
 import { ACTIVE_DECK } from './decks';
 import { criticize } from './groundedFrames';
+import { stripHedges } from './grounding';
 
 const STARTER_DECK = DECK_100.slice(0, 12);
 
@@ -814,7 +815,9 @@ describe('P10 multi-predicate composition (is-a → has-part → capable-of, end
     expect(answer.mode).toBe('operator');
     if (answer.mode === 'operator') {
       expect(answer.operator?.kind).toBe('composed');
-      expect(answer.response).toBe('Yes — bird is an animal, animal has heart, and heart can pump.');
+      // P14: the chain's weakest hop is a single chaperone (LLM-only) edge —
+      // the composed answer is hedged, not asserted flatly.
+      expect(answer.response).toBe('Probably — bird is an animal, animal has heart, and heart can pump.');
       // Provenance names the STORED chain — never the derived claim.
       expect(answer.provenance.edges).toEqual([
         { subject: 'bird', predicate: 'is-a', object: 'animal' },
@@ -843,11 +846,13 @@ describe('P10 multi-predicate composition (is-a → has-part → capable-of, end
     let composed: CreativeReply | null = null;
     for (let i = 0; i < 20 && composed === null; i += 1) {
       const reply = teacher.creativeReply('tell me about the bird and heart');
-      if (reply.grounded && reply.sentence.includes('A bird can pump blood.')) composed = reply;
+      // P14: the composed claim rests on a single chaperone hop — the spoken
+      // form is hedged ("I think a bird can pump blood."), still grounded.
+      if (reply.grounded && reply.hedged && reply.sentence.includes('I think a bird can pump blood.')) composed = reply;
     }
     expect(composed).not.toBeNull();
     if (composed !== null) {
-      expect(composed.sentence).toContain('A bird can pump blood.');
+      expect(composed.sentence).toContain('I think a bird can pump blood.');
       for (const hop of [
         { subject: 'bird', predicate: 'is-a', object: 'animal' },
         { subject: 'animal', predicate: 'has-part', object: 'heart' },
@@ -860,7 +865,9 @@ describe('P10 multi-predicate composition (is-a → has-part → capable-of, end
         ).toBe(true);
       }
       // The internal critic parses the composed sentence back and accepts it.
-      const verdict = criticize(composed.sentence, teacher.relations(), teacher.negationsList());
+      // P14: hedging is presentation applied AFTER verification, so the critic
+      // scores the raw composition (stripHedges), never the hedge markers.
+      const verdict = criticize(stripHedges(composed.sentence), teacher.relations(), teacher.negationsList());
       expect(verdict.grounded).toBe(true);
     }
     session.dispose();

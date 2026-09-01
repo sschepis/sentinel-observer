@@ -200,6 +200,7 @@ export function criticize(
       edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
       // P14: the corroboration hedge of the backing edge (direct or inherited).
       hedges.push(claimHedge(relations, claim.subject, claim.predicate, claim.object));
+      continue;
     }
     // P10: no single edge states the claim — a SOUND chain still may. The
     // chain's hops are the evidence the claim cites, so a composed answer's
