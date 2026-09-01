@@ -38,6 +38,58 @@ export interface PrimeOscillatorFieldOptions {
   activeThreshold?: number;
   /** Shared kernel override (mainly for tests). */
   kernel?: SemanticKernel;
+
+  // ── COMPETITION (P12) ────────────────────────────────────────────────
+  // Purely positive Kuramoto coupling pulls EVERY oscillator toward every
+  // other one, so the field's stable state is one global mode that every
+  // stored trace shares. These three knobs make oscillators COMPETE. All
+  // three default to OFF, and at their defaults the field is bit-identical
+  // to the uncompeted control — that identity is asserted by a test.
+
+  /**
+   * (a) DIVISIVE NORMALIZATION: the total excitation budget the oscillators
+   * compete for. After every tick, when `Σaⱼ` exceeds `activationBudget`,
+   * every amplitude is scaled by `budget / Σaⱼ`.
+   *
+   * Excitation is ADDITIVE and un-normalized, so a re-excited prime is
+   * topped back up every stimulus while stale background activation is only
+   * ever scaled down: the budget makes fresh excitation crowd out the
+   * residual instead of accumulating on top of it. 0 (default) = off.
+   */
+  activationBudget?: number;
+
+  /**
+   * (b) INHIBITORY COUPLING between unrelated primes, in [0, 1].
+   *
+   * The pairwise Kuramoto weight becomes `+1` for primes in the same
+   * ACTIVITY GROUP (both at/above `activeThreshold`, or both below) and
+   * `1 − 2·inhibition` across groups. So:
+   *   - 0   (default) → weight +1 everywhere = the uncompeted control;
+   *   - 0.5           → the excited group and the silent background are
+   *                     completely decoupled;
+   *   - 1             → weight −1 across groups: locking one group actively
+   *                     pushes everything else into anti-phase.
+   *
+   * "Unrelated" is defined by co-excitation, not by index distance: primes
+   * excited by the same stimulus belong to one word's signature, and a
+   * silent oscillator is by construction not part of it.
+   */
+  inhibition?: number;
+
+  /**
+   * (c) k-WINNER-TAKE-ALL: after every tick, only the `k` largest amplitudes
+   * survive; the rest are zeroed. Ties break by amplitude descending then
+   * oscillator index ascending, so the winner set is fully deterministic.
+   * 0 (default), or any k at/above the oscillator count, = off.
+   */
+  winnerTakeAll?: number;
+}
+
+/** The competition configuration actually in force (see the options above). */
+export interface CompetitionConfig {
+  activationBudget: number;
+  inhibition: number;
+  winnerTakeAll: number;
 }
 
 /** Metrics returned by a single `tick`. */
@@ -102,8 +154,31 @@ const DEFAULTS = {
   primeCount: 16,
   coupling: 0.45,
   decayRate: 0.01,
-  activeThreshold: 0.05
+  activeThreshold: 0.05,
+  activationBudget: 0,
+  inhibition: 0,
+  winnerTakeAll: 0
 } as const;
+
+/**
+ * tinyaleph's `KuramotoModel.tick` applies this fixed decay after its phase
+ * sweep. The inhibitory sweep replaces that method wholesale, so it has to
+ * reproduce the same dissipation or the two arms would differ by more than
+ * the coupling structure under test.
+ */
+const TA_MODEL_DECAY_RATE = 0.02;
+
+/**
+ * Validate a competition knob. Out-of-range is refused LOUDLY rather than
+ * clamped: silently reinterpreting `inhibition: 5` as `1` would make a
+ * benchmark row a fiction.
+ */
+function requireInRange(label: string, value: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new NonFiniteValueError(`${label} (expected ${min}..${max})`, value);
+  }
+  return value;
+}
 
 export class PrimeOscillatorField implements Initializable {
   private readonly kernel: SemanticKernel;
@@ -128,7 +203,22 @@ export class PrimeOscillatorField implements Initializable {
       primeCount,
       coupling: options.coupling ?? DEFAULTS.coupling,
       decayRate: Math.max(0, options.decayRate ?? DEFAULTS.decayRate),
-      activeThreshold: Math.max(0, options.activeThreshold ?? DEFAULTS.activeThreshold)
+      activeThreshold: Math.max(0, options.activeThreshold ?? DEFAULTS.activeThreshold),
+      activationBudget: requireInRange(
+        'activationBudget',
+        options.activationBudget ?? DEFAULTS.activationBudget,
+        0,
+        Number.POSITIVE_INFINITY
+      ),
+      inhibition: requireInRange('inhibition', options.inhibition ?? DEFAULTS.inhibition, 0, 1),
+      winnerTakeAll: Math.floor(
+        requireInRange(
+          'winnerTakeAll',
+          options.winnerTakeAll ?? DEFAULTS.winnerTakeAll,
+          0,
+          Number.POSITIVE_INFINITY
+        )
+      )
     };
   }
 
@@ -242,6 +332,12 @@ export class PrimeOscillatorField implements Initializable {
    *
    * `KuramotoModel.tick` already applies its own 2%/unit-time amplitude decay;
    * `decayRate` adds configurable extra dissipation on top of it.
+   *
+   * P12 COMPETITION: when enabled, the phase sweep is replaced by the
+   * inhibitory one and the settled amplitudes are then passed through the
+   * divisive-normalization budget and the k-winner-take-all filter, in that
+   * order — both read amplitudes AFTER all dissipation, so the budget and the
+   * winner set describe the state the SMF and memory actually see.
    */
   tick(dt = 0.016): OscillatorFieldTick {
     const bank = this.bank();
@@ -249,8 +345,13 @@ export class PrimeOscillatorField implements Initializable {
       throw new Error(`PrimeOscillatorField.tick requires a positive finite dt, got ${String(dt)}`);
     }
 
-    bank.tick(dt);
+    if (this.options.inhibition > 0) this.tickInhibited(dt);
+    else bank.tick(dt);
+
     if (this.options.decayRate > 0) bank.decayAll(this.options.decayRate, dt);
+
+    this.applyActivationBudget();
+    this.applyWinnerTakeAll();
 
     this.elapsed += dt;
     this.tickCount += 1;
@@ -258,6 +359,103 @@ export class PrimeOscillatorField implements Initializable {
     const metrics = this.computeMetrics();
     this.lastMetrics = metrics;
     return metrics;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Competition (P12)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** The competition configuration in force (all zeros = the control). */
+  get competition(): CompetitionConfig {
+    return {
+      activationBudget: this.options.activationBudget,
+      inhibition: this.options.inhibition,
+      winnerTakeAll: this.options.winnerTakeAll
+    };
+  }
+
+  /**
+   * (b) One Kuramoto phase sweep with INHIBITORY cross-group coupling.
+   *
+   * Structurally identical to `KuramotoModel.tick`: the same in-place
+   * (Gauss–Seidel) sweep order, the same `K·Σ/N · dt` scaling, the same
+   * trailing 2%/unit-time decay. The ONLY difference is the pairwise weight,
+   * which is `+1` within an activity group and `1 − 2·inhibition` across
+   * groups. At `inhibition = 0` that weight is `+1` everywhere and this
+   * method reproduces the model's own tick exactly.
+   *
+   * Activity groups are read ONCE, before the sweep: `Oscillator.tick` moves
+   * only the phase, so amplitudes — and therefore group membership — are
+   * constant across a sweep and every oscillator sees the same partition.
+   */
+  private tickInhibited(dt: number): void {
+    const oscillators = this.bank().oscillators;
+    const n = oscillators.length;
+    if (n === 0) return;
+
+    const k = this.bank().K;
+    const crossWeight = 1 - 2 * this.options.inhibition;
+    const threshold = this.options.activeThreshold;
+
+    const active = new Array<boolean>(n);
+    for (let i = 0; i < n; i++) active[i] = oscillators[i].amplitude >= threshold;
+
+    for (let i = 0; i < n; i++) {
+      const osc = oscillators[i];
+      const phase = osc.phase;
+      const group = active[i];
+      let sum = 0;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const weight = active[j] === group ? 1 : crossWeight;
+        sum += weight * Math.sin(oscillators[j].phase - phase);
+      }
+      osc.tick(dt, ((k * sum) / n) * dt);
+    }
+
+    for (const osc of oscillators) osc.decay(TA_MODEL_DECAY_RATE, dt);
+  }
+
+  /**
+   * (a) DIVISIVE NORMALIZATION: rescale amplitudes onto a fixed excitation
+   * budget. A field below budget is untouched, so a quiescent field stays
+   * quiescent and is never inflated into activity it was not given.
+   */
+  private applyActivationBudget(): void {
+    const budget = this.options.activationBudget;
+    if (budget <= 0) return;
+
+    const oscillators = this.bank().oscillators;
+    let total = 0;
+    for (const osc of oscillators) total += osc.amplitude;
+    if (!(total > budget)) return;
+
+    const scale = budget / total;
+    for (const osc of oscillators) osc.amplitude *= scale;
+  }
+
+  /**
+   * (c) k-WINNER-TAKE-ALL: keep the `k` largest amplitudes, zero the rest.
+   *
+   * The ranking is total and deterministic — amplitude descending, then
+   * oscillator index ascending — so a tie can never be resolved by the sort
+   * implementation's internal ordering.
+   */
+  private applyWinnerTakeAll(): void {
+    const k = this.options.winnerTakeAll;
+    if (k <= 0) return;
+
+    const oscillators = this.bank().oscillators;
+    const n = oscillators.length;
+    if (k >= n) return;
+
+    const order = new Array<number>(n);
+    for (let i = 0; i < n; i++) order[i] = i;
+    order.sort((a, b) => {
+      const delta = oscillators[b].amplitude - oscillators[a].amplitude;
+      return delta !== 0 ? delta : a - b;
+    });
+    for (let rank = k; rank < n; rank++) oscillators[order[rank]].amplitude = 0;
   }
 
   /** Reset all oscillators to the quiescent state and zero the clocks. */
