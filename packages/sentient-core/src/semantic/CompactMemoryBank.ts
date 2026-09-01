@@ -212,6 +212,18 @@ export interface CompactMemoryBankOptions {
   minLockStrength?: number;
   /** SMF entropy ceiling for consolidation (default 0.9). */
   entropyLockThreshold?: number;
+  /**
+   * SKETCH CENTERING (default false — the honest control).
+   *
+   * Measured on the real deck: the corpus mean sketch carries ~75% of a
+   * typical trace's magnitude, so unrelated traces sit at ~0.30 cosine
+   * instead of ~0.08. That shared offset compresses the usable range of
+   * the SMF term and starves the identity gate. With centering on, the
+   * cosine is taken between (cue - mean) and (trace - mean): a READOUT
+   * change only — nothing about storage or persistence changes, so
+   * existing bootstrap records keep working.
+   */
+  centerSketches?: boolean;
 }
 
 const COMPACT_DEFAULTS = {
@@ -227,7 +239,8 @@ const COMPACT_DEFAULTS = {
   pruneStrength: 0.25,
   minAccessCount: 3,
   minLockStrength: 0.7,
-  entropyLockThreshold: 0.9
+  entropyLockThreshold: 0.9,
+  centerSketches: false
 };
 
 // ── P11 UTILITY-BASED PRUNING ───────────────────────────────────────────────
@@ -263,6 +276,30 @@ export function traceUtility(
   );
 }
 
+/** (v - mean) normalized to unit length; a zero result stays zero. */
+function centerAndNormalize(vector: readonly number[], mean: Float64Array): Float64Array {
+  const out = new Float64Array(vector.length);
+  let norm = 0;
+  for (let i = 0; i < vector.length; i += 1) {
+    const value = vector[i] - (mean[i] ?? 0);
+    out[i] = value;
+    norm += value * value;
+  }
+  norm = Math.sqrt(norm);
+  if (norm < 1e-12) return out;
+  for (let i = 0; i < out.length; i += 1) out[i] /= norm;
+  return out;
+}
+
+/** Cosine of two unit vectors, clamped to [0, 1]: a below-average-similarity
+ *  trace is simply "not similar" — the score keeps its [0,1] semantics. */
+function centeredCosine(a: Float64Array, b: Float64Array): number {
+  let dot = 0;
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i += 1) dot += a[i] * b[i];
+  return dot < 0 ? 0 : dot > 1 ? 1 : dot;
+}
+
 export class CompactMemoryBank implements MemoryBank {
   private readonly traces = new Map<string, CompactTrace>();
   private readonly index = new Map<number, Set<string>>();
@@ -272,6 +309,16 @@ export class CompactMemoryBank implements MemoryBank {
   private prunedCounter = 0;
   /** P11: grade-evidence extras (graded-correct answers), per trace id. */
   private readonly utilityExtras = new Map<string, number>();
+  // ── Sketch centering state (readout only) ─────────────────────────────
+  /** Running sum of stored sketch vectors (null until the first store). */
+  private sketchSum: Float64Array | null = null;
+  private sketchCount = 0;
+  /** The mean the centered cache was built against, and its trace count —
+   *  the mean is a slowly-moving statistic, refreshed when the population
+   *  moved by >5% (or 8 traces), which keeps the cache stable. */
+  private meanSnapshot: Float64Array | null = null;
+  private meanSnapshotCount = 0;
+  private readonly centeredCache = new Map<string, Float64Array>();
 
   constructor(options: CompactMemoryBankOptions = {}) {
     this.config = {
@@ -282,6 +329,43 @@ export class CompactMemoryBank implements MemoryBank {
       // undefined capacity would prune every new trace under utility rules.
       capacity: Math.max(1, Math.floor(options.capacity ?? COMPACT_DEFAULTS.capacity))
     };
+  }
+
+  /** Accumulate (sign +1) or remove (sign -1) a sketch from the running sum. */
+  private noteSketch(smf: SedenionMemoryField, sign: 1 | -1): void {
+    if (!this.config.centerSketches) return;
+    const vector = smf.toArray();
+    if (this.sketchSum === null) this.sketchSum = new Float64Array(vector.length);
+    for (let i = 0; i < this.sketchSum.length && i < vector.length; i += 1) {
+      this.sketchSum[i] += sign * vector[i];
+    }
+    this.sketchCount += sign;
+    if (this.sketchCount < 0) this.sketchCount = 0;
+  }
+
+  /** The corpus mean sketch (null when centering is off or nothing stored).
+   *  Refreshed when the population moved by >5% (or 8 traces) — the mean is
+   *  a slowly-moving statistic and a stable snapshot keeps the cache warm. */
+  private currentMean(): Float64Array | null {
+    if (!this.config.centerSketches || this.sketchSum === null || this.sketchCount <= 0) return null;
+    const drift = Math.abs(this.sketchCount - this.meanSnapshotCount);
+    if (this.meanSnapshot === null || drift > Math.max(8, this.meanSnapshotCount * 0.05)) {
+      const mean = new Float64Array(this.sketchSum.length);
+      for (let i = 0; i < mean.length; i += 1) mean[i] = this.sketchSum[i] / this.sketchCount;
+      this.meanSnapshot = mean;
+      this.meanSnapshotCount = this.sketchCount;
+      this.centeredCache.clear();
+    }
+    return this.meanSnapshot;
+  }
+
+  /** The trace's mean-centered unit sketch (cached against the current mean). */
+  private centeredOf(trace: CompactTrace, mean: Float64Array): Float64Array {
+    const cached = this.centeredCache.get(trace.id);
+    if (cached !== undefined) return cached;
+    const centered = centerAndNormalize(trace.smf.toArray(), mean);
+    this.centeredCache.set(trace.id, centered);
+    return centered;
   }
 
   get size(): number {
@@ -349,6 +433,7 @@ export class CompactMemoryBank implements MemoryBank {
     };
 
     this.traces.set(trace.id, trace);
+    this.noteSketch(trace.smf, 1);
     this.storeCounter += 1;
     this.indexTrace(trace);
     this.pruneToCapacity();
@@ -411,6 +496,15 @@ export class CompactMemoryBank implements MemoryBank {
       (useOverlap ? this.config.overlapWeight : 0) +
       (usePhase ? this.config.phaseWeight : 0);
 
+    // SKETCH CENTERING (readout): the corpus mean carries most of a sketch's
+    // magnitude, so the raw cosine floor sits high; centering both sides
+    // restores the discriminative range. Off by default (honest control).
+    const sketchMean = this.currentMean();
+    const centeredCue =
+      sketchMean !== null && query.smf !== undefined
+        ? centerAndNormalize(query.smf.toArray(), sketchMean)
+        : null;
+
     const scored: RecallResultLike<CompactTrace>[] = [];
     for (const trace of candidates) {
       // The trace's amplitude and phase lookups are built ONCE per candidate
@@ -429,7 +523,12 @@ export class CompactMemoryBank implements MemoryBank {
           tracePhaseByPrime.set(trace.phasePrimes[i], trace.phases[i]);
         }
       }
-      const smfScore = useSmf && query.smf ? query.smf.coherenceWith(trace.smf) : 0;
+      const smfScore =
+        useSmf && query.smf
+          ? centeredCue !== null
+            ? centeredCosine(centeredCue, this.centeredOf(trace, sketchMean!))
+            : query.smf.coherenceWith(trace.smf)
+          : 0;
       const overlapScore = useOverlap
         ? this.amplitudeOverlap(cuePrimes, traceAmpByPrime, traceNormSq)
         : 0;
@@ -559,6 +658,7 @@ export class CompactMemoryBank implements MemoryBank {
       metadata: snapshot.metadata ? { ...snapshot.metadata } : {}
     };
     this.traces.set(trace.id, trace);
+    this.noteSketch(trace.smf, 1);
     this.storeCounter += 1;
     this.indexTrace(trace);
     // P11: the grade-evidence extra survives reloads.
@@ -674,6 +774,9 @@ export class CompactMemoryBank implements MemoryBank {
         if (ids.size === 0) this.index.delete(prime);
       }
     }
+    const removed = this.traces.get(id);
+    if (removed !== undefined) this.noteSketch(removed.smf, -1);
+    this.centeredCache.delete(id);
     this.traces.delete(id);
   }
 

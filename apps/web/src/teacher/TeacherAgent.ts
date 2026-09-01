@@ -174,6 +174,9 @@ export interface ConversationAnswer {
   response: string | null;
   /** Recall confidence in [0,1] for the chosen response (null when blank). */
   confidence: number | null;
+  /** Separation from the best competing trace (0 when nothing was recalled)
+   *  — the ambiguity reading the answering gate uses at deck scale. */
+  margin?: number;
   /** The trace id of the memorized exchange (null when blank). */
   traceId: string | null;
   /** The cue this response was taught under (null when blank). */
@@ -390,6 +393,33 @@ const FSRS_FORGETTING_FACTOR = 19 / 81;
  * answered as if they were.
  */
 const CONVERSATION_HIGH_CONFIDENCE = 0.8;
+
+/**
+ * MARGIN GATE — the separation a memorized answer must show over its best
+ * competitor when its absolute score sits in the 0.6-0.8 band.
+ *
+ * MEASURED (200 taught cues, 728-pair curriculum + 200 words): the true
+ * trace ranks FIRST for 98.5% of taught cues, but its mean score is 0.686 —
+ * the absolute 0.8 threshold was calibrated on a much smaller curriculum
+ * (its comment still says "taught cues recall at 0.84-0.98") and now
+ * refuses a third of correct, unambiguous recalls. Mean margin over the
+ * runner-up is +0.104 for true matches. Gating on SEPARATION rather than an
+ * absolute constant keeps the honesty contract intact — the answer must
+ * still be the taught exchange by cue identity AND clearly beat every
+ * competitor — while letting correct recalls through at deck scale.
+ */
+const CONVERSATION_MIN_MARGIN = 0.05;
+
+/**
+ * Whether a recalled exchange may be SPOKEN as memorized: the cue identity
+ * must match, and the recall must either clear the absolute confidence bar
+ * or clear the recall floor with a clear margin over its best competitor.
+ */
+function authoritativeRecall(score: number, margin: number, cue: string, matchedCue: string): boolean {
+  if (!matchesCue(cue.trim().toLowerCase(), matchedCue.trim().toLowerCase())) return false;
+  if (score >= CONVERSATION_HIGH_CONFIDENCE) return true;
+  return score >= CONVERSATION_RECALL_FLOOR && margin >= CONVERSATION_MIN_MARGIN;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Autonomous teaching loop
@@ -2420,6 +2450,14 @@ export class TeacherAgent {
       return { utterance, response: null, confidence: null, traceId: null, cue: null, kind: null };
     }
 
+    // The SEPARATION from the best competitor — the honest measure of
+    // whether this recall is unambiguous (see CONVERSATION_MIN_MARGIN).
+    let runnerUp = 0;
+    for (const result of results) {
+      if (result.trace.id === best.trace.id) continue;
+      if (result.score > runnerUp) runnerUp = result.score;
+    }
+    const margin = best.score - runnerUp;
     const bestKind = best.trace.metadata?.kind === 'creative' ? ('creative' as const) : ('conversation' as const);
     const matchedCue =
       typeof best.trace.metadata?.cue === 'string'
@@ -2449,7 +2487,7 @@ export class TeacherAgent {
       // creative unlock. A stored creative answer is a novel prompt, not a
       // taught phrase, and must not inflate the numerator past 100% (the
       // bestKind === 'conversation' check above).
-      if (best.score >= CONVERSATION_HIGH_CONFIDENCE && matchesCue(cue, matchedCue.toLowerCase())) {
+      if (authoritativeRecall(best.score, margin, cue, matchedCue)) {
         this.producedConversationCues.add(matchedCue);
       }
     }
@@ -2466,6 +2504,7 @@ export class TeacherAgent {
       utterance,
       response: best.trace.content,
       confidence: best.score,
+      margin,
       traceId: best.trace.id,
       cue: matchedCue,
       kind: bestKind
@@ -3384,7 +3423,12 @@ export class TeacherAgent {
     const questionKey = resolved.trim().toLowerCase();
     const cueKey = (memorized.cue ?? '').toLowerCase();
     const cueMatches = matchesCue(questionKey, cueKey);
-    if (memorized.response !== null && memorized.confidence !== null && memorized.confidence >= CONVERSATION_HIGH_CONFIDENCE && cueMatches) {
+    if (
+      memorized.response !== null &&
+      memorized.confidence !== null &&
+      memorized.cue !== null &&
+      authoritativeRecall(memorized.confidence, memorized.margin ?? 0, resolved, memorized.cue)
+    ) {
       this.workingMemory.note('observer', memorized.response);
       this.noteAnswerMode('memorized');
       return finish({

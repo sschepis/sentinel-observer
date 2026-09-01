@@ -529,3 +529,52 @@ parity cost). What it does NOT do: the paraphrase probes ("good morning",
 the candidate set but does not lift a cue over the 0.8 identity gate when
 the sketch space itself does not separate the paraphrase family. That
 limit belongs to the signature scheme, not the partition.
+
+## 15. The margin gate: recall was never the bottleneck
+
+**The measurement that mattered.** At 728 conversation pairs + 200 words,
+conversation competency sat at 66%. The assumption was interference —
+paraphrase cues colliding in memory. Measuring the actual retrieval
+distribution over 200 taught cues said otherwise:
+
+| | value |
+|---|---|
+| true trace present in top-5 | 199/200 |
+| **true trace ranked FIRST** | **98.5%** |
+| mean score of the true trace | 0.686 |
+| mean score of the best competitor | 0.581 |
+| **mean margin over the runner-up** | **+0.104** |
+
+Ranking was already right 98.5% of the time. The 34% that never got spoken
+were correct, unambiguous, top-ranked recalls sitting below an ABSOLUTE
+threshold (`CONVERSATION_HIGH_CONFIDENCE = 0.8`) that had been calibrated on
+a much smaller curriculum — its own comment still read "taught cues recall at
+0.84-0.98". The score distribution moved with scale; the constant did not.
+
+**The fix** (`authoritativeRecall` in TeacherAgent.ts): an exchange may be
+spoken when the cue identity matches AND either the absolute bar is cleared
+OR the score clears the recall floor with a clear margin over its best
+competitor (`CONVERSATION_MIN_MARGIN = 0.05`). Separation, not an absolute
+constant, is the honest evidence that a recall is unambiguous.
+
+**Measured** (200 words + the 728-pair curriculum):
+
+| | before | after |
+|---|---|---|
+| conversation competency | 66.2% | **99.0%** |
+| paraphrase probes answered | 0/10 | **7/10** |
+| word answers | 58/60 | 58/60 |
+| untaught cues answered as memorized | 0/20 | **0/20** |
+| spoken answers matching the taught response | — | **181/181 (100%)** |
+
+The honesty contract holds exactly as before: nothing untaught is answered,
+and every spoken memorized answer is the taught response verbatim. The gate
+became more permissive about CONFIDENCE and no more permissive about TRUTH.
+
+**A negative result worth keeping.** The corpus mean sketch carries ~75% of a
+typical trace's magnitude (unrelated traces sit at 0.297 cosine, 0.084 after
+centering), which looked like the obvious cause of the low scores. Centering
+the sketch at readout (`centerSketches`, default OFF) was measured and it
+LOSES: top-1 rank collapses 98.5% -> 33.3% and the mean margin goes negative
+(-0.041). The shared component is not noise — it carries signal the cosine
+needs. The flag stays, default off, as a documented control.
