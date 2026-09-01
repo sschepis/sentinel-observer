@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
-import { TeacherAgent } from './TeacherAgent';
+import { TeacherAgent, type CreativeReply } from './TeacherAgent';
 import { DECK_100 } from './decks/en-100';
 import { CHECKABLE_CONCEPTS } from './technical';
 import { runDrill } from './technical/drill';
@@ -779,5 +779,90 @@ describe('P1 holographic fallback (graded answers where the graph is silent)', (
     expect(answer.mode === 'ask' || answer.mode === 'decline').toBe(true);
 
     hologramSession.dispose();
+  });
+});
+
+describe('P10 multi-predicate composition (is-a → has-part → capable-of, end to end)', () => {
+  const COMPOSITION_DECK = [
+    { word: 'bird', definition: 'an animal', example: 'A bird flies.' },
+    { word: 'animal', definition: 'a creature with a heart', example: 'An animal lives.' },
+    { word: 'heart', definition: 'a muscle in the chest', example: 'A heart beats.' }
+  ];
+
+  async function composedTeacher(
+    options: { multiWordObject?: boolean } = {}
+  ): Promise<{ session: ObserverSession; teacher: TeacherAgent }> {
+    const session = new ObserverSession({}, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, COMPOSITION_DECK, null, 1, undefined, 7);
+    for (const entry of COMPOSITION_DECK) teacher.teach(entry.word);
+    teacher.applyRelations([
+      {
+        subject: 'heart',
+        predicate: 'capable-of',
+        object: options.multiWordObject === true ? 'pump blood' : 'pump',
+        source: 'def',
+        origin: 'chaperone'
+      }
+    ]);
+    return { session, teacher };
+  }
+
+  it('answers a novel capability question through the chain, citing the stored hops', async () => {
+    const { session, teacher } = await composedTeacher();
+    const answer = teacher.chatAnswer('can a bird pump');
+    expect(answer.mode).toBe('operator');
+    if (answer.mode === 'operator') {
+      expect(answer.operator?.kind).toBe('composed');
+      expect(answer.response).toBe('Yes — bird is an animal, animal has heart, and heart can pump.');
+      // Provenance names the STORED chain — never the derived claim.
+      expect(answer.provenance.edges).toEqual([
+        { subject: 'bird', predicate: 'is-a', object: 'animal' },
+        { subject: 'animal', predicate: 'has-part', object: 'heart' },
+        { subject: 'heart', predicate: 'capable-of', object: 'pump' }
+      ]);
+    }
+    session.dispose();
+  });
+
+  it('a confirmed-false hop kills the chain — the observer asks instead of inferring', async () => {
+    const { session, teacher } = await composedTeacher();
+    teacher.storeNegation('animal', 'has-part', 'heart', 'taught', 'taught');
+    const answer = teacher.chatAnswer('can a bird pump');
+    // The negated hop kills the chain; no single edge backs the claim, and
+    // the grounded question form never falls to creative — honest ASK.
+    expect(answer.mode === 'ask' || answer.mode === 'decline').toBe(true);
+    session.dispose();
+  });
+
+  it('the grounded generation path emits the composed frame and the critic backs it', async () => {
+    const { session, teacher } = await composedTeacher({ multiWordObject: true });
+    // Each creative draw advances the seeded composition RNG; within a fixed
+    // horizon at least one draw picks the composed frame (the frame pool is
+    // small and the composed claim is in it).
+    let composed: CreativeReply | null = null;
+    for (let i = 0; i < 20 && composed === null; i += 1) {
+      const reply = teacher.creativeReply('tell me about the bird and heart');
+      if (reply.grounded && reply.sentence.includes('A bird can pump blood.')) composed = reply;
+    }
+    expect(composed).not.toBeNull();
+    if (composed !== null) {
+      expect(composed.sentence).toContain('A bird can pump blood.');
+      for (const hop of [
+        { subject: 'bird', predicate: 'is-a', object: 'animal' },
+        { subject: 'animal', predicate: 'has-part', object: 'heart' },
+        { subject: 'heart', predicate: 'capable-of', object: 'pump blood' }
+      ]) {
+        expect(
+          composed.edges.some(
+            (e) => e.subject === hop.subject && e.predicate === hop.predicate && e.object === hop.object
+          )
+        ).toBe(true);
+      }
+      // The internal critic parses the composed sentence back and accepts it.
+      const verdict = criticize(composed.sentence, teacher.relations(), teacher.negationsList());
+      expect(verdict.grounded).toBe(true);
+    }
+    session.dispose();
   });
 });

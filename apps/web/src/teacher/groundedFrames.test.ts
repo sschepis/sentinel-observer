@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import { mulberry32 } from '@sschepis/sentient-core';
+import { TokenCostModel } from './mdl';
 import {
   framesFor,
   composeGrounded,
@@ -137,5 +138,111 @@ describe('grounded frames (P5)', () => {
 
   it('contentWordsOf extracts the fabrication lens', () => {
     expect(contentWordsOf('A robin is a bird. It can fly.')).toEqual(['robin', 'bird', 'fly']);
+  });
+});
+
+describe('multi-predicate composed frames (P10 — is-a → has-part → capable-of)', () => {
+  // The canonical chain: bird is-a animal, animal has-part heart, heart
+  // capable-of pump blood ⇒ "A bird can pump blood."
+  const COMPOSED_RELATIONS: Relation[] = [
+    { subject: 'bird', predicate: 'is-a', object: 'animal', source: 'def', origin: 'regex' },
+    { subject: 'animal', predicate: 'has-part', object: 'heart', source: 'def', origin: 'regex' },
+    { subject: 'heart', predicate: 'capable-of', object: 'pump blood', source: 'def', origin: 'chaperone' },
+    { subject: 'animal', predicate: 'has-part', object: 'muscle', source: 'def', origin: 'regex' }
+  ];
+  const COST = new TokenCostModel([
+    'bird', 'animal', 'heart', 'pump', 'blood', 'muscle',
+    ...COMPOSED_RELATIONS.flatMap((r) => [r.subject, r.object])
+  ]);
+
+  it('framesFor emits the composed claim no single edge states', () => {
+    const frames = framesFor('bird', COMPOSED_RELATIONS, { cost: COST });
+    expect(frames).toContain('A bird can pump blood.');
+    // A claim a single edge already answers (animal has-part heart via
+    // inheritance) is never duplicated as a composed frame.
+    expect(frames.filter((f) => f === 'A bird has heart.')).toHaveLength(0);
+  });
+
+  it('composeGrounded produces the composed sentence and the critic parses it back', () => {
+    const composed = composeGrounded(['bird'], COMPOSED_RELATIONS, mulberry32(5), 3, { cost: COST });
+    expect(composed).not.toBeNull();
+    if (composed !== null) {
+      expect(composed.sentence).toContain('A bird can pump blood.');
+      expect(composed.edges.length).toBeGreaterThan(0);
+      // The composed claim's evidence is its STORED hops — the derived
+      // (bird, capable-of, pump blood) claim is never cited as an edge.
+      for (const hop of [
+        { subject: 'bird', predicate: 'is-a', object: 'animal' },
+        { subject: 'animal', predicate: 'has-part', object: 'heart' },
+        { subject: 'heart', predicate: 'capable-of', object: 'pump blood' }
+      ]) {
+        expect(
+          composed.edges.some((e) => e.subject === hop.subject && e.predicate === hop.predicate && e.object === hop.object)
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('the critic accepts the composed claim as grounded, citing the chain hops', () => {
+    const verdict = criticize('A bird can pump blood.', COMPOSED_RELATIONS, [], { cost: COST });
+    expect(verdict.grounded).toBe(true);
+    expect(verdict.edges).toEqual([
+      { subject: 'bird', predicate: 'is-a', object: 'animal' },
+      { subject: 'animal', predicate: 'has-part', object: 'heart' },
+      { subject: 'heart', predicate: 'capable-of', object: 'pump blood' }
+    ]);
+  });
+
+  it('the critic refuses a composed claim whose chain conflicts with a negation', () => {
+    const negations: Negation[] = [
+      { subject: 'animal', predicate: 'has-part', object: 'heart', evidence: 'taught', origin: 'taught' }
+    ];
+    const verdict = criticize('A bird can pump blood.', COMPOSED_RELATIONS, negations, { cost: COST });
+    expect(verdict.grounded).toBe(false);
+    expect(verdict.unbacked.some((u) => u.includes('pump blood'))).toBe(true);
+  });
+
+  it('the critic refuses an UNSOUND composition — a part being a thing never makes the whole that thing', () => {
+    // animal has-part muscle must not license "A bird is a muscle."
+    const verdict = criticize('A bird is a muscle.', COMPOSED_RELATIONS, [], { cost: COST });
+    expect(verdict.grounded).toBe(false);
+  });
+
+  it('parseClaims resolves the multi-word object of the composed frame', () => {
+    const claims = parseClaims('A bird can pump blood.', 'bird');
+    expect(claims).toEqual([
+      { subject: 'bird', predicate: 'capable-of', object: 'pump blood', negated: false }
+    ]);
+  });
+
+  it('composed subjects are grounded subjects even without direct frames', () => {
+    // 'robin' has no edges of its own, but inherits a sound chain through
+    // its is-a parent — the composed claim makes it a composable subject.
+    const withRobin: Relation[] = [
+      ...COMPOSED_RELATIONS,
+      { subject: 'robin', predicate: 'is-a', object: 'bird', source: 'def', origin: 'regex' }
+    ];
+    expect(groundedSubjects(['robin'], withRobin)).toContain('robin');
+    const frames = framesFor('robin', withRobin, { cost: COST });
+    expect(frames).toContain('A robin can pump blood.');
+    const verdict = criticize('A robin can pump blood.', withRobin, [], { cost: COST });
+    expect(verdict.grounded).toBe(true);
+  });
+
+  it('the critic refuses a composed claim when the MDL gate fails (composition is not free)', () => {
+    // "A x has z" through the graph's CHEAPEST word compresses less than the
+    // inference costs — the critic must not back it even though the chain is
+    // structurally sound.
+    const cheapGraph: Relation[] = [
+      { subject: 'x', predicate: 'is-a', object: 'bird', source: 'def', origin: 'regex' },
+      { subject: 'bird', predicate: 'has-part', object: 'z', source: 'def', origin: 'regex' }
+    ];
+    const verdict = criticize('A x has z.', cheapGraph, []);
+    expect(verdict.grounded).toBe(false);
+  });
+
+  it('the default graph-derived model keeps the canonical composition grounded', () => {
+    const verdict = criticize('A bird can pump blood.', COMPOSED_RELATIONS, []);
+    expect(verdict.grounded).toBe(true);
   });
 });

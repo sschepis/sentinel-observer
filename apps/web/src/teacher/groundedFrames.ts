@@ -13,8 +13,10 @@
  */
 
 import { edgeObjects, inheritsEdge } from './chain';
+import { composeClaim, composedClaimsFor } from './composition';
 import { isContentWord, tokenizeText } from './context';
-import type { Relation, RelationPredicate } from './relations';
+import type { TokenCostModel } from './mdl';
+import { predicateVerb, type Relation, type RelationPredicate } from './relations';
 import type { Negation } from './relations';
 
 /** One parsed claim of a candidate sentence. */
@@ -32,6 +34,12 @@ export interface GroundedComposition {
   frames: string[];
 }
 
+/** Generation options: the negation store and the MDL frequency model. */
+export interface FrameOptions {
+  negations?: readonly Negation[];
+  cost?: TokenCostModel | null;
+}
+
 const article = (word: string): string => (/^[aeiou]/.test(word) ? 'an' : 'a');
 
 /** "a" / "a and b" / "a, b and c" — the frame object list. */
@@ -43,10 +51,18 @@ function listPhrase(words: readonly string[]): string {
 
 /**
  * The typed frames a subject can fill, each built ONLY from stored edges
- * (direct or inherited). The FIRST frame always names the subject (so the
- * critic can resolve it); later frames use "It".
+ * (direct or inherited) or from a SOUND multi-predicate chain (P10 — the
+ * composed frames: "A bird can pump blood." via is-a → has-part →
+ * capable-of). Composed frames must clear the MDL gate and survive the
+ * negation store; a claim a single edge already answers is never duplicated
+ * here. The FIRST frame always names the subject (so the critic can resolve
+ * it); later frames use "It".
  */
-export function framesFor(subject: string, relations: readonly Relation[]): string[] {
+export function framesFor(
+  subject: string,
+  relations: readonly Relation[],
+  options: FrameOptions = {}
+): string[] {
   const frames: string[] = [];
   const parents = edgeObjects(relations, subject, 'is-a');
   const parts = edgeObjects(relations, subject, 'has-part').slice(0, 3);
@@ -68,6 +84,13 @@ export function framesFor(subject: string, relations: readonly Relation[]): stri
   if (purposes.length > 0) frames.push(`It is used for ${listPhrase(purposes)}.`);
   if (materials.length > 0) frames.push(`It is made of ${listPhrase(materials)}.`);
 
+  // P10 COMPOSED FRAMES: claims no single edge states, backed by a sound
+  // chain (is-a → has-part → capable-of ...). Each names the subject so the
+  // critic's claim grammar parses it back.
+  for (const claim of composedClaimsFor(subject, relations, options)) {
+    frames.push(`A ${subject} ${predicateVerb(claim.predicate, claim.object)} ${claim.object}.`);
+  }
+
   return frames;
 }
 
@@ -85,7 +108,8 @@ export function composeGrounded(
   seedWords: readonly string[],
   relations: readonly Relation[],
   rng: () => number,
-  maxSentences = 3
+  maxSentences = 3,
+  options: FrameOptions = {}
 ): GroundedComposition | null {
   const candidates = groundedSubjects(seedWords, relations);
   if (candidates.length === 0) return null;
@@ -94,7 +118,7 @@ export function composeGrounded(
   // word with edges. It wins most draws; the pool keeps variety.
   const subject =
     rng() < 0.75 ? candidates[0] : candidates[Math.floor(rng() * candidates.length)];
-  const frames = framesFor(subject, relations);
+  const frames = framesFor(subject, relations, options);
   // The FIRST frame always names the subject (the critic's resolution anchor);
   // the rest are drawn deterministically from the remaining pool.
   const picked: string[] = [frames[0]];
@@ -104,20 +128,22 @@ export function composeGrounded(
     picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   }
   const sentence = picked.join(' ').replace(/\s+([.!?])/g, '$1');
-  const verdict = criticize(sentence, relations, []);
+  const verdict = criticize(sentence, relations, options.negations ?? [], { cost: options.cost ?? null });
   return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked };
 }
 
 /**
  * THE INTERNAL CRITIC — parse a candidate sentence back through the claim
  * grammar and refuse any claim not supported by a stored edge (direct or
- * inherited) or the confirmed-false store. An unparseable sentence (no
- * resolvable subject, unknown clause) is ungrounded by definition.
+ * inherited), a sound composed chain (P10 — the chain's hops become the
+ * cited evidence), or the confirmed-false store. An unparseable sentence
+ * (no resolvable subject, unknown clause) is ungrounded by definition.
  */
 export function criticize(
   sentence: string,
   relations: readonly Relation[],
-  negations: readonly Negation[]
+  negations: readonly Negation[],
+  options: { cost?: TokenCostModel | null } = {}
 ): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> } {
   const subject = extractSubject(sentence);
   if (subject === null) return { grounded: false, unbacked: [sentence], edges: [] };
@@ -141,6 +167,19 @@ export function criticize(
     const via = direct ? null : inheritsEdge(relations, claim.subject, claim.predicate, claim.object);
     if (direct || via !== null) {
       edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
+      continue;
+    }
+    // P10: no single edge states the claim — a SOUND chain still may. The
+    // chain's hops are the evidence the claim cites, so a composed answer's
+    // provenance names real stored edges.
+    const composed = composeClaim(relations, claim.subject, claim.predicate, claim.object, {
+      negations,
+      cost: options.cost ?? null
+    });
+    if (composed !== null) {
+      for (const hop of composed.hops) {
+        edges.push({ subject: hop.subject, predicate: hop.predicate, object: hop.object });
+      }
     } else {
       unbacked.push(`${claim.subject} ${claim.predicate} ${claim.object}`);
     }
@@ -200,6 +239,13 @@ export function parseClaims(sentence: string, subject: string): Claim[] {
     const aMadeOf = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+made\s+of\s+(.+)$/i);
     if (aMadeOf !== null) {
       for (const object of splitObjects(aMadeOf[2])) claims.push({ subject: aMadeOf[1].toLowerCase(), predicate: 'made-of', object, negated: false });
+      continue;
+    }
+    // ORDER: the located-in form must precede the bare "is" property form
+    // ("a bird is located in sky" must not parse as property "located in").
+    const aLocatedIn = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+located\s+in\s+(.+)$/i);
+    if (aLocatedIn !== null) {
+      for (const object of splitObjects(aLocatedIn[2])) claims.push({ subject: aLocatedIn[1].toLowerCase(), predicate: 'located-in', object, negated: false });
       continue;
     }
     const aIs = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+(?!not\s+)([a-z]+(?:\s+[a-z]+)*)$/i);
