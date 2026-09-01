@@ -22,7 +22,8 @@
     "sweep-bench": "tsx src/cli/contradiction-sweep-bench.ts",
     "classroom": "tsx src/cli/autonomous-classroom.ts",
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/",
-    "template-bench": "tsx src/cli/template-bench.ts"
+    "template-bench": "tsx src/cli/template-bench.ts",
+    "chat": "tsx src/cli/chat.ts"
   },
   "dependencies": {
     "@aleph-ai/tinyaleph": "^1.8.2",
