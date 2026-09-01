@@ -14,6 +14,7 @@ import {
 import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
 import { composeGrounded, criticize, groundedSubjects, hedgeComposition } from './groundedFrames';
 import { deniedFromNegations } from './chain';
+import { readText } from './reading';
 import { LearnedFrameStore } from './learnedFrames';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
 import {
@@ -409,6 +410,10 @@ const CONVERSATION_HIGH_CONFIDENCE = 0.8;
  * competitor — while letting correct recalls through at deck scale.
  */
 const CONVERSATION_MIN_MARGIN = 0.05;
+
+/** Words one passage may teach: reading widens vocabulary, but a single
+ *  book must not flood the bank or hijack the review schedule. */
+const READING_WORD_BUDGET = 64;
 
 /**
  * Whether a recalled exchange may be SPOKEN as memorized: the cue identity
@@ -2717,6 +2722,71 @@ export class TeacherAgent {
    * precision-first regex edge). Subjects the observer does not know are
    * dropped — memory is the source of truth for what exists.
    */
+  /**
+   * READ CONTINUOUS TEXT — the non-conversational learning path.
+   *
+   * The passage is parsed by the reading grammar (the critic's claim grammar
+   * run in reverse), and what it yields flows through the SAME machinery a
+   * chaperone's edges do: agreement with the existing graph is corroborating
+   * evidence, genuinely new edges are kept with 'reading' provenance (so a
+   * single book is one source class and its claims are spoken hedged until
+   * something independent confirms them), and same-predicate disagreements
+   * become beliefs to verify instead of silent overwrites.
+   *
+   * Explicit denials ("a whale is not a fish") are stored as confirmed-false
+   * statements, and every unknown content word is recorded as a gap — the
+   * observer reads, notices what it cannot understand, and can ask about it.
+   */
+  readFrom(text: string, source = 'reading'): {
+    sentencesRead: number;
+    sentencesParsed: number;
+    relationsFound: number;
+    accepted: number;
+    conflicts: number;
+    negations: number;
+    /** Deck words the passage taught by using them (definitions stored). */
+    wordsLearned: string[];
+    unknownWords: Array<{ word: string; count: number }>;
+  } {
+    const result = readText(text, { vocabulary: this.knownWords, source });
+    // MEETING A WORD IN CONTEXT IS A LESSON. A reader with a dictionary
+    // learns the words the page is about: every deck word that carried a
+    // claim gets taught (its curriculum definition stored) so the observer
+    // can define it, not only state facts about it. Bounded per passage so
+    // one book cannot flood the bank.
+    const wordsLearned: string[] = [];
+    for (const relation of result.relations) {
+      for (const word of [relation.subject, relation.object]) {
+        if (wordsLearned.length >= READING_WORD_BUDGET) break;
+        const state = this.states.get(word);
+        if (state === undefined || state.traceId !== null || wordsLearned.includes(word)) continue;
+        this.teach(word);
+        wordsLearned.push(word);
+      }
+    }
+    const { accepted, conflicts } = this.applyRelations(result.relations);
+    for (const negation of result.negations) {
+      this.storeNegation(negation.subject, negation.predicate, negation.object, `${source}: ${negation.sentence}`, 'reading');
+    }
+    // The reading list: unknown words the passage exposed, most frequent
+    // first — the curriculum's next lesson and the observer's next question.
+    const unknownWords = [...result.unknownWords.entries()]
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+    for (const { word } of unknownWords.slice(0, 32)) this.recordGap(word);
+    this.relationsCache = null;
+    return {
+      sentencesRead: result.sentencesRead,
+      sentencesParsed: result.sentencesParsed,
+      relationsFound: result.relations.length,
+      accepted,
+      conflicts,
+      negations: result.negations.length,
+      wordsLearned,
+      unknownWords
+    };
+  }
+
   applyRelations(relations: readonly Relation[]): { accepted: number; conflicts: number } {
     if (relations.length === 0) return { accepted: 0, conflicts: 0 };
     const relevant = relations.filter((relation) => this.knownWords.has(relation.subject));

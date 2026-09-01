@@ -54,7 +54,7 @@ export const RELATION_PREDICATES: readonly RelationPredicate[] = [
 ];
 
 /** Where an edge came from — provenance decides priority on ties. */
-export type RelationOrigin = 'regex' | 'authored' | 'chaperone';
+export type RelationOrigin = 'regex' | 'authored' | 'chaperone' | 'reading';
 
 /**
  * P14 CORROBORATION SOURCE CLASSES — the INDEPENDENT knowledge channels an
@@ -77,19 +77,22 @@ export type RelationOrigin = 'regex' | 'authored' | 'chaperone';
  *   world-feedback  — the world accepted a graded answer citing the edge
  *                     (a strong semantic grade confirms the claim).
  */
-export type SourceClass = 'curriculum' | 'conversation' | 'world-feedback' | 'definition';
+export type SourceClass = 'curriculum' | 'conversation' | 'world-feedback' | 'definition' | 'reading';
 
 /** Every source class, in policy-order. */
 export const SOURCE_CLASSES: readonly SourceClass[] = [
   'curriculum',
   'conversation',
   'world-feedback',
-  'definition'
+  'definition',
+  'reading'
 ];
 
 /** The source class a provenance origin states by itself. */
 export function sourceClassForOrigin(origin: RelationOrigin): SourceClass {
-  return origin === 'chaperone' ? 'definition' : 'curriculum';
+  if (origin === 'chaperone') return 'definition';
+  if (origin === 'reading') return 'reading';
+  return 'curriculum';
 }
 
 /** True when `value` names a real source class (persistence guard). */
@@ -169,7 +172,7 @@ export interface Negation {
   object: string;
   /** The taught exchange or graded answer that confirmed the falsehood. */
   evidence: string;
-  origin: 'taught' | 'graded';
+  origin: 'taught' | 'graded' | 'reading';
 }
 
 /** A same-predicate disagreement between the regex extractor and the LLM. */
@@ -242,7 +245,7 @@ export function reconcileRelations(
  * with "an independent source agrees").
  */
 export function mergeRelations(...lists: readonly (readonly Relation[])[]): Relation[] {
-  const originPriority: Record<RelationOrigin, number> = { regex: 0, authored: 1, chaperone: 2 };
+  const originPriority: Record<RelationOrigin, number> = { regex: 0, authored: 1, chaperone: 2, reading: 3 };
   const seen = new Map<string, Relation>();
   const merged: Relation[] = [];
   for (const list of lists) {

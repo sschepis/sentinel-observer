@@ -23,7 +23,8 @@
     "classroom": "tsx src/cli/autonomous-classroom.ts",
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/",
     "template-bench": "tsx src/cli/template-bench.ts",
-    "chat": "tsx src/cli/chat.ts"
+    "chat": "tsx src/cli/chat.ts",
+    "read": "tsx src/cli/read.ts"
   },
   "dependencies": {
     "@aleph-ai/tinyaleph": "^1.8.2",

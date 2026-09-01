@@ -37,11 +37,11 @@ export const MIN_POSITIVE_STRENGTH = 0.5;
 
 /** The provenance-priority bonus for a positive edge (regex is precision-first
  *  and validated; chaperone edges are the least validated source). */
-const PROVENANCE_BONUS: Record<RelationOrigin, number> = { regex: 0.15, authored: 0.1, chaperone: 0.05 };
+const PROVENANCE_BONUS: Record<RelationOrigin, number> = { regex: 0.15, authored: 0.1, chaperone: 0.05, reading: 0.05 };
 
 /** The evidence weight of the denial side: a taught statement is explicit
  *  user testimony; a graded "No" is world feedback through the answer path. */
-const NEGATION_ORIGIN_WEIGHT: Record<Negation['origin'], number> = { taught: 1, graded: 0.6 };
+const NEGATION_ORIGIN_WEIGHT: Record<Negation['origin'], number> = { taught: 1, graded: 0.6, reading: 0.5 };
 
 /** Direct conflicts are the graph lying about itself; inherited ones have an
  *  escape hatch (the subject may be a genuine exception to its parent), so
@@ -74,7 +74,7 @@ export interface NegativeSide {
   /** The subject the denial lives on (the conflict subject when direct; an
    *  is-a ancestor when inherited — the denial applies to the subclass). */
   holder: string;
-  origin: 'taught' | 'graded';
+  origin: Negation['origin'];
   evidence: string;
 }
 

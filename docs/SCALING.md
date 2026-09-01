@@ -601,3 +601,58 @@ readout changes):
 | taught exchanges answered | ~66% | 633/728 (87.0%) | **717/728 (98.5%)** |
 | of those, exact taught response | — | 100% | **717/717 (100%)** |
 | untaught cues falsely answered | 0/20 | 0/20 | **0/20** |
+
+## 16. Reading: learning from text instead of taught pairs
+
+**The symmetry that makes it honest.** The observer already owns a claim
+grammar — the internal critic parses everything it wants to SAY back into
+{subject, predicate, object} and refuses whatever the graph does not back.
+Reading is that grammar run in reverse: the observer ingests exactly the
+sentence shapes it can also say and verify, and nothing else. Unparsed
+prose is not "understood approximately" — it contributes vocabulary
+exposure and nothing more.
+
+**What prose adds** over dictionary definitions (which hand the extractor
+its subject): the subject must be FOUND; "it/they" must resolve against a
+running narrative subject (and a claim whose subject cannot be resolved is
+dropped, never guessed); plurals normalize to the deck singular so reading
+does not fragment the graph ("robin has-part feathers" vs "bird has-part
+feather" would never connect).
+
+**The gates.**
+- VOCABULARY: both ends of an edge must be known deck words. An unknown
+  word cannot become an edge — it is recorded as a GAP the observer can ask
+  about, which is the honest response to meeting a word you do not know.
+- MODALITY: questions, hedges ("might", "perhaps"), past/future, and
+  attributed opinion ("she said…") are skipped. Explicit denials ("a whale
+  is not a fish") become confirmed-false statements, never edges.
+- PROVENANCE: origin `reading`, source class `reading`. A single book is
+  ONE source, so what it teaches is spoken hedged until an independent
+  channel confirms it. Edges flow through `applyRelations`, so agreement
+  corroborates, novelty is kept, and same-predicate disagreement becomes a
+  belief to verify — never a silent overwrite.
+- WORD BUDGET: a passage may teach at most 64 new deck words, so one book
+  cannot flood the bank or hijack the review schedule.
+
+**Measured** (`readingBenchmark.test.ts`, hand-labelled encyclopedic
+passage containing narrative, dialogue, questions and hedges):
+
+| | value |
+|---|---|
+| sentences parsed | 14/21 |
+| edges produced | 15 |
+| **precision** | **100% (0 wrong)** |
+| recall of labelled edges | 88.2% |
+| explicit denials captured | 2/2 |
+
+Precision is the gate that matters: a wrong edge poisons the graph, the
+corroboration layer and the contradiction sweep. Recall may be low and the
+system stays honest — the observer simply learned less from the page.
+
+**End to end** (`npm run read -- book.txt`): a 19-sentence bird passage
+parsed 12 sentences into 15 relations and 1 denial, taught 16 deck words it
+met in context, added 6 new edges, corroborated 3 it already held, raised 6
+disagreements as beliefs to verify, and left the contradiction sweep at 0.
+The observer then answered `can an eagle fly` -> "Yes, an eagle can fly."
+and `is an eagle a fish` -> "No, eagle is not a fish", from text it read
+rather than pairs it was taught.
