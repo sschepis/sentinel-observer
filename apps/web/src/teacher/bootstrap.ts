@@ -72,6 +72,10 @@ export interface BootstrapRecord {
   edgeConfidence?: Record<string, number>;
   /** The confirmed-false store (P8), restored on import. */
   negations?: Negation[];
+  /** The contradiction-sweep resolution ledger — conflict ids the world has
+   *  resolved. One-shot: a resolved conflict is never re-reported, so the
+   *  ledger must survive reloads exactly like the negations it settled. */
+  resolvedSweepConflicts?: string[];
   /** Learned arbitration weights (absent = archetypal defaults). */
   driveWeights?: Record<string, number>;
   /** Per-goal-type completion history (absent = no goal experience). */

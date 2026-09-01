@@ -19,6 +19,7 @@
     "p1-relations-bench": "tsx src/cli/p1-relations-bench.ts",
     "ask-audit": "tsx src/cli/ask-audit.ts",
     "grounded-bench": "tsx src/cli/grounded-bench.ts",
+    "sweep-bench": "tsx src/cli/contradiction-sweep-bench.ts",
     "classroom": "tsx src/cli/autonomous-classroom.ts",
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/"
   },
