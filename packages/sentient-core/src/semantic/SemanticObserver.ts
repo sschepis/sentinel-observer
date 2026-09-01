@@ -222,6 +222,34 @@ export interface SemanticObserverOptions {
   smfProjectionSeed?: number;
   /** Non-zero density of the SMF projection rows in (0, 1] (default 1). */
   smfProjectionDensity?: number;
+
+  // ── COMPETITION in the oscillator field (P12) ────────────────────────
+  // Purely positive Kuramoto coupling locks everything to everything: the
+  // field's stable state is ONE global mode, every stored trace carries the
+  // whole basis, and the discriminating signal is a small residual on a
+  // shared component. These knobs let primes compete instead. All default
+  // to OFF, which is the honest control, and at their defaults the field
+  // evolves bit-identically to the uncompeted engine.
+  // See `PrimeOscillatorFieldOptions` for the exact mechanics.
+
+  /**
+   * (a) DIVISIVE NORMALIZATION: total per-tick excitation budget the primes
+   * compete for (0 = off). Amplitudes are rescaled by `budget / Σaⱼ`
+   * whenever the field exceeds the budget.
+   */
+  activationBudget?: number;
+  /**
+   * (b) INHIBITORY COUPLING between unrelated (non-co-excited) primes, in
+   * [0, 1] (0 = off, the control). The cross-group Kuramoto weight is
+   * `1 − 2·inhibition`: 0.5 decouples the groups, 1 makes locking one group
+   * actively push the rest into anti-phase.
+   */
+  inhibition?: number;
+  /**
+   * (c) k-WINNER-TAKE-ALL: keep only the `k` largest amplitudes each tick
+   * (0 = off). Deterministic ties (amplitude desc, index asc).
+   */
+  winnerTakeAll?: number;
 }
 
 /** A coherence-driven moment. */
@@ -400,6 +428,13 @@ export class SemanticObserver implements Initializable {
       smfWidth: Math.max(1, Math.floor(options.smfWidth ?? SMF_DIMENSION)),
       smfProjection: options.smfProjection ?? true,
       requireSafetyClear: options.requireSafetyClear ?? true,
+      // P12 competition: raw pass-through. The field is the single place
+      // these are validated, so an out-of-range knob fails loudly at
+      // construction instead of being silently clamped into a different
+      // experiment than the one that was requested.
+      activationBudget: options.activationBudget ?? 0,
+      inhibition: options.inhibition ?? 0,
+      winnerTakeAll: options.winnerTakeAll ?? 0,
       safety: options.safety
     };
 
@@ -460,6 +495,9 @@ export class SemanticObserver implements Initializable {
     this.field = new PrimeOscillatorField({
       primeCount: this.options.primeCount,
       coupling: this.options.coupling,
+      activationBudget: this.options.activationBudget,
+      inhibition: this.options.inhibition,
+      winnerTakeAll: this.options.winnerTakeAll,
       kernel: this.kernel
     });
 

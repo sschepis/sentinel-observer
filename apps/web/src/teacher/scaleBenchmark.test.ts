@@ -9,6 +9,17 @@ import { DECK_1000 } from './decks/en-1000';
 const SCALE_WORDS = 1000;
 
 /**
+ * P12: optional competition knobs, so this gate can be re-run with a
+ * competition variant ON without changing what it measures. All default to
+ * 0, so the gate's own behavior is byte-identical to before.
+ */
+const COMPETITION = {
+  activationBudget: Number(process.env.SCALE_BENCH_BUDGET ?? 0),
+  inhibition: Number(process.env.SCALE_BENCH_INHIBITION ?? 0),
+  winnerTakeAll: Number(process.env.SCALE_BENCH_WTA ?? 0)
+};
+
+/**
  * Phase-3 acceptance metric (docs/SCALING.md) at real-word scale: the
  * COMPACT memory bank with 1,000 REAL English words (word-only traces) —
  * top-1 recognition accuracy, recall latency, and the serialized footprint.
@@ -19,7 +30,14 @@ describe('compact-bank scale benchmark (1000 real words)', () => {
 
   beforeAll(async () => {
     session = new ObserverSession(
-      { primeCount: 64, gridSize: 128, memoryMode: 'compact', smfWidth: 128, vocabulary: deckVocabulary(deck, PRIME_SPACE) },
+      {
+        primeCount: 64,
+        gridSize: 128,
+        memoryMode: 'compact',
+        smfWidth: 128,
+        ...COMPETITION,
+        vocabulary: deckVocabulary(deck, PRIME_SPACE)
+      },
       100
     );
     await session.initialize();
@@ -71,6 +89,8 @@ describe('compact-bank scale benchmark (1000 real words)', () => {
 
     // eslint-disable-next-line no-console
     console.log(`\nSCALE-1000: accuracy ${(accuracy * 100).toFixed(1)}% (${correct}/${deck.length})`);
+    // eslint-disable-next-line no-console
+    console.log(`SCALE-1000: competition ${JSON.stringify(COMPETITION)}`);
     // eslint-disable-next-line no-console
     console.log(`SCALE-1000: recall latency mean ${meanLatency.toFixed(1)}ms, max ${maxLatency.toFixed(1)}ms`);
     // eslint-disable-next-line no-console

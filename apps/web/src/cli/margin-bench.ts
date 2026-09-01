@@ -38,6 +38,11 @@ const RAW_ONLY = args.includes('--raw-only');
 const CENTERED_ONLY = args.includes('--centered-only');
 const WORDS = Number(process.env.MARGIN_BENCH_WORDS ?? 200);
 const CUE_COUNT = Number(process.env.MARGIN_BENCH_CUES ?? 200);
+const COMPETITION = {
+  activationBudget: Number(process.env.MARGIN_BENCH_BUDGET ?? 0),
+  inhibition: Number(process.env.MARGIN_BENCH_INHIBITION ?? 0),
+  winnerTakeAll: Number(process.env.MARGIN_BENCH_WTA ?? 0)
+};
 
 interface ArmOptions {
   label: string;
@@ -140,7 +145,7 @@ function cosineCenteredOf(a: number[], b: number[], mean: Float64Array): number 
 
 async function runArm(opts: ArmOptions): Promise<MarginStats> {
   const started = Date.now();
-  const session = new ObserverSession({ ...OBSERVER_OPTIONS, ...opts.extra }, 100);
+  const session = new ObserverSession({ ...OBSERVER_OPTIONS, ...COMPETITION, ...opts.extra }, 100);
   await session.initialize();
   const teacher = new TeacherAgent(session, ACTIVE_DECK, new MemoryPersistenceStore(), 500);
   for (const entry of ACTIVE_DECK.slice(0, WORDS)) teacher.teach(entry.word);
@@ -224,7 +229,8 @@ function print(label: string, s: MarginStats): void {
 async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(
-    `[margin-bench] words=${WORDS} cues=${CUE_COUNT} pairs=${ALL_CONVERSATION_PAIRS.length}`
+    `[margin-bench] words=${WORDS} cues=${CUE_COUNT} pairs=${ALL_CONVERSATION_PAIRS.length} ` +
+      `competition=${JSON.stringify(COMPETITION)}`
   );
   if (!CENTERED_ONLY) print('raw', await runArm({ label: 'raw', extra: {} }));
   if (!RAW_ONLY) {

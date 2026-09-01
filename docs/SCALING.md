@@ -873,3 +873,239 @@ uncoupled) by lowering distractor scores. That is a real, reproducible effect
 on the number §15 identified as the one that matters — and it belongs to
 phase DISPERSION at storage time, not to cluster structure. It costs ~200×
 the ticks per lesson, so it is a lead to price out, not a change to ship.
+## 18. Competition in the oscillator field (measured results)
+
+**The diagnosis.** The field is a Kuramoto bank with *purely positive*
+coupling: `K·Σⱼ sin(φⱼ − φᵢ)/N` pulls every oscillator toward every other
+one, so its stable state is ONE global mode. The consequences, re-measured
+here against the honest control (`competitionBenchmark.test.ts`, 200 words +
+the 728-pair conversation deck, production config 256 primes / 512 grid /
+compact / smfWidth 128, every competition knob at its default 0):
+
+| reading | control |
+|---|---|
+| sketch DC ratio `‖corpus mean‖ / mean‖sketch‖` | **0.732** |
+| — conversation traces only (728) | 0.766 |
+| — word traces only (200) | 0.409 |
+| unrelated-pair cosine, raw / mean-centered | 0.443 / 0.007 |
+| prime-set Jaccard, structural / effective | **1.00** / 0.06 |
+| mean indexed primes per trace (of 256) | 14.4 |
+
+Three quarters of a conversation trace's sketch magnitude (0.766) is the
+vector every trace shares. The part that is left — the residual the cosine
+actually discriminates on — is ALREADY near-orthogonal between unrelated
+traces: 0.007 centered cosine over the bank, 0.003 over conversation traces
+alone. That is worth stating before any mechanism is proposed, because it
+means the discriminating code is not the thing that is entangled. Only the
+shared offset it sits on is.
+
+**Two corrections to the diagnosis, from the measurement itself.**
+
+1. *The prime clique is structural, not dynamical.* `trace.primes` is a
+   Jaccard-1.0 clique in every arm because `SemanticObserver.storeMemory`
+   writes `this.field.primes` — the WHOLE basis — into every trace by
+   construction. No change to the physics can move that number. The set the
+   retrieval machinery actually uses is the amplitude-gated one (the
+   inverted index and the overlap term), and that set was ALREADY nearly
+   disjoint: 14.4 of 256 primes per trace, Jaccard 0.06. Measurement 3 was
+   reading a data-layout fact as if it were a physics fact.
+2. *The 0.297 / 0.084 figure is population-dependent.* This harness reads
+   0.443 / 0.007 over the whole bank, 0.577 / 0.003 over conversation
+   traces and 0.161 / −0.007 over word traces. The direction is the same
+   and stronger; the exact constant is not reproduced, so it is quoted here
+   as re-measured rather than confirmed.
+
+**The mechanisms** (`PrimeOscillatorFieldOptions`, threaded through
+`SemanticObserverOptions`, ALL default 0 = off). At their defaults the tick
+executes exactly the statements it executed before this experiment — two
+early returns and one untaken branch — and the 199 pre-existing core tests
+pass unchanged. The non-trivial identities are asserted separately, below.
+
+- (a) `activationBudget` — DIVISIVE NORMALIZATION. After each tick, if
+  `Σaⱼ` exceeds the budget, every amplitude is scaled by `budget / Σaⱼ`.
+  Excitation is additive and un-normalized, so a re-excited prime is topped
+  back up every stimulus while stale background activation is only ever
+  scaled down: fresh excitation crowds out the residual. A below-budget
+  field is untouched, so quiescence is never inflated into activity.
+- (b) `inhibition` ∈ [0, 1] — INHIBITORY COUPLING. The pairwise weight is
+  `+1` within an activity group (both at/above `activeThreshold`, or both
+  below) and `1 − 2·inhibition` across groups: 0 is the control, 0.5
+  decouples the excited group from the silent background, 1 pushes them to
+  anti-phase. "Unrelated" is defined by co-excitation, not index distance —
+  primes lit by the same stimulus belong to one word's signature.
+- (c) `winnerTakeAll` — k-WINNER-TAKE-ALL. Only the k largest amplitudes
+  survive each tick; ties break by amplitude then oscillator index, so the
+  winner set is fully deterministic.
+
+The inhibitory sweep replaces `KuramotoModel.tick` but reproduces its
+in-place sweep order, its `K·Σ/N·dt` scaling and its 2%/unit-time decay
+exactly; on a trivial partition (whole basis excited, or fully quiescent) it
+produces **bit-identical** phases to the model's own tick. That identity is
+the proof the arms differ only in the pairwise weight.
+`PrimeOscillatorFieldCompetition.test.ts` also asserts that a below-budget
+field and a `k ≥ oscillator count` filter are bit-identical no-ops, that
+every variant is reproducible across identical runs, that competition
+survives snapshot/restore exactly, and that an out-of-range knob is refused
+loudly rather than clamped into a different experiment than the one asked
+for.
+
+### 18a. The sweep (all six measurements)
+
+`npm run competition-bench --workspace @sschepis/sentinel-web`
+
+| arm | DC | cos | cosC | Jeff | \|P\| | top-1 | true | distr | margin | comp | word |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **control** | 0.732 | 0.443 | 0.007 | 0.06 | 14.4 | 99.5% | 0.806 | 0.648 | **+0.158** | 99.0% | 99.5% |
+| budget 2.0 | 0.641 | 0.427 | 0.001 | 0.06 | 14.4 | 100.0% | 0.803 | 0.646 | +0.157 | 98.8% | 100.0% |
+| budget 1.0 | 0.636 | 0.428 | 0.002 | 0.06 | 14.4 | 100.0% | 0.840 | 0.672 | +0.167 | 99.0% | 100.0% |
+| **budget 0.5** | 0.650 | 0.486 | 0.010 | 0.06 | 14.4 | 100.0% | 0.926 | 0.731 | **+0.195** | **99.7%** | 99.0% |
+| budget 0.25 | 0.631 | 0.500 | 0.037 | 0.06 | 14.4 | 100.0% | 0.933 | 0.737 | +0.196 | 99.7% | 99.0% |
+| budget 0.1 | 0.620 | 0.525 | **0.474** | 0.06 | 14.4 | 100.0% | 0.935 | 0.737 | +0.198 | 100.0% | 100.0% |
+| inhibition 0.5 | 0.732 | 0.443 | 0.007 | 0.06 | 14.4 | 99.5% | 0.826 | 0.664 | +0.162 | 99.5% | 99.5% |
+| inhibition 1.0 | 0.732 | 0.443 | 0.007 | 0.06 | 14.4 | 100.0% | 0.844 | 0.678 | +0.165 | 99.7% | 99.5% |
+| k-WTA 16 | 0.726 | 0.437 | 0.005 | 0.06 | 12.4 | 98.5% | 0.797 | 0.653 | +0.143 | 96.8% | 99.5% |
+| k-WTA 8 | 0.676 | 0.390 | 0.004 | 0.06 | 7.1 | 90.5% | 0.744 | 0.650 | +0.093 | 80.6% | 99.0% |
+| k-WTA 4 | **0.597** | **0.324** | 0.002 | 0.05 | 4.0 | **75.0%** | 0.668 | 0.610 | +0.058 | **56.5%** | 99.0% |
+
+(`cos`/`cosC` = unrelated-pair cosine raw/centered · `Jeff` = effective
+prime-set Jaccard · `|P|` = mean indexed primes · `comp` = conversation
+competency · `word` = in-session word-recognition top-1. Structural Jaccard
+is 1.00 in every arm and is omitted.)
+
+**The result that decides the whole experiment is the ANTI-CORRELATION.**
+The arm that decorrelated the code most — k-WTA 4, DC 0.732 → 0.597 and
+unrelated cosine 0.443 → 0.324 — has the WORST retrieval: top-1 99.5% →
+75.0%, competency 99.0% → 56.5%. Meanwhile the divisive family moves the
+opposite way on both axes at once: as the budget tightens, the raw
+unrelated-pair cosine RISES (0.427 → 0.428 → 0.486 → 0.500 → 0.525) and the
+retrieval margin rises with it (+0.157 → +0.167 → +0.195 → +0.196 →
++0.198). Within that family, more correlated traces retrieve better.
+Decorrelation and retrieval quality move in opposite directions here. The
+premise "the shared mode is the problem" does not survive its own
+measurement.
+
+### 18b. THE FALSIFIER: does competition rescue `centerSketches`?
+
+§15 recorded a negative result: centering the sketch at readout collapses
+top-1 98.5% → 33.3% with the margin at −0.041. The prediction under test:
+*if the shared component exists because the coupling locks everything
+together, a competing field should not have one, and centering should stop
+being catastrophic.*
+
+`npm run falsifier-bench --workspace @sschepis/sentinel-web`
+
+| arm | DC | top-1 | true | distr | margin | competency |
+|---|---|---|---|---|---|---|
+| control | 0.732 | 99.5% | 0.806 | 0.648 | +0.158 | 99.0% |
+| control + `centerSketches` | 0.732 | **6.5%** | 0.701 | 0.741 | **−0.040** | **3.4%** |
+| budget 0.5 | 0.650 | 100.0% | 0.926 | 0.731 | +0.195 | 99.7% |
+| budget 0.5 + `centerSketches` | 0.650 | **98.5%** | 0.751 | 0.592 | **+0.159** | **96.6%** |
+
+**The prediction is CONFIRMED.** The control reproduces §15 (margin −0.040
+against the recorded −0.041) and is if anything worse than recorded: top-1
+falls to 6.5% and conversation competency to 3.4%. Under divisive
+normalization the same readout change costs 1.5 points of top-1 instead of
+93, and the margin stays positive at +0.159. Removing the corpus mean is
+catastrophic in a globally-locked field and survivable in a field with an
+excitation budget.
+
+So §15's explanation was wrong in its mechanism. "The shared component
+carries signal the cosine needs" is true of the SHIPPED field, but it is a
+property of the field's DYNAMICS, not of the sketch code — change the
+dynamics and the same component becomes removable.
+
+It is still not worth removing. Centering under budget 0.5 costs margin
+(+0.195 → +0.159) and competency (99.7% → 96.6%). `centerSketches` stays
+default OFF, now with a second, sharper reason: it is a readout fix for a
+dynamics problem, and the dynamics fix strictly dominates it.
+
+### 18c. Verdicts
+
+**(a) DIVISIVE NORMALIZATION — ADOPT as an option, default still OFF.**
+
+A dose–response that is monotone as the budget TIGHTENS: 2.0 sits at parity
+with the control (+0.157 vs +0.158), and from there the margin rises
+without exception — 1.0 → +0.167, 0.5 → +0.195, 0.25 → +0.196, 0.1 →
++0.198 — with competency at or above the control everywhere (98.8–100.0%
+vs 99.0%). It is also the mechanism that makes centering survivable. `0.5`
+is the recommended setting: past `0.25` the centered unrelated-pair cosine
+explodes (0.010 → 0.037 → **0.474** at 0.1), which is the field collapsing
+into a *different* degenerate state — all residuals aligned — so the extra
+0.003 of margin at budget 0.1 is bought against a code that is losing its
+structure again.
+
+Honest costs: SCALE-1000 word recognition 99.8% → **99.4%** (994/1000 vs
+998/1000). Recall latency read 19.3 ms vs 26.8 ms mean across the two runs,
+but those runs shared the machine with other benchmark arms and the budget
+adds only an O(N) pass per TICK — it touches nothing on the recall path —
+so that difference is reported as load, not as a cost of the mechanism.
+The default stays OFF for one specific, unmeasured reason: a bootstrap
+trained WITHOUT a budget and then READ with one would answer cues from a
+field that no longer matches its stored traces, and that migration has not
+been measured. The flip belongs with a retrained bootstrap, not with this
+experiment.
+
+Caveat worth stating: the mechanism's benefit is NOT the decorrelation it
+was proposed for (DC falls only 0.732 → 0.650, and the raw unrelated-pair
+cosine RISES 0.443 → 0.486). Whatever the budget is doing for retrieval, it
+is not what the hypothesis predicted it would do.
+
+**(b) INHIBITORY COUPLING — REJECT (inert on the path that matters).**
+
+Every sketch statistic is IDENTICAL to the control to three decimals at
+both 0.5 and 1.0 — DC 0.732, cosine 0.443/0.007, Jaccard 0.06, 14.4 indexed
+primes. The mechanism is real (a unit test measures the excited group's mean
+phase separating from the background monotonically with inhibition, by >0.5
+rad at full strength), but it cannot reach a stored trace, and the reason is
+structural: the teacher stores every trace ONE tick after `settleField()`,
+which puts every phase at 0. With all phases equal, `sin(φⱼ − φᵢ)` is 0 and
+the coupling term — inhibitory or not — has essentially nothing to act on.
+
+Measured at 256 oscillators, the max |Δφ| between an uninhibited and a fully
+inhibited field is:
+
+| path | ticks | max \|Δφ\| |
+|---|---|---|
+| store (`settle → observe → tick 0.02`) | 1 | **1.0e−4 rad** |
+| recall (`+ 4 × tick 0.05`) | 5 | 5.8e−2 rad |
+| free run | 40 × 0.05 | 8.1e−1 rad |
+
+The small recall-side gains that DO show up (margin +0.158 → +0.165,
+competency 99.0% → 99.7% at inhibition 1.0) come from the five-tick recall
+settle, and they are within the range budget 0.5 delivers at both ends. The
+option stays in the codebase as a measured control; adopting it would be
+adopting a mechanism that provably never touches storage.
+
+**(c) k-WINNER-TAKE-ALL — REJECT.**
+
+The only arm that decorrelates the code as the hypothesis wanted, and it
+destroys the system doing it, monotonically in k:
+
+| k | indexed primes | DC | cosine | top-1 | competency |
+|---|---|---|---|---|---|
+| off | 14.4 | 0.732 | 0.443 | 99.5% | 99.0% |
+| 16 | 12.4 | 0.726 | 0.437 | 98.5% | 96.8% |
+| 8 | 7.1 | 0.676 | 0.390 | 90.5% | 80.6% |
+| 4 | 4.0 | 0.597 | 0.324 | 75.0% | 56.5% |
+
+Zeroing an amplitude is not competition, it is deletion: the trace loses the
+primes it is indexed under and the cue loses the primes it would be found
+by. Word recognition survives (99.0–99.5%, one word's signature fits inside
+k=4) while the conversation deck — multi-word cues that need more than k
+primes — collapses. That contrast is the mechanism's own diagnosis.
+
+**Honest controls, all green** (with competition OFF, i.e. the shipped
+default): `npm run typecheck` clean; core suite 221 passed (199 before +
+22 new competition tests); web suite 818 passed; conversation competency
+99.0%; SCALE-1000 word recognition 99.8%; ciGates + semanticRecall 8/8.
+
+**What this experiment actually established.** Not that competition
+decorrelates the field — at the adopted setting it barely does (DC 0.732 →
+0.650), and the one arm that decorrelates properly (k-WTA 4, DC 0.597) is
+the one that breaks. What it
+established is that the §15 negative result was mis-attributed: sketch
+centering fails because of how the field evolves, not because the shared
+component is irreplaceable signal, and a field with a fixed excitation
+budget survives the same readout change that annihilates the shipped one.
+The retrieval margin gain (+0.158 → +0.195) is real, reproducible and
+deterministic — and it is not explained by the hypothesis that motivated it.

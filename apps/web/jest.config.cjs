@@ -12,7 +12,9 @@ module.exports = {
     '<rootDir>/src/teacher/fullDeckPruning.test.ts',
     '<rootDir>/src/teacher/ciGates.test.ts',
     '<rootDir>/src/teacher/semanticRecall.test.ts',
-    '<rootDir>/src/teacher/clusterMomentBenchmark.test.ts'
+    '<rootDir>/src/teacher/clusterMomentBenchmark.test.ts',
+    '<rootDir>/src/teacher/competitionBenchmark.test.ts',
+    '<rootDir>/src/teacher/centerSketchesFalsifier.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

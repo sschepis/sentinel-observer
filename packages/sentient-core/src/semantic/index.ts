@@ -82,6 +82,7 @@ export {
 } from './PrimeOscillatorField';
 export type {
   PrimeOscillatorFieldOptions,
+  CompetitionConfig,
   OscillatorFieldTick,
   OscillatorFieldState,
   PrimeOscillatorSnapshot,

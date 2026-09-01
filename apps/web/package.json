@@ -22,6 +22,8 @@
     "sweep-bench": "tsx src/cli/contradiction-sweep-bench.ts",
     "classroom": "tsx src/cli/autonomous-classroom.ts",
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall|clusterMomentBenchmark\" --testPathIgnorePatterns /dev/null/",
+    "competition-bench": "jest --testPathPatterns \"competitionBenchmark\" --testPathIgnorePatterns /dev/null/",
+    "falsifier-bench": "jest --testPathPatterns \"centerSketchesFalsifier\" --testPathIgnorePatterns /dev/null/",
     "template-bench": "tsx src/cli/template-bench.ts",
     "chat": "tsx src/cli/chat.ts",
     "read": "tsx src/cli/read.ts",
