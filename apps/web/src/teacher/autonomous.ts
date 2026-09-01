@@ -237,9 +237,10 @@ export async function runAutonomousCycle(
           // difficulty band × template × provider), cross-checked against
           // the grounding rule check, and applied with the bucket's feedback
           // weight; a disagreement schedules a re-grade instead of being
-          // silently overruled.
+          // silently overruled. The template ids ride along so accepted
+          // structures feed the learned-frame induction.
           const graded = teacher.gradeCreativeWithReliability(
-            { traceIds: reply.seedTraceIds, edges: reply.edges },
+            { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds },
             outcome.score,
             prompt,
             reply.sentence,

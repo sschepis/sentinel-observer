@@ -1426,7 +1426,10 @@ async function main(): Promise<void> {
       }
       if (score !== null) {
         scores.push(score);
-        teacher.creativeGradeFeedback(reply.seedTraceIds, score);
+        teacher.creativeGradeFeedback(
+          { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds },
+          score
+        );
       }
       samples.push({ utterance, sentence: reply.sentence, score, feedback });
       turned += 1;

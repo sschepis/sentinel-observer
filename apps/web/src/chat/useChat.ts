@@ -122,7 +122,7 @@ export function useChat(
   const gradeCreative = useCallback(
     async (
       utterance: string,
-      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[] },
+      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[]; templateIds: string[] },
       conversationId: string
     ) => {
       if (teacher === null) return;
@@ -150,9 +150,11 @@ export function useChat(
       // composition grounding check, and applied with the bucket's feedback
       // weight. A disagreement schedules a re-grade — the confirmation UI
       // reads teacher.graderReliability().pendingRegrades(). P14: the cited
-      // edges ride along so the world-feedback class is credited on them.
+      // edges ride along so the world-feedback class is credited on them;
+      // the template ids ride along so the learned-frame induction credits
+      // the structures the accepted answer demonstrated.
       const graded = teacher.gradeCreativeWithReliability(
-        { traceIds: reply.seedTraceIds, edges: reply.edges ?? [] },
+        { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds },
         score,
         utterance,
         reply.sentence,
@@ -206,7 +208,8 @@ export function useChat(
           sentence: answer.response,
           confidence: answer.confidence,
           seedTraceIds: answer.seedTraceIds,
-          edges: answer.provenance.edges
+          edges: answer.provenance.edges,
+          templateIds: answer.templateIds
         }, conversationId);
         return;
       }

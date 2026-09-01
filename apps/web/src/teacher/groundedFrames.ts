@@ -9,6 +9,13 @@
  * (P10 — the chain's hops become the cited evidence), or the confirmed-false
  * store — fabrication without an LLM.
  *
+ * The frame pool: the FIXED frames (framesFor, incl. the P10 composed
+ * frames) plus, when a LearnedFrameStore is supplied, the templates the
+ * observer has learned from accepted answers (see learnedFrames.ts) — same
+ * honesty contract, richer structure. Every composition records the
+ * template ids it used so the world's grade can be attributed back to the
+ * templates.
+ *
  * The dispatch contract: try grounded frames first; the Markov path remains
  * as a LABELED fallback (the caller marks the answer `grounded: false`).
  */
@@ -20,7 +27,21 @@ import type { TokenCostModel } from './mdl';
 import { predicateVerb, type Relation, type RelationPredicate } from './relations';
 import { claimHedge } from './grounding';
 import { hedgeForClaim, type HedgeWord } from './corroboration';
+import { FIRST_FRAME_PREFERENCE, fixedFrames, type FrameRef, type LearnedFrameStore } from './learnedFrames';
 import type { Negation } from './relations';
+
+// The learned-template machinery (learnedFrames.ts) — re-exported here so
+// existing importers keep a single grounded-generation entry point.
+export { fixedFrames, renderTemplate, LearnedFrameStore } from './learnedFrames';
+export type {
+  LearnedFrameStore as LearnedFrameStoreType,
+  HoleTemplate,
+  FrameRef,
+  FrameTemplateStats,
+  AdmissionVerdict,
+  TemplateAudit,
+  LearnedFrameOptions
+} from './learnedFrames';
 
 /** One parsed claim of a candidate sentence. */
 export interface Claim {
@@ -38,6 +59,11 @@ export interface GroundedComposition {
   /** P14: true when any cited claim is single-source or weakened — the
    *  spoken sentence must carry a corroboration hedge. */
   hedged: boolean;
+  /** The template ids the composition was built from (fixed:..., learned:...
+   *  and composed:...) — the credit/feedback attribution of each frame. The
+   *  fixed-only path returns [] (the fixed seeds are not individually
+   *  attributed). */
+  templateIds: string[];
 }
 
 /** Generation options: the negation store and the MDL frequency model. */
@@ -117,14 +143,20 @@ export function groundedSubjects(
  * subject has any edge — the caller falls back to the labeled Markov path.
  *
  * The fifth parameter accepts either the negation store (legacy callers) or
- * a FrameOptions object (negations + MDL cost model).
+ * a FrameOptions object (negations + MDL cost model). The optional sixth
+ * parameter is a LearnedFrameStore: when given, the frame pool is the fixed
+ * seeds plus the store's admitted learned templates (and, with the store's
+ * exploration probability, its not-yet-admitted candidates) plus the P10
+ * composed frames, so learning can accumulate evidence from the world's
+ * verdicts while every frame still passes the critic.
  */
 export function composeGrounded(
   seedWords: readonly string[],
   relations: readonly Relation[],
   rng: () => number,
   maxSentences = 3,
-  negationsOrOptions: readonly Negation[] | FrameOptions = {}
+  negationsOrOptions: readonly Negation[] | FrameOptions = {},
+  learned: LearnedFrameStore | null = null
 ): GroundedComposition | null {
   const options: FrameOptions = Array.isArray(negationsOrOptions)
     ? { negations: negationsOrOptions as readonly Negation[] }
@@ -138,18 +170,71 @@ export function composeGrounded(
   // word with edges. It wins most draws; the pool keeps variety.
   const subject =
     rng() < 0.75 ? candidates[0] : candidates[Math.floor(rng() * candidates.length)];
-  const frames = framesFor(subject, relations, options, denied);
-  // The FIRST frame always names the subject (the critic's resolution anchor);
-  // the rest are drawn deterministically from the remaining pool.
-  const picked: string[] = [frames[0]];
-  const pool = frames.slice(1);
-  const count = Math.min(maxSentences, Math.max(1, 1 + Math.floor(rng() * frames.length)));
-  for (let i = 1; i < count && pool.length > 0; i += 1) {
-    picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+
+  if (learned !== null) {
+    // LEARNED TEMPLATES: named frames open the composition (the critic's
+    // resolution anchor); the rest are drawn deterministically from the
+    // anaphoric pool. Learned openings earn a share of first-frame draws;
+    // the top-priority fixed frame keeps the majority.
+    const refs: FrameRef[] = learned.compositionFrames(subject, relations, denied, negations, rng);
+    return composeFromRefs(refs, subject, relations, negations, options, rng, maxSentences);
   }
-  const sentence = picked.join(' ').replace(/\s+([.!?])/g, '$1');
+
+  // FIXED PATH (P5 + P10): the first frame always names the subject (the
+  // critic's resolution anchor); the rest are drawn deterministically from
+  // the remaining pool. The frames are the fixed seeds plus the P10
+  // composed frames, each carrying its template id for attribution.
+  const refs: FrameRef[] = fixedFrames(subject, relations, denied);
+  return composeFromRefs(refs, subject, relations, negations, options, rng, maxSentences);
+}
+
+/** The shared composition pick loop over typed frame refs: P10 composed
+ *  frames ride alongside the template frames (chain-backed claims
+ *  contribute new knowledge to whichever pool is active), the sentence
+ *  budget caps the total (a multi-clause opening already spent some of it),
+ *  and the critic re-verifies before anything is returned. */
+function composeFromRefs(
+  refs: FrameRef[],
+  subject: string,
+  relations: readonly Relation[],
+  negations: readonly Negation[],
+  options: FrameOptions,
+  rng: () => number,
+  maxSentences: number
+): GroundedComposition | null {
+  const seen = new Set(refs.map((frame) => frame.text));
+  for (const claim of composedClaimsFor(subject, relations, options)) {
+    const text = `A ${subject} ${predicateVerb(claim.predicate, claim.object)} ${claim.object}.`;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    refs.push({ id: `composed:${claim.predicate}:${claim.object}`, text, namesSubject: true });
+  }
+  const named = refs.filter((frame) => frame.namesSubject);
+  if (named.length === 0) return null;
+  const first =
+    named.length === 1 || rng() < FIRST_FRAME_PREFERENCE
+      ? named[0]
+      : named[1 + Math.floor(rng() * (named.length - 1))];
+  const picked: FrameRef[] = [first];
+  const pool = refs.filter((frame) => !frame.namesSubject && frame.text !== first.text);
+  const count = Math.min(maxSentences, Math.max(1, 1 + Math.floor(rng() * refs.length)));
+  let sentences = (first.text.match(/[.!?]/g) ?? []).length;
+  for (let i = 1; i < count && pool.length > 0; i += 1) {
+    const frame = pool.splice(Math.floor(rng() * pool.length), 1)[0];
+    const frameSentences = (frame.text.match(/[.!?]/g) ?? []).length;
+    if (sentences + frameSentences > maxSentences) continue;
+    picked.push(frame);
+    sentences += frameSentences;
+  }
+  const sentence = picked.map((frame) => frame.text).join(' ').replace(/\s+([.!?])/g, '$1');
   const verdict = criticize(sentence, relations, negations, { cost: options.cost ?? null });
-  return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked, hedged: verdict.hedged };
+  return {
+    sentence,
+    edges: verdict.grounded ? verdict.edges : [],
+    frames: picked.map((frame) => frame.text),
+    hedged: verdict.hedged,
+    templateIds: picked.map((frame) => frame.id)
+  };
 }
 
 /**
@@ -273,7 +358,7 @@ export function hedgeComposition(
 }
 
 /** The subject named by the first "A {X} ..." frame (null when unresolvable). */
-function extractSubject(sentence: string): string | null {
+export function extractSubject(sentence: string): string | null {
   const hit = sentence.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+(?:is|has|can|is used|is made)/i);
   return hit === null ? null : hit[1].toLowerCase();
 }
