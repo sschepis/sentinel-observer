@@ -1,6 +1,6 @@
 import type { SerializedTrace } from '@sschepis/sentient-core';
 import type { WordState, CompiledRule, AnswerGradeEntry } from './TeacherAgent';
-import type { Relation, Negation } from './relations';
+import type { Relation, Negation, SourceClass } from './relations';
 import { SEMANTIC_VOCABULARY_SCHEME } from './semanticSignature';
 
 export const BOOTSTRAP_VERSION = 2 as const;
@@ -101,6 +101,10 @@ export interface BootstrapRecord {
   authoredAnswers?: Array<{ utterance: string; traceIds: string[]; at: number }>;
   /** The per-edge confidence overlay (P8), restored on import. */
   edgeConfidence?: Record<string, number>;
+  /** P14 per-edge corroboration source classes (independent evidence:
+   *  conversation mining, accepted graded answers, agreeing chaperone
+   *  edges), restored on import. */
+  edgeSources?: Record<string, SourceClass[]>;
   /** The confirmed-false store (P8), restored on import. */
   negations?: Negation[];
   /** Learned arbitration weights (absent = archetypal defaults). */

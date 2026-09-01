@@ -18,6 +18,8 @@ import { composeClaim, composedClaimsFor } from './composition';
 import { isContentWord, tokenizeText } from './context';
 import type { TokenCostModel } from './mdl';
 import { predicateVerb, type Relation, type RelationPredicate } from './relations';
+import { claimHedge } from './grounding';
+import { hedgeForClaim, type HedgeWord } from './corroboration';
 import type { Negation } from './relations';
 
 /** One parsed claim of a candidate sentence. */
@@ -33,6 +35,9 @@ export interface GroundedComposition {
   /** The backing edges of every claim (the provenance the answer cites). */
   edges: Array<{ subject: string; predicate: RelationPredicate; object: string }>;
   frames: string[];
+  /** P14: true when any cited claim is single-source or weakened — the
+   *  spoken sentence must carry a corroboration hedge. */
+  hedged: boolean;
 }
 
 /** Generation options: the negation store and the MDL frequency model. */
@@ -144,7 +149,7 @@ export function composeGrounded(
   }
   const sentence = picked.join(' ').replace(/\s+([.!?])/g, '$1');
   const verdict = criticize(sentence, relations, negations, { cost: options.cost ?? null });
-  return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked };
+  return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked, hedged: verdict.hedged };
 }
 
 /**
@@ -153,25 +158,35 @@ export function composeGrounded(
  * inherited), a sound composed chain (P10 — the chain's hops become the
  * cited evidence), or the confirmed-false store. An unparseable sentence
  * (no resolvable subject, unknown clause) is ungrounded by definition.
+ *
+ * P14: the verdict is corroboration-aware — each accepted claim carries the
+ * hedge word of its backing edge ('' when corroborated by >= 2 independent
+ * source classes and unweakened, 'I think' for single-source claims,
+ * 'Probably' when grades weakened the edge). A grounded claim may still be
+ * weak; the critic's job is refusing UNBACKED claims, and the hedge is
+ * applied when the sentence is spoken.
  */
 export function criticize(
   sentence: string,
   relations: readonly Relation[],
   negations: readonly Negation[],
   options: { cost?: TokenCostModel | null } = {}
-): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> } {
+): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }>; hedged: boolean; hedges: HedgeWord[] } {
   const subject = extractSubject(sentence);
-  if (subject === null) return { grounded: false, unbacked: [sentence], edges: [] };
+  if (subject === null) return { grounded: false, unbacked: [sentence], edges: [], hedged: false, hedges: [] };
   const claims = parseClaims(sentence, subject);
-  if (claims.length === 0) return { grounded: false, unbacked: [sentence], edges: [] };
+  if (claims.length === 0) return { grounded: false, unbacked: [sentence], edges: [], hedged: false, hedges: [] };
 
   const denied = deniedFromNegations(negations);
   const edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> = [];
   const unbacked: string[] = [];
+  const hedges: HedgeWord[] = [];
   for (const claim of claims) {
     if (claim.negated) {
       if (negations.some((n) => n.subject === claim.subject && n.predicate === claim.predicate && n.object === claim.object)) {
         edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
+        // A confirmed falsehood is evidence-backed — spoken without hedging.
+        hedges.push('');
       } else {
         unbacked.push(`${claim.subject} is-not ${claim.object}`);
       }
@@ -183,7 +198,8 @@ export function criticize(
     const via = direct ? null : inheritsEdge(relations, claim.subject, claim.predicate, claim.object, denied);
     if (direct || via !== null) {
       edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
-      continue;
+      // P14: the corroboration hedge of the backing edge (direct or inherited).
+      hedges.push(claimHedge(relations, claim.subject, claim.predicate, claim.object));
     }
     // P10: no single edge states the claim — a SOUND chain still may. The
     // chain's hops are the evidence the claim cites, so a composed answer's
@@ -200,7 +216,59 @@ export function criticize(
       unbacked.push(`${claim.subject} ${claim.predicate} ${claim.object}`);
     }
   }
-  return { grounded: unbacked.length === 0, unbacked, edges };
+  return {
+    grounded: unbacked.length === 0,
+    unbacked,
+    edges,
+    hedged: hedges.some((hedge) => hedge !== ''),
+    hedges
+  };
+}
+
+/**
+ * P14 CORROBORATION HEDGE — phrase a verified composition honestly: every
+ * sentence part whose claims are single-source is prefixed "I think", every
+ * part whose backing edges were weakened by grades is prefixed "Probably",
+ * and corroborated parts are asserted flatly. The input sentence is the RAW
+ * frame composition (already passed the critic); the output is what is
+ * spoken. Returns the sentence unchanged (hedged: false) when every claim is
+ * corroborated and strong.
+ */
+export function hedgeComposition(
+  sentence: string,
+  relations: readonly Relation[]
+): { sentence: string; hedged: boolean } {
+  // Keep the sentence-terminating punctuation attached to each part, so the
+  // hedged parts keep their periods ("I think a robin is a bird.").
+  const parts = sentence.split(/(?<=[.!?])\s*/).filter((part) => part.trim().length > 0);
+  if (parts.length === 0) return { sentence, hedged: false };
+  const subject = extractSubject(parts[0]);
+  if (subject === null) return { sentence, hedged: false };
+
+  const hedgedParts: string[] = [];
+  let hedged = false;
+  for (const part of parts) {
+    const claims = parseClaims(part, subject);
+    let word: HedgeWord = '';
+    for (const claim of claims) {
+      // Confirmed-false claims are evidence-backed — never hedged.
+      if (claim.negated) continue;
+      const candidate = hedgeForClaim(relations, claim.subject, claim.predicate, claim.object);
+      if (candidate === 'Probably') {
+        word = 'Probably';
+        break;
+      }
+      if (candidate === 'I think' && word === '') word = 'I think';
+    }
+    if (word === '') {
+      hedgedParts.push(part);
+      continue;
+    }
+    hedged = true;
+    const lowered = part.charAt(0).toLowerCase() + part.slice(1);
+    hedgedParts.push(word === 'Probably' ? `Probably, ${lowered}` : `I think ${lowered}`);
+  }
+  return { sentence: hedgedParts.join(' ').replace(/\s+([.!?])/g, '$1'), hedged };
 }
 
 /** The subject named by the first "A {X} ..." frame (null when unresolvable). */
