@@ -58,6 +58,14 @@ passive — its **curiosity engine is its own motivation**: the
 highest-entropy, weakest, most-decaying traces are what it "wants" to
 learn next, surfaced as requests.
 
+Since 2026-09-01 the request is **difficulty-targeted** (see SCALING.md
+§11): the lesson queue scores every word on four signals — FSRS difficulty
+and overdue-per-interval, sparse semantic neighborhoods (few shared
+signature primes = no resonance partners), a persisted review history of
+repeated misses, and repeatedly failed technical drills — so hard,
+isolated, chronically-weak items get the next lesson, while the FSRS
+schedule keeps due-before-new as the primary contract.
+
 ## 3. What each capability becomes for the observer-learner
 
 | Observer capability | Meaning for the observer's learning |

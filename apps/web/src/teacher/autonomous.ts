@@ -156,12 +156,16 @@ export async function runAutonomousCycle(
 
   // 4. TECHNICAL DRILL — the one phase that needs no LLM, because the
   //    answers are checkable. It also reports whether the observer
-  //    generalized or merely stored the instances.
+  //    generalized or merely stored the instances. P-curriculum: the
+  //    verdict feeds the teacher's weak-drill signal (concepts that keep
+  //    failing drills stay on the lesson queue), and concepts with failure
+  //    streaks are drilled before the least-recently-drilled.
   const drillCounts = options.drillCounts ?? new Map<string, number>();
-  const concept = nextDrillConcept(teacher, drillCounts);
+  const concept = nextDrillConcept(teacher, drillCounts, new Map(Object.entries(teacher.drillFailuresSnapshot())));
   if (concept !== null) {
     drill = runDrill(teacher, concept, options.round ?? drillCounts.get(concept.word) ?? 0);
     drillCounts.set(concept.word, (drillCounts.get(concept.word) ?? 0) + 1);
+    teacher.recordDrillResult(concept.word, drill.verdict);
     phrasesTaught += drill.taught;
     // Held-out answers are the observer's own work: no LLM was consulted.
     selfAnswered += Math.round(drill.testAccuracy * 100) > 0 ? 1 : 0;

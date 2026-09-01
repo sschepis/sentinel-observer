@@ -21,6 +21,7 @@
 import { TeacherAgent, REVIEW_STRENGTH_THRESHOLD } from './TeacherAgent';
 import { hasDefinition } from './deck';
 import type { BehaviorOption } from './drives';
+import { scoreWord } from './curriculum';
 
 export type GoalType = 'learn-word' | 'fill-gap' | 'practice' | 'verify-belief';
 
@@ -317,22 +318,63 @@ export function goalPriorityBase(teacher: TeacherAgent, type: GoalType): number 
   }
 }
 
+/** How much of the curriculum score multiplies a goal's expected value.
+ *  Bounded: the drive history stays the dominant term — the curriculum
+ *  tilts the queue, it does not own it. */
+export const GOAL_CURRICULUM_BOOST = 0.5;
+
+/** The P-curriculum score of a goal's target (0..1): hard FSRS items,
+ *  sparse semantic neighborhoods, repeated gaps and weak drills pull their
+ *  goals up the queue. Targets outside the deck (gap utterances, cues)
+ *  score 0 — there is no evidence about them, and the curriculum never
+ *  invents it. */
+export function curriculumPriority(teacher: TeacherAgent, target: string): number {
+  const state = teacher.tryState(target);
+  if (state === null) return 0;
+  return scoreWord(
+    {
+      word: state.word.word,
+      traceId: state.traceId,
+      dueAt: state.dueAt,
+      stability: state.stability,
+      difficulty: state.difficulty,
+      lastIntervalDays: state.lastIntervalDays,
+      reviewHistory: state.reviewHistory
+    },
+    {
+      vocabulary: teacher.curriculumVocabulary(),
+      drillFailures: teacher.drillFailuresSnapshot(),
+      weights: teacher.curriculumContext().weights
+    }
+  ).score;
+}
+
 /** Pick the highest-priority active, non-stalled goal. Priority is the
  *  EXPECTED VALUE of the goal, computed from the observer's own goal
  *  history: a goal type that has reliably completed in the observer's life
  *  is worth more than one that keeps failing — the observer's ends move
- *  with its experience. Laplace smoothing keeps untried types viable.
+ *  with its experience. Laplace smoothing keeps untried types viable. The
+ *  optional teacher adds the curriculum tilt: goals whose target is
+ *  currently hard/overdue/isolated/weak get up to a 1.5× expected-value
+ *  multiplier, so the lesson queue follows the difficulty-targeted score.
  */
-export function chooseGoal(goals: readonly LearningGoal[]): LearningGoal | null {
+export function chooseGoal(goals: readonly LearningGoal[], teacher?: TeacherAgent): LearningGoal | null {
   let best: LearningGoal | null = null;
+  let bestExpected = 0;
   for (const goal of goals) {
     if (goal.status !== 'active') continue;
     // goal.priority is the base importance (learned drive weight from
     // Phase 2); the success-rate multiplier is the observer's own history.
     // The history lives on the teacher; goals carry a mutable hook the
     // planner sets when the loop runs (setSuccessRate).
-    const expected = goal.priority * (goal.successRate ?? 0.5);
-    if (best === null || expected > best.priority * (best.successRate ?? 0.5)) best = goal;
+    let expected = goal.priority * (goal.successRate ?? 0.5);
+    if (teacher !== undefined) {
+      expected *= 1 + GOAL_CURRICULUM_BOOST * curriculumPriority(teacher, goal.target);
+    }
+    if (best === null || expected > bestExpected) {
+      best = goal;
+      bestExpected = expected;
+    }
   }
   return best;
 }

@@ -15,6 +15,16 @@ import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questio
 import { composeGrounded, criticize, groundedSubjects } from './groundedFrames';
 import { deniedFromNegations } from './chain';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
+import {
+  nextCurriculumWord,
+  rankCurriculum,
+  rankLegacy,
+  REVIEW_HISTORY_CAP,
+  type CurriculumConfig,
+  type CurriculumContext,
+  type CurriculumItem
+} from './curriculum';
+import { semanticVocabulary } from './semanticSignature';
 import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classifyUtterance, blendReward, FADE_FLOOR, type FadeState, type GradeClass } from './fade';
 import { compositeScore } from './composite';
 import { groundingScore, groundingAttribution } from './grounding';
@@ -80,6 +90,10 @@ export interface WordState {
   dueAt: number | null;
   /** P9 FSRS: the interval scheduled at the last review (days). */
   lastIntervalDays: number | null;
+  /** P-curriculum: persisted review outcomes, capped — the repeated-gap
+   *  signal ("items that keep appearing in review sets and keep failing")
+   *  must survive reloads, so the queue stays honest across sessions. */
+  reviewHistory: Array<'correct' | 'wrong'>;
 }
 
 /**
@@ -97,6 +111,7 @@ function isTouchedWordState(state: WordState): boolean {
     state.strengthHistory.length > 0 ||
     state.stability !== FSRS_INITIAL_STABILITY ||
     state.difficulty !== FSRS_INITIAL_DIFFICULTY ||
+    state.reviewHistory.length > 0 ||
     state.dueAt !== null
   );
 }
@@ -682,6 +697,18 @@ export class TeacherAgent {
    */
   private tuning = { forgettingRate: 1, reviewThreshold: REVIEW_STRENGTH_THRESHOLD };
 
+  /**
+   * P-curriculum: difficulty-targeted lesson priority. `enabled: false` is
+   * the benchmark control — the pre-curriculum scheduler verbatim.
+   */
+  private readonly curriculumConfig: CurriculumConfig;
+  /** Consecutive failed drill rounds per technical concept (weak-drill
+   *  signal). Persisted with the learning state. */
+  private readonly drillFailures = new Map<string, number>();
+  /** Lazy semantic vocabulary over the teacher's own deck (the sparsity
+   *  signal's neighborhood graph) — ~75 ms at the full 20k deck, once. */
+  private curriculumVocabCache: Record<string, number[]> | null = null;
+
   /** Adjust behaviour that is read at the point of use. */
   setTuning(next: Partial<{ forgettingRate: number; reviewThreshold: number }>): void {
     if (typeof next.forgettingRate === 'number' && Number.isFinite(next.forgettingRate)) {
@@ -722,11 +749,18 @@ export class TeacherAgent {
      * chain questions recover through the graded layer — the held-out
      * relational-reasoning measurement.
      */
-    hiddenRelationKeys?: ReadonlySet<string>
+    hiddenRelationKeys?: ReadonlySet<string>,
+    /**
+     * P-curriculum: difficulty-targeted lesson priority. Enabled by default;
+     * `{ enabled: false }` restores the pre-curriculum scheduler (earliest
+     * dueAt, deck-order new words) — the honest benchmark control.
+     */
+    curriculumConfig?: CurriculumConfig
   ) {
     this.persistEvery = Math.max(1, Math.floor(persistEvery));
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
+    this.curriculumConfig = curriculumConfig ?? {};
     this.compositionRng = compositionSeed !== undefined ? mulberry32(compositionSeed) : Math.random;
     // The operator learner's MDL prior is the FULL frequency deck — token
     // costs are a fixed linguistic prior, not a property of the slice being
@@ -753,7 +787,8 @@ export class TeacherAgent {
         stability: FSRS_INITIAL_STABILITY,
         difficulty: FSRS_INITIAL_DIFFICULTY,
         dueAt: null,
-        lastIntervalDays: null
+        lastIntervalDays: null,
+        reviewHistory: []
       });
     }
   }
@@ -866,6 +901,7 @@ export class TeacherAgent {
           current.lastGrade = null;
           current.successes = 0;
           current.failures = 0;
+          current.reviewHistory = [];
           continue;
         }
         current.traceId = state.traceId;
@@ -881,6 +917,11 @@ export class TeacherAgent {
         current.difficulty = typeof state.difficulty === 'number' ? state.difficulty : FSRS_INITIAL_DIFFICULTY;
         current.dueAt = typeof state.dueAt === 'number' ? state.dueAt : Date.now();
         current.lastIntervalDays = typeof state.lastIntervalDays === 'number' ? state.lastIntervalDays : null;
+        // P-curriculum: records written before the review history existed
+        // default to empty — the repeated-gap signal starts from zero.
+        current.reviewHistory = Array.isArray(state.reviewHistory)
+          ? (state.reviewHistory as Array<'correct' | 'wrong'>).filter((o) => o === 'correct' || o === 'wrong').slice(-REVIEW_HISTORY_CAP)
+          : [];
       }
     }
 
@@ -939,6 +980,16 @@ export class TeacherAgent {
           this.encounterCounts.clear();
           for (const [word, value] of Object.entries(learningState.encounterCounts as Record<string, number>)) {
             this.encounterCounts.set(word, value);
+          }
+        }
+        if (typeof learningState.drillFailures === 'object' && learningState.drillFailures !== null) {
+          // P-curriculum: the weak-drill signal survives reloads — a concept
+          // that kept failing drills yesterday is still weak today.
+          this.drillFailures.clear();
+          for (const [concept, value] of Object.entries(learningState.drillFailures as Record<string, unknown>)) {
+            if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+              this.drillFailures.set(concept, Math.floor(value));
+            }
           }
         }
         if (Array.isArray(learningState.relations)) {
@@ -1248,6 +1299,7 @@ export class TeacherAgent {
         fadeState: this.fadeState,
         exposureCounts: Object.fromEntries(this.exposureCounts),
         encounterCounts: Object.fromEntries(this.encounterCounts),
+        drillFailures: Object.fromEntries(this.drillFailures),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         relations: this.chaperoneRelations,
@@ -1377,6 +1429,9 @@ export class TeacherAgent {
       current.difficulty = typeof state.difficulty === 'number' ? state.difficulty : FSRS_INITIAL_DIFFICULTY;
       current.dueAt = typeof state.dueAt === 'number' ? state.dueAt : Date.now();
       current.lastIntervalDays = typeof state.lastIntervalDays === 'number' ? state.lastIntervalDays : null;
+      current.reviewHistory = Array.isArray(state.reviewHistory)
+        ? (state.reviewHistory as Array<'correct' | 'wrong'>).filter((o) => o === 'correct' || o === 'wrong').slice(-REVIEW_HISTORY_CAP)
+        : [];
     }
 
     const definitions = this.applyDefinitions(record.definitions);
@@ -1490,6 +1545,14 @@ export class TeacherAgent {
       if (typeof ls.encounterCounts === 'object' && ls.encounterCounts !== null) {
         this.encounterCounts.clear();
         for (const [word, count] of Object.entries(ls.encounterCounts)) this.encounterCounts.set(word, count);
+      }
+      if (typeof ls.drillFailures === 'object' && ls.drillFailures !== null) {
+        this.drillFailures.clear();
+        for (const [concept, count] of Object.entries(ls.drillFailures as Record<string, unknown>)) {
+          if (typeof count === 'number' && Number.isFinite(count) && count > 0) {
+            this.drillFailures.set(concept, Math.floor(count));
+          }
+        }
       }
       this.restoreProducedCues(ls.producedCues, ls.cueConfidence);
     }
@@ -1738,6 +1801,10 @@ export class TeacherAgent {
 
     state.lastAskedAt = Date.now();
     state.lastGrade = verdict;
+    // P-curriculum: every review outcome enters the persisted history —
+    // the repeated-gap signal across sessions (capped like strengthHistory).
+    state.reviewHistory.push(verdict);
+    while (state.reviewHistory.length > REVIEW_HISTORY_CAP) state.reviewHistory.shift();
     if (verdict === 'correct') {
       state.successes += 1;
       // P11: a graded-correct trace is useful to keep — grade evidence feeds
@@ -1863,11 +1930,25 @@ export class TeacherAgent {
   /**
    * The observer's curiosity: the next word that NEEDS review. P9: the
    * schedule is the model — a word is due when its FSRS `dueAt` has passed
-   * (the interval that decayed stability to the target retention); the
-   * longest-overdue item wins. Untaught words follow, so the loop still
-   * feeds new material. Returns null when nothing is due and nothing is new.
+   * (the interval that decayed stability to the target retention). P-curriculum:
+   * WITHIN the due pool the queue is ordered by the difficulty-targeted
+   * score (FSRS difficulty + overdue-relative-to-interval + sparse semantic
+   * neighborhood + repeated-gap history + drill weakness), so a hard,
+   * overdue, isolated word with a failure streak is reviewed before a
+   * merely-due one. Untaught words follow (sparse neighborhoods first), so
+   * the loop still feeds new material. Returns null when nothing is due and
+   * nothing is new.
    */
   nextReview(): string | null {
+    if (this.curriculumConfig.enabled === false) {
+      return this.legacyNextReview();
+    }
+    return nextCurriculumWord(this.curriculumItems(), this.curriculumContext());
+  }
+
+  /** The pre-curriculum scheduler verbatim: earliest dueAt, tie → lowest
+   *  stability, then the first untaught word. The benchmark control. */
+  private legacyNextReview(): string | null {
     const now = Date.now();
     let bestDue: { word: string; dueAt: number; stability: number } | null = null;
     let bestNew: string | null = null;
@@ -1904,12 +1985,91 @@ export class TeacherAgent {
     return best?.word ?? null;
   }
 
-  /** The next word the observer has never been taught. */
+  /** The next word the observer has never been taught — sparse semantic
+   *  neighborhoods first (isolated words have no resonance partners, so
+   *  they need the explicit lesson most). */
   nextNewWord(): string | null {
-    for (const state of this.states.values()) {
-      if (state.traceId === null) return state.word.word;
+    if (this.curriculumConfig.enabled === false) {
+      for (const state of this.states.values()) {
+        if (state.traceId === null) return state.word.word;
+      }
+      return null;
     }
-    return null;
+    const fresh = this.curriculumItems().filter((item) => item.traceId === null);
+    return nextCurriculumWord(fresh, this.curriculumContext());
+  }
+
+  /**
+   * The P-curriculum scoring context: the semantic vocabulary over the
+   * teacher's own deck (lazy, cached) plus the persisted drill failures.
+   * `now` is injectable for deterministic scheduling tests.
+   */
+  curriculumContext(now?: number): CurriculumContext {
+    return {
+      vocabulary: this.curriculumVocabulary(),
+      drillFailures: this.drillFailuresSnapshot(),
+      now,
+      weights: this.curriculumConfig.weights
+    };
+  }
+
+  /** The lazy semantic vocabulary over this teacher's deck — the sparsity
+   *  signal's neighborhood graph. Computed once (≈75 ms at the 20k deck). */
+  curriculumVocabulary(): Record<string, number[]> {
+    if (this.curriculumVocabCache === null) {
+      this.curriculumVocabCache = semanticVocabulary(
+        [...this.states.values()].map((state) => ({ word: state.word.word, definition: state.word.definition }))
+      );
+    }
+    return this.curriculumVocabCache;
+  }
+
+  /**
+   * The prioritized lesson queue: due words first (curriculum-scored), then
+   * never-taught words (sparse-first), then healthy learned words when
+   * asked. Read-only — the auto-loop consumes it via nextReview.
+   */
+  curriculumQueue(options: { includeHealthy?: boolean; limit?: number } = {}): ReturnType<typeof rankCurriculum> {
+    return rankCurriculum(this.curriculumItems(), this.curriculumContext(), options);
+  }
+
+  /** The state snapshot the curriculum ranks on (word → string, no refs). */
+  private curriculumItems(): CurriculumItem[] {
+    return [...this.states.values()].map((state) => ({
+      word: state.word.word,
+      traceId: state.traceId,
+      dueAt: state.dueAt,
+      stability: state.stability,
+      difficulty: state.difficulty,
+      lastIntervalDays: state.lastIntervalDays,
+      reviewHistory: state.reviewHistory
+    }));
+  }
+
+  /**
+   * Record a drill round's verdict — the weak-drill curriculum signal.
+   * A concept that INDUCED (or compiled) a rule is no longer weak; anything
+   * else that keeps failing stays on the queue. Persisted with the learning
+   * state, so weakness survives reloads.
+   */
+  recordDrillResult(concept: string, verdict: 'unlearned' | 'memorized' | 'induced' | 'rule-induced'): void {
+    if (verdict === 'induced' || verdict === 'rule-induced') {
+      this.drillFailures.delete(concept);
+    } else {
+      const failures = (this.drillFailures.get(concept) ?? 0) + 1;
+      this.drillFailures.set(concept, Math.min(failures, 10));
+    }
+    this.maybePersist();
+  }
+
+  /** Consecutive failed drill rounds per concept (read-only). */
+  drillFailuresSnapshot(): Record<string, number> {
+    return Object.fromEntries(this.drillFailures);
+  }
+
+  /** The pre-curriculum due-order ranking, for comparison/introspection. */
+  legacyQueue(): ReturnType<typeof rankLegacy> {
+    return rankLegacy(this.curriculumItems());
   }
 
   /**
@@ -3460,7 +3620,8 @@ export class TeacherAgent {
         stability: state.stability,
         difficulty: state.difficulty,
         dueAt: state.dueAt,
-        lastIntervalDays: state.lastIntervalDays
+        lastIntervalDays: state.lastIntervalDays,
+        reviewHistory: state.reviewHistory.slice(-20)
       });
     }
     for (const trace of bank.all()) {
@@ -3500,6 +3661,7 @@ export class TeacherAgent {
       },
       exposureCounts: Object.fromEntries(this.exposureCounts),
       encounterCounts: Object.fromEntries(this.encounterCounts),
+      drillFailures: Object.fromEntries(this.drillFailures),
       producedCues: [...this.producedConversationCues],
       cueConfidence: Object.fromEntries(this.cueConfidence),
       bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined
@@ -3641,7 +3803,7 @@ export class TeacherAgent {
             const n = h.completed + h.abandoned;
             g.successRate = n === 0 ? 0.5 : h.completed / n; // Laplace prior 0.5
           }
-          const goal = chooseGoal(this.goals);
+          const goal = chooseGoal(this.goals, this);
           if (goal === null) break; // none active — all complete or stalled
           let result;
           try {

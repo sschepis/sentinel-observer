@@ -53,6 +53,7 @@ export type BootstrapWordState = Pick<
   | 'difficulty'
   | 'dueAt'
   | 'lastIntervalDays'
+  | 'reviewHistory'
 > & { word: string };
 
 export interface BootstrapDefinition {
@@ -116,6 +117,9 @@ export interface BootstrapRecord {
     fadeState?: { agreement: Record<string, number | null>; lambda: Record<string, number> };
     exposureCounts?: Record<string, number>;
     encounterCounts?: Record<string, number>;
+    /** P-curriculum: consecutive failed drill rounds per concept — the
+     *  weak-drill signal survives the record. */
+    drillFailures?: Record<string, number>;
     /** Taught cues the observer has actually spoken — the numerator of
      *  recall competency. Without it an imported record reads 0% recall and
      *  creative mode can never unlock. */

@@ -228,7 +228,7 @@ async function main(): Promise<void> {
         const h = teacher.goalHistorySnapshot()[g.type] ?? { completed: 0, abandoned: 0 };
         g.successRate = h.completed + h.abandoned === 0 ? 0.5 : h.completed / (h.completed + h.abandoned);
       }
-      const goal = chooseGoal(goals);
+      const goal = chooseGoal(goals, teacher);
       if (goal !== null) {
         const result = await executeGoalStep(teacher, goal);
         if (result.outcome === 'complete') teacher.noteGoalSuccess(goal.type);
