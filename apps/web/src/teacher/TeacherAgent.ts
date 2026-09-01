@@ -18,6 +18,17 @@ import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classify
 import { compositeScore } from './composite';
 import { groundingScore, groundingAttribution } from './grounding';
 import { extractRelations, mergeRelations, reconcileRelations, predicateVerb, type Relation, type RelationPredicate, type Negation } from './relations';
+import {
+  GraderReliabilityModel,
+  difficultyBandOf,
+  gradeBandOf,
+  ruleBandForGrounding,
+  bandsAgree,
+  type AnswerType,
+  type DifficultyBand,
+  type GradeCriteria,
+  type ReliabilitySnapshot
+} from './reliability';
 import { RelationalHologram, mulberry32 } from '@sschepis/sentient-core';
 import { matchArgs, evaluate, canonicalNumber, conversionPairOf, type DSLExpr } from './technical/dsl';
 
@@ -630,6 +641,15 @@ export class TeacherAgent {
    * strengthHistory.
    */
   private answerGrades: AnswerGradeEntry[] = [];
+  /**
+   * THE GRADER RELIABILITY MODEL: per-criteria (answer type, FSRS difficulty
+   * band, question template, provider) agreement between the LLM teacher's
+   * grades and the rule-based checks / later world verdicts. Low-reliability
+   * buckets contribute less to edge confidence, trace reinforcement, and
+   * FSRS state updates; disagreements schedule re-grades whose outcomes feed
+   * the same model. Persisted with the learning state.
+   */
+  private readonly reliabilityModel = new GraderReliabilityModel();
   private persistCounter = 0;
   private readonly persistEvery: number;
   private readonly settleSteps: number;
@@ -964,11 +984,14 @@ export class TeacherAgent {
         if (Array.isArray(learningState.authoredAnswers)) {
           // The world-feedback credit map survives reloads (P7).
           this.authoredAnswers.clear();
-          for (const entry of learningState.authoredAnswers as Array<Partial<{ utterance: string; traceIds: string[]; at: number }>>) {
+          for (const entry of learningState.authoredAnswers as Array<Partial<{ utterance: string; traceIds: string[]; at: number; score?: number; provider?: string; template?: string }>>) {
             if (typeof entry?.utterance === 'string' && Array.isArray(entry.traceIds) && typeof entry.at === 'number') {
               this.authoredAnswers.set(entry.utterance, {
                 traceIds: entry.traceIds.filter((id) => typeof id === 'string'),
-                at: entry.at
+                at: entry.at,
+                score: typeof entry.score === 'number' ? entry.score : undefined,
+                provider: typeof entry.provider === 'string' ? entry.provider : undefined,
+                template: typeof entry.template === 'string' ? entry.template : undefined
               });
             }
           }
@@ -997,6 +1020,11 @@ export class TeacherAgent {
           if (typeof meta.generatedAt === 'string' && typeof meta.words === 'number') {
             this.bootstrapImportedMeta = meta;
           }
+        }
+        if (typeof learningState.graderReliability === 'object' && learningState.graderReliability !== null) {
+          // The grader reliability model survives reloads — per-bucket
+          // agreement evidence is cumulative, never re-learned from scratch.
+          this.reliabilityModel.restore(learningState.graderReliability as ReliabilitySnapshot);
         }
         this.restoreProducedCues(
           learningState.producedCues,
@@ -1224,9 +1252,13 @@ export class TeacherAgent {
         authoredAnswers: [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
           utterance,
           traceIds: entry.traceIds,
-          at: entry.at
+          at: entry.at,
+          score: typeof entry.score === 'number' ? entry.score : undefined,
+          provider: typeof entry.provider === 'string' ? entry.provider : undefined,
+          template: typeof entry.template === 'string' ? entry.template : undefined
         })),
-        bootstrapImportedMeta: this.bootstrapImportedMeta
+        bootstrapImportedMeta: this.bootstrapImportedMeta,
+        graderReliability: this.reliabilityModel.snapshot()
       };
       await Promise.all([
         // Untouched words carry nothing but constructor defaults; writing
@@ -1394,7 +1426,10 @@ export class TeacherAgent {
         if (typeof entry?.utterance === 'string' && Array.isArray(entry.traceIds) && typeof entry.at === 'number') {
           this.authoredAnswers.set(entry.utterance, {
             traceIds: entry.traceIds.filter((id) => typeof id === 'string'),
-            at: entry.at
+            at: entry.at,
+            score: typeof entry.score === 'number' ? entry.score : undefined,
+            provider: typeof entry.provider === 'string' ? entry.provider : undefined,
+            template: typeof entry.template === 'string' ? entry.template : undefined
           });
         }
       }
@@ -1456,6 +1491,9 @@ export class TeacherAgent {
       if (typeof ls.encounterCounts === 'object' && ls.encounterCounts !== null) {
         this.encounterCounts.clear();
         for (const [word, count] of Object.entries(ls.encounterCounts)) this.encounterCounts.set(word, count);
+      }
+      if (typeof ls.graderReliability === 'object' && ls.graderReliability !== null) {
+        this.reliabilityModel.restore(ls.graderReliability as ReliabilitySnapshot);
       }
       this.restoreProducedCues(ls.producedCues, ls.cueConfidence);
     }
@@ -1749,13 +1787,28 @@ export class TeacherAgent {
     // difficulty; a wrong one collapses stability (hard words keep less) and
     // raises difficulty. The next review is scheduled when the model predicts
     // the target retention has been reached — strength < 0.6 is gone.
+    //
+    // GRADER RELIABILITY: the update is weighted by the quiz bucket's
+    // feedback weight — when re-grade outcomes and world feedback have shown
+    // that grades in this answer-type/difficulty band are unreliable, the
+    // schedule moves more conservatively (the deltas shrink, never the
+    // direction). At the prior (no evidence) the weight is 1 and the update
+    // is exactly the classic one.
+    const quizCriteria: GradeCriteria = {
+      answerType: question.cue.trim().toLowerCase() === state.word.word ? 'definition' : 'spelling',
+      difficultyBand: difficultyBandOf(state.difficulty),
+      template: 'quiz',
+      provider: 'rule'
+    };
+    const fsrsWeight = this.reliabilityModel.feedbackWeight(quizCriteria);
     if (verdict === 'correct') {
-      state.stability =
-        state.stability * (1 + FSRS_SUCCESS_GAIN * Math.exp(-state.difficulty / FSRS_DIFFICULTY_SCALE));
-      state.difficulty = Math.max(1, state.difficulty - 0.1);
+      const gain = fsrsWeight * FSRS_SUCCESS_GAIN * Math.exp(-state.difficulty / FSRS_DIFFICULTY_SCALE);
+      state.stability = state.stability * (1 + gain);
+      state.difficulty = Math.max(1, state.difficulty - 0.1 * fsrsWeight);
     } else {
-      state.stability = Math.max(0.01, state.stability * 0.2 * (state.difficulty / 10));
-      state.difficulty = Math.min(10, state.difficulty + 0.4);
+      const collapse = 0.2 * (state.difficulty / 10);
+      state.stability = Math.max(0.01, state.stability * (fsrsWeight * collapse + (1 - fsrsWeight)));
+      state.difficulty = Math.min(10, state.difficulty + 0.4 * fsrsWeight);
     }
     state.lastIntervalDays = dueIntervalDays(state.stability);
     state.dueAt = Date.now() + Math.round(state.lastIntervalDays * 24 * 60 * 60 * 1000);
@@ -1808,6 +1861,48 @@ export class TeacherAgent {
   /** The bounded grade ledger (P7) — the surgical-repair record. */
   answerGradeLedger(): readonly AnswerGradeEntry[] {
     return this.answerGrades;
+  }
+
+  /** THE GRADER RELIABILITY MODEL — exposed so the corroboration and
+   *  curriculum modules can query per-bucket reliability before acting on
+   *  grade-sourced evidence (evidence(), pendingRegrades(), resolveRegrade). */
+  graderReliability(): GraderReliabilityModel {
+    return this.reliabilityModel;
+  }
+
+  /** The reliability evidence of an explicit criteria tuple (for modules
+   *  that already know their bucket). */
+  reliabilityOf(criteria: GradeCriteria): ReturnType<GraderReliabilityModel['evidence']> {
+    return this.reliabilityModel.evidence(criteria);
+  }
+
+  /** The reliability evidence of a graded answer, built from the answer's
+   *  own shape: question template (fade classification), answer type, FSRS
+   *  difficulty band, and provider ('' = unknown — the provider dimension is
+   *  skipped, the other three still apply). */
+  reliabilityOfUtterance(utterance: string, answerType: AnswerType, difficulty: number, provider = ''): ReturnType<GraderReliabilityModel['evidence']> {
+    return this.reliabilityModel.evidence({
+      answerType,
+      difficultyBand: difficultyBandOf(difficulty),
+      template: classifyUtterance(utterance),
+      provider
+    });
+  }
+
+  /** The FSRS difficulty band of a graded answer's seed memories: the mean
+   *  difficulty of the deck words whose traces were the seeds (5 when no
+   *  word trace is among them). */
+  private difficultyBandOfSeeds(seedTraceIds: readonly string[]): DifficultyBand {
+    const traceIdSet = new Set(seedTraceIds);
+    let sum = 0;
+    let count = 0;
+    for (const state of this.states.values()) {
+      if (state.traceId !== null && traceIdSet.has(state.traceId)) {
+        sum += state.difficulty;
+        count += 1;
+      }
+    }
+    return difficultyBandOf(count === 0 ? FSRS_INITIAL_DIFFICULTY : sum / count);
   }
 
   /**
@@ -3191,12 +3286,21 @@ export class TeacherAgent {
    * The producers are named by PROVENANCE (P7): the seed traces the answer
    * was built from — and, once edges carry confidence (P8), the typed edges
    * it cited. A bad grade weakens exactly those, never the whole bank.
+   *
+   * `weight` (0..1, default 1) scales the FEEDBACK DELTAS — trace
+   * reinforcement, the composition-weight gradient, and the P8 edge bumps —
+   * never the grade's BAND: the store/gap/negation decisions still read the
+   * unweighted score, so a damped grade can never silently change class.
+   * The grader reliability model supplies this weight so low-reliability
+   * buckets contribute less to edge strengthening/weakening and to the
+   * memory updates the grade drives.
    */
   creativeGradeFeedback(
     provenance: AnswerProvenance | readonly string[],
     score: number | null,
     utterance = '',
-    answer = ''
+    answer = '',
+    weight = 1
   ): boolean {
     // Backward-compatible: a bare trace-id list (pre-P7 callers) is a
     // provenance without edges.
@@ -3224,14 +3328,16 @@ export class TeacherAgent {
       }
       score = this.fadeReward(utterance, answer, score, seedContents);
     }
+    const feedbackWeight = Math.max(0, Math.min(1, weight));
     const bank = this.session.observer.getMemoryBank();
-    const delta =
+    const rawDelta =
       score >= CREATIVE_REINFORCE_SCORE
         ? CREATIVE_GRADE_DELTA
         : score <= CREATIVE_WEAKEN_SCORE
           ? -CREATIVE_GRADE_DELTA
           : 0;
-    if (delta === 0) {
+    const delta = rawDelta * feedbackWeight;
+    if (rawDelta === 0) {
       // P7 contract: the ledger records the producers of EVERY graded
       // answer — a mid-grade (0.3–0.7) answer carries no reinforcement but
       // its producers must still be named for surgical repair.
@@ -3265,12 +3371,16 @@ export class TeacherAgent {
     }
     // P8: a grade on an answer that CITED edges adjusts exactly those —
     // a strong answer confirms them, a weak one calls them into question.
+    // The edge delta is scaled by the same feedback weight, so a grade from
+    // a low-reliability bucket weakens/strengthens edges less (P8 rides on
+    // the weighted grade, never on its unweighted band).
+    const edgeDelta = rawDelta > 0 ? 0.2 * feedbackWeight : rawDelta < 0 ? -0.2 * feedbackWeight : 0;
     for (const edge of citedEdges) {
-      this.bumpEdge(edge.subject, edge.predicate, edge.object, delta > 0 ? +0.2 : delta < 0 ? -0.2 : 0);
+      this.bumpEdge(edge.subject, edge.predicate, edge.object, edgeDelta);
     }
     // The P7 grade ledger: this answer's producers (and the edges it cited —
     // consumed by P8's per-edge confidence) are recorded for surgical repair.
-    this.recordAnswerGrade(utterance, 'creative', delta > 0 ? 'strong' : delta < 0 ? 'weak' : 'neutral', {
+    this.recordAnswerGrade(utterance, 'creative', rawDelta > 0 ? 'strong' : rawDelta < 0 ? 'weak' : 'neutral', {
       traceIds: seedTraceIds,
       edges: citedEdges
     });
@@ -3324,6 +3434,104 @@ export class TeacherAgent {
 
     this.maybePersist();
     return stored;
+  }
+
+  /**
+   * THE GRADER-RELIABILITY GRADING PATH (the LLM teacher, reliability-
+   * weighted). Grades a semantically graded answer the way the app now
+   * grades everything LLM-graded:
+   *
+   *   1. BUCKET the grade by criteria — answer type (creative), the FSRS
+   *      difficulty band of its seed words, the question template (fade
+   *      classification), and the provider name.
+   *   2. RULE CHECK — the composition grounding check predicts a band
+   *      (fabrication → weak, echo → mid, grounded composition → strong).
+   *      Agreeing bands are evidence FOR the bucket; disagreeing bands are
+   *      evidence AGAINST it, and the disagreement schedules a RE-GRADE
+   *      (the UI's confirmation queue / deferral) whose resolution feeds
+   *      the same model.
+   *   3. WEIGHT — the bucket's feedback weight scales the feedback deltas
+   *      (never the band): low-reliability buckets contribute less to edge
+   *      strengthening/weakening and memory updates.
+   *   4. The grade's own LLM score is recorded with the authored answer, so
+   *      later WORLD feedback (a re-ask contradicting a strong grade, a
+   *      retention confirming it) counts as agreement evidence too.
+   *
+   * Returns what was applied and whether a re-grade is pending — the caller
+   * reports the pending disagreement instead of silently overruling it.
+   */
+  gradeCreativeWithReliability(
+    provenance: AnswerProvenance | readonly string[],
+    score: number | null,
+    utterance: string,
+    answer: string,
+    provider: string
+  ): { stored: boolean; weight: number; disagreement: boolean; regradeId: string | null } {
+    const producers: AnswerProvenance = Array.isArray(provenance)
+      ? { traceIds: [...(provenance as readonly string[])], edges: [] }
+      : (provenance as AnswerProvenance);
+    if (score === null) {
+      return { stored: false, weight: 1, disagreement: false, regradeId: null };
+    }
+
+    const bank = this.session.observer.getMemoryBank();
+    const seedContents: string[] = [];
+    for (const traceId of producers.traceIds) {
+      const trace = bank.get(traceId);
+      if (trace !== undefined && !seedContents.includes(trace.content)) seedContents.push(trace.content);
+    }
+
+    const criteria: GradeCriteria = {
+      answerType: 'creative',
+      difficultyBand: this.difficultyBandOfSeeds(producers.traceIds),
+      template: classifyUtterance(utterance),
+      provider
+    };
+
+    // The rule-based check: the composition's grounding predicts its band.
+    // No seeds = no check (a seedless grade is uncheckable, not suspect).
+    const ruleBand = seedContents.length > 0 ? ruleBandForGrounding(groundingScore(answer, seedContents)) : null;
+    const llmBand = gradeBandOf(score);
+    const agree = bandsAgree(llmBand, ruleBand);
+    this.reliabilityModel.recordAgreement(criteria, agree);
+
+    // Disagreement → schedule the re-grade (the resolution updates the
+    // model). The feedback below is applied DAMPED, never withheld.
+    let regradeId: string | null = null;
+    if (ruleBand !== null && !agree) {
+      regradeId = this.reliabilityModel.scheduleRegrade(criteria, {
+        utterance,
+        answer,
+        llmScore: score,
+        llmBand,
+        ruleBand,
+        reason:
+          ruleBand === 'weak'
+            ? 'the answer grounds on none of its seeds — fabrication'
+            : ruleBand === 'mid'
+              ? 'the answer echoes its seeds — no composition happened'
+              : 'the answer composes its seeds — the rule check expects a strong grade'
+      });
+    }
+
+    // The grade's own band travels with the authored answer so later world
+    // verdicts (re-ask / retention) can confirm or contradict it.
+    if (utterance.trim().length > 0) {
+      const authored = this.previousAnswerFor(utterance);
+      if (authored !== undefined) {
+        this.authoredAnswers.set(utterance.trim().toLowerCase(), {
+          traceIds: authored.traceIds,
+          at: authored.at,
+          score,
+          provider,
+          template: criteria.template
+        });
+      }
+    }
+
+    const weight = this.reliabilityModel.feedbackWeight(criteria);
+    const stored = this.creativeGradeFeedback(producers, score, utterance, answer, weight);
+    return { stored, weight, disagreement: !agree, regradeId };
   }
 
   /**
@@ -3409,7 +3617,8 @@ export class TeacherAgent {
       encounterCounts: Object.fromEntries(this.encounterCounts),
       producedCues: [...this.producedConversationCues],
       cueConfidence: Object.fromEntries(this.cueConfidence),
-      bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined
+      bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined,
+      graderReliability: this.reliabilityModel.snapshot()
     };
 
     return {
@@ -3438,7 +3647,10 @@ export class TeacherAgent {
           ? [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
               utterance,
               traceIds: entry.traceIds,
-              at: entry.at
+              at: entry.at,
+              score: typeof entry.score === 'number' ? entry.score : undefined,
+              provider: typeof entry.provider === 'string' ? entry.provider : undefined,
+              template: typeof entry.template === 'string' ? entry.template : undefined
             }))
           : undefined,
       driveWeights: Object.keys(weights).length > 0 ? weights : undefined,
@@ -3843,8 +4055,12 @@ export class TeacherAgent {
   // so the observer learns from the world's replies even during scaffolding.
 
   /** Recently-produced creative answers, keyed by their utterance, with the
-   *  trace ids they were composed from (for retention + re-ask credit). */
-  private readonly authoredAnswers = new Map<string, { traceIds: string[]; at: number }>();
+   *  trace ids they were composed from (for retention + re-ask credit). The
+   *  LLM grade's score, provider, and question template travel with the
+   *  entry so a later world verdict can confirm or contradict the grade
+   *  under the ORIGINAL bucket (the reliability model's world-feedback
+   *  channel). */
+  private readonly authoredAnswers = new Map<string, { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null }>();
 
   /** Note a creative answer the observer itself produced (the seed traces
    *  it was composed from + when). */
@@ -3855,8 +4071,21 @@ export class TeacherAgent {
   }
 
   /** The answer the observer last gave for an utterance (for re-ask credit). */
-  private previousAnswerFor(utterance: string): { traceIds: string[]; at: number } | undefined {
+  private previousAnswerFor(utterance: string): { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null } | undefined {
     return this.authoredAnswers.get(utterance.trim().toLowerCase());
+  }
+
+  /** The reliability criteria of an authored answer, rebuilt at world-
+   *  feedback time. The provider and the question template travel with the
+   *  entry (captured at grade time); the difficulty band comes from the
+   *  seeds' FSRS state. */
+  private worldFeedbackCriteria(authored: { traceIds: string[]; provider?: string | null; template?: string | null }, utterance: string): GradeCriteria {
+    return {
+      answerType: 'creative',
+      difficultyBand: this.difficultyBandOfSeeds(authored.traceIds),
+      template: authored.template ?? classifyUtterance(utterance),
+      provider: authored.provider ?? ''
+    };
   }
 
   /** RE-ASK CREDIT: the user asked this again — the prior answer failed.
@@ -3865,6 +4094,16 @@ export class TeacherAgent {
   private creditReAsk(utterance: string): void {
     const prior = this.previousAnswerFor(utterance);
     if (prior === undefined) return;
+    // GRADER RELIABILITY — WORLD FEEDBACK: the world just contradicted the
+    // prior answer. A grade that called it STRONG was wrong; a grade that
+    // called it WEAK was right. Counted as weak evidence — the world
+    // confirms slowly, and this bucket's reliability moves only a little.
+    if (typeof prior.score === 'number') {
+      this.reliabilityModel.recordWorldFeedback(
+        this.worldFeedbackCriteria(prior, utterance),
+        gradeBandOf(prior.score) !== 'strong'
+      );
+    }
     const bank = this.session.observer.getMemoryBank();
     const contents: string[] = [];
     for (const id of prior.traceIds) {
@@ -3888,6 +4127,17 @@ export class TeacherAgent {
   private creditRetention(traceId: string): void {
     const trace = this.session.observer.getMemoryBank().get(traceId);
     if (trace === undefined) return;
+    // GRADER RELIABILITY — WORLD FEEDBACK: the world kept this answer. A
+    // grade that called it STRONG is confirmed; a grade that called it WEAK
+    // was wrong. The authored answer that stored it carries the grade.
+    for (const authored of this.authoredAnswers.values()) {
+      if (!authored.traceIds.includes(traceId) || typeof authored.score !== 'number') continue;
+      this.reliabilityModel.recordWorldFeedback(
+        this.worldFeedbackCriteria(authored, trace.content),
+        gradeBandOf(authored.score) === 'strong'
+      );
+      break;
+    }
     updateCompositionWeights(this.compositionWeights, [trace.content], CREATIVE_GRADE_DELTA * RETENTION_FRACTION);
     this.session.observer.getMemoryBank().reinforce(traceId, CREATIVE_GRADE_DELTA * RETENTION_FRACTION);
   }

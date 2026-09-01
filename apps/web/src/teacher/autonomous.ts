@@ -229,13 +229,30 @@ export async function runAutonomousCycle(
           // the grounded composer filled travel with the reply. Discarding
           // them (edges: []) used to leave a wrong classroom grade unable to
           // call the answer's own edges into question.
-          teacher.creativeGradeFeedback(
+          // GRADER RELIABILITY: the grade is bucketed (answer type × FSRS
+          // difficulty band × template × provider), cross-checked against
+          // the grounding rule check, and applied with the bucket's feedback
+          // weight; a disagreement schedules a re-grade instead of being
+          // silently overruled.
+          const graded = teacher.gradeCreativeWithReliability(
             { traceIds: reply.seedTraceIds, edges: reply.edges },
             outcome.score,
             prompt,
-            reply.sentence
+            reply.sentence,
+            grader.name
           );
-          events.push({ role: 'system', text: `graded ${outcome.score.toFixed(2)} — ${outcome.feedback}`, meta: 'grade' });
+          events.push({
+            role: 'system',
+            text: `graded ${outcome.score.toFixed(2)} — ${outcome.feedback}`,
+            meta: 'grade'
+          });
+          if (graded.regradeId !== null) {
+            events.push({
+              role: 'system',
+              text: "the teacher's grade disagreed with the internal check — re-grade scheduled (weight " + graded.weight.toFixed(2) + ')',
+              meta: 'regrade'
+            });
+          }
         }
       } catch (reason) {
         // One transient LLM error must never kill the classroom loop — the

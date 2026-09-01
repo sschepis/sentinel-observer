@@ -141,7 +141,21 @@ export function useChat(
         feedback = 'grading unavailable — configure a teacher model in Settings';
       }
 
-      teacher.creativeGradeFeedback({ traceIds: reply.seedTraceIds, edges: [] }, score, utterance, reply.sentence);
+      // GRADER RELIABILITY: the grade is bucketed (creative × seed
+      // difficulty band × template × provider), cross-checked against the
+      // composition grounding check, and applied with the bucket's feedback
+      // weight. A disagreement schedules a re-grade — the confirmation UI
+      // reads teacher.graderReliability().pendingRegrades().
+      const graded = teacher.gradeCreativeWithReliability(
+        { traceIds: reply.seedTraceIds, edges: [] },
+        score,
+        utterance,
+        reply.sentence,
+        settings.model || settings.endpoint
+      );
+      if (graded.regradeId !== null) {
+        feedback = `${feedback !== null && feedback.length > 0 ? feedback : `graded ${score?.toFixed(2)}`} — the internal check disagrees (re-grade pending)`;
+      }
       pushExchange(
         utterance,
         {

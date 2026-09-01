@@ -26,6 +26,10 @@ export interface HybridResult {
   stored: boolean;
   /** The observer's own memories the draft was conditioned on. */
   memories: string[];
+  /** A re-grade id when the LLM grade disagreed with the rule-based check
+   *  (the draft was still handled — the disagreement is scheduled, never
+   *  silently overruled). Null when the grades agreed or no check applied. */
+  regradeId?: string | null;
 }
 
 
@@ -50,15 +54,22 @@ export async function hybridAnswer(
 
   // The observer is the arbiter: strong drafts become its own memories,
   // weak ones become learning material, middling or ungraded ones are shown
-  // and dropped (memory only accepts graded content).
+  // and dropped (memory only accepts graded content). The grade travels
+  // through the grader-reliability path: bucketed, cross-checked against
+  // the grounding rule check, applied with the bucket's feedback weight, and
+  // re-graded on disagreement (the pending queue is the confirmation UI's).
   let stored = false;
+  let regradeId: string | null = null;
   if (score !== null && score >= CREATIVE_REINFORCE_SCORE) {
-    stored = teacher.creativeGradeFeedback(
+    const graded = teacher.gradeCreativeWithReliability(
       { traceIds: memories.map((m) => m.id), edges: [] },
       score,
       utterance,
-      draft
+      draft,
+      grader !== null ? grader.name : ''
     );
+    stored = graded.stored;
+    regradeId = graded.regradeId;
   } else if (score !== null && score <= CREATIVE_WEAKEN_SCORE) {
     teacher.recordGap(utterance);
   }
@@ -68,6 +79,7 @@ export async function hybridAnswer(
     score,
     feedback,
     stored,
+    regradeId,
     memories: memories.map((m) => m.content)
   };
 }
