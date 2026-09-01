@@ -212,6 +212,8 @@ export interface AnswerGradeEntry {
 
 /** The ledger's cap — bounded like strengthHistory, never unbounded growth. */
 const ANSWER_GRADES_CAP = 200;
+/** The sweep resolution ledger's cap — bounded like the grade ledger. */
+const SWEEP_RESOLVED_CAP = 500;
 
 /**
  * Who produced an answer: the memory traces it was built from, the typed
@@ -732,6 +734,14 @@ export class TeacherAgent {
    */
   private negations: Negation[] = [];
   /**
+   * The contradiction-sweep resolution ledger: conflict ids the world has
+   * resolved through the sweep. ONE-SHOT — a resolved conflict is never
+   * re-reported (no ping-pong), even when its edges still show both sides
+   * (a multi-source positive edge cannot fall below the support floor).
+   * Persisted with the learning state, capped like the grade ledger.
+   */
+  private resolvedSweepConflicts: Set<string> = new Set();
+  /**
    * The distributed-vector VIEW over the relation graph (P1): H(subject) =
    * Σ bind(role, object), rebuilt whenever the cache is invalidated. It is a
    * pure function of relations() — never persisted.
@@ -1220,6 +1230,15 @@ export class TeacherAgent {
               origin: n.origin === 'graded' ? 'graded' : 'taught'
             }));
         }
+        if (Array.isArray(learningState.resolvedSweepConflicts)) {
+          // The sweep resolution ledger survives reloads — a resolved
+          // conflict stays resolved (one-shot, no ping-pong).
+          this.resolvedSweepConflicts = new Set(
+            (learningState.resolvedSweepConflicts as unknown[]).filter(
+              (id): id is string => typeof id === 'string'
+            )
+          );
+        }
         if (typeof learningState.bootstrapImportedMeta === 'object' && learningState.bootstrapImportedMeta !== null) {
           const meta = learningState.bootstrapImportedMeta as { generatedAt: string; words: number };
           if (typeof meta.generatedAt === 'string' && typeof meta.words === 'number') {
@@ -1456,6 +1475,7 @@ export class TeacherAgent {
         edgeConfidence: Object.fromEntries(this.edgeConfidence),
         edgeSources: Object.fromEntries(this.edgeSources),
         negations: this.negations,
+        resolvedSweepConflicts: [...this.resolvedSweepConflicts],
         authoredAnswers: [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
           utterance,
           traceIds: entry.traceIds,
@@ -1672,6 +1692,15 @@ export class TeacherAgent {
           evidence: typeof n.evidence === 'string' ? n.evidence : '',
           origin: n.origin === 'graded' ? 'graded' : 'taught'
         }));
+    }
+    if (Array.isArray(record.resolvedSweepConflicts)) {
+      // The sweep resolution ledger survives imports — a resolved conflict
+      // stays resolved (one-shot, no ping-pong).
+      this.resolvedSweepConflicts = new Set(
+        (record.resolvedSweepConflicts as unknown[]).filter(
+          (id): id is string => typeof id === 'string'
+        )
+      );
     }
     this.rebuildLearnedOperators();
     if (record.driveWeights !== undefined) {
@@ -2965,6 +2994,51 @@ export class TeacherAgent {
     return this.negations;
   }
 
+  /**
+   * Retract a confirmed-false entry — the world confirmed the positive claim
+   * (the sweep's positive-wins resolution, or a user correction). Returns
+   * true when an entry was actually removed.
+   */
+  retractNegation(subject: string, predicate: RelationPredicate, object: string): boolean {
+    const before = this.negations.length;
+    this.negations = this.negations.filter(
+      (n) => !(n.subject === subject && n.predicate === predicate && n.object === object)
+    );
+    const removed = this.negations.length < before;
+    if (removed) this.maybePersist();
+    return removed;
+  }
+
+  /** The sweep resolution ledger (read-only snapshot). */
+  sweepResolutionLedger(): ReadonlySet<string> {
+    return new Set(this.resolvedSweepConflicts);
+  }
+
+  /**
+   * Record that the world resolved a sweep conflict. ONE-SHOT: the sweep
+   * never re-reports a resolved id — the same evidence pair cannot ping-pong
+   * the verification queue. Bounded like the grade ledger.
+   */
+  markSweepConflictResolved(id: string): void {
+    if (id.length === 0) return;
+    this.resolvedSweepConflicts.add(id);
+    if (this.resolvedSweepConflicts.size > SWEEP_RESOLVED_CAP) {
+      const overflow = [...this.resolvedSweepConflicts].slice(0, this.resolvedSweepConflicts.size - SWEEP_RESOLVED_CAP);
+      for (const stale of overflow) this.resolvedSweepConflicts.delete(stale);
+    }
+    this.maybePersist();
+  }
+
+  /**
+   * Record a contradiction belief from the sweep — the P4 relation-conflict
+   * belief the verify-belief goal machinery (plan.ts) and the verify drive
+   * (beliefContradictions) read. The sweep's items become beliefs, exactly
+   * like the applyRelations and storeNegation conflict paths.
+   */
+  noteConflictBelief(subject: string, content: string, basis: Record<string, unknown>): boolean {
+    return this.storeBelief(subject, content, 'relation-conflict', basis, true);
+  }
+
   // ── Compiled rules (P2 — executable rules from drills) ───────────────────
 
   /** The induced rules currently compiled into operators. */
@@ -4246,6 +4320,8 @@ export class TeacherAgent {
         this.edgeConfidence.size > 0 ? Object.fromEntries(this.edgeConfidence) : undefined,
       edgeSources: this.edgeSources.size > 0 ? Object.fromEntries(this.edgeSources) : undefined,
       negations: this.negations.length > 0 ? this.negations : undefined,
+      resolvedSweepConflicts:
+        this.resolvedSweepConflicts.size > 0 ? [...this.resolvedSweepConflicts] : undefined,
       authoredAnswers:
         this.authoredAnswers.size > 0
           ? [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({

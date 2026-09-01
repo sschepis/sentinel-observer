@@ -389,3 +389,88 @@ to the truth on both the graph and the memory. Caveats: the rule check
 well-grounded fabrication is still graded strong by both; and the re-grade
 queue is only as good as the confirmations it receives (deferred regrades
 leave the damped weight in place, which is the conservative direction).
+## 13. The contradiction sweep (measured results)
+
+**The gap.** The relation graph grows from three sources (regex extraction,
+the authored curricula, the Chaperone) and the confirmed-false store (P8)
+grows from taught and graded denials. Each source is precision-first on its
+own, but nothing reconciles them at rest: a positive edge and a denial for
+the same claim can sit in the graph silently, and inheritance (chain.ts)
+can hand a subject an edge its own ancestor denies. P8 already makes the
+observer answer "No" when a denial exists — but the contradicting positive
+edge is still asserted underneath, answering hedged or "Yes" in paths that
+read before the negation store.
+
+**The sweep.** `contradictions.ts` (pure) + `sweep.ts` (integration):
+
+- **Detection** — every (subject, predicate, object) claim asserted both
+  positively and negatively, in four shapes: `direct` (the subject asserts
+  and denies the same claim), `explicit-positive` (the subject asserts an
+  edge an is-a ancestor denies), `explicit-negative` (the subject denies a
+  claim an is-a ancestor asserts), and `inherited` (two ancestors disagree
+  about the subject). The support gate (positive strength ≥ 0.5) means a
+  positive edge weakened to the floor by wrong grades is no longer a live
+  claim — the sweep stops reporting it. Measured on the layered en-20000
+  deck: **12,357 edges + 62 negation claims swept in ~110–270 ms** (one
+  build of the is-a map and per-holder indexes; the naive per-subject scan
+  took ~42 s and was replaced).
+- **Triage** — each conflict is scored by the evidence behind both sides:
+  `severity = (0.45·positive + 0.35·negative + 0.2·provenance + corrob) ×
+  directness`, where positive = strength evidence, negative = denial origin
+  weight (taught > graded), provenance = regex > authored > chaperone,
+  corrob = corroborating sources, directness = direct > explicit-negative >
+  explicit-positive > inherited. The queue is severity-ranked, so the most
+  strongly-evidenced disagreement is verified first.
+- **Scheduling** — each item becomes a P4 `relation-conflict` belief (the
+  verify-belief goal's completion predicate reads it) and a `verify-belief`
+  goal at severity-ranked priority (plan.ts), and the probe is drilled as
+  an `Exercise` in the exact shape `technical/verify.ts` grades: the
+  observer answers the probe from its own graph, the world's yes/no is
+  marked by the deterministic verifier (no model in the loop).
+- **Resolution** — the world's verdict edits the edges and the bookkeeping
+  so the sweep does not re-report: **positive wins** retracts the losing
+  denial and reinforces the winning edge (+0.2); **negative wins** weakens
+  the losing positive below the support floor (−0.7, below 0.5 for a
+  single-source edge). The resolution is recorded in the P7 grade ledger
+  (its producer is exactly the contested edge) and the conflict id enters a
+  ONE-SHOT resolution ledger (capped, persisted with the learning state):
+  the same evidence pair never ping-pongs the queue, even when a
+  corroborated edge cannot fall below the floor in one step.
+
+**Measured on the real decks** (`npm run sweep-bench`, en-20000 layered +
+negation deck):
+
+| Sweep | Found | Resolved | Re-reported | Latent (no-sweep baseline) |
+|---|---|---|---|---|
+| school-fact verdicts (negative wins) | **8** | **8** | **0** | 8 |
+| positive-wins verdicts (retraction path) | **8** | **8** | **0** | 8 |
+
+The 8 found conflicts trace to two real defects in the deck, which is the
+point: the sweep surfaces disagreements the sources never reconciled.
+
+1. **dolphin is-a fish (direct).** The en-20000 WordNet entry defines the
+   dolphinfish sense ("large slender food and game fish..."), extracting a
+   `dolphin is-a fish` edge that directly contradicts the negation deck's
+   taught "dolphin is not a fish". The deck and the school-fact curriculum
+   disagree; the sweep makes the disagreement a verification item instead
+   of a silent split.
+2. **planet is-a star (extraction artifact) → 6 inherited conflicts.** The
+   WordNet gloss "a large nearly round body orbiting a star..." extracts
+   `planet is-a star` (the head-noun scan lands on "star", not "body").
+   With "star is not a planet" taught, every planet (earth, mars, saturn,
+   venus, jupiter, exoplanet) inherits star's denial of being a planet
+   while asserting it explicitly — and earth itself denies "is a star"
+   while inheriting it from planet. The sweep attributes each of the 7
+   disagreements to its exact holder, so a single resolution (weaken the
+   `planet is-a star` artifact) settles the whole cluster.
+
+**Caveats.** The sweep reads the SYMBOLIC graph only — the loose
+distributed-vector layer (P1) is deliberately out of scope, since it is
+graded, never asserted. Resolutions are one-shot by design: a denial
+re-taught after a full positive-wins resolution stays out of the queue
+(no ping-pong), though it still answers through the P8 negation store.
+A corroborated edge needs repeated denials to fall below the floor — the
+overlay's −0.9 floor caps a single step — after which the ledger carries
+the resolution. Extraction artifacts like `planet is-a star` are real
+finds, but the durable fix is in the definitions (the sweep is the alarm,
+not the repair).
