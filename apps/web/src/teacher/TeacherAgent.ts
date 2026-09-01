@@ -257,6 +257,10 @@ function operatorEdges(operator: OperatorResult): EdgeRef[] {
     case 'opposite-of': return [{ subject: operator.subject, predicate: 'opposite-of', object: operator.opposite }];
     case 'requires': return [{ subject: operator.subject, predicate: 'requires', object: operator.requirement }];
     case 'where': return [{ subject: operator.object, predicate: 'located-in', object: operator.place }];
+    // P10: a composed answer cites the chain's STORED hops — never the
+    // derived claim, which no edge states (a grade must not strengthen a
+    // phantom (x, capable-of, y) key).
+    case 'composed': return operator.hops;
     default: return [];
   }
 }
@@ -670,6 +674,10 @@ export class TeacherAgent {
   private compiledRules: CompiledRule[] = [];
   /** The composition PRNG (P5): seeded for determinism, Math.random by default. */
   private readonly compositionRng: () => number;
+  /** The MDL frequency prior for composition gating (P10): the full deck's
+   *  Zipf costs, fixed once per agent — the same prior the operator learner
+   *  uses, so generation and operator paths gate chains identically. */
+  private readonly compositionCost = new TokenCostModel(ACTIVE_DECK.map((entry) => entry.word));
   /** P12 held-out gate: edge keys hidden from the symbolic graph only. */
   private readonly hiddenRelationKeys: ReadonlySet<string> | null;
   /**
@@ -3001,6 +3009,7 @@ export class TeacherAgent {
       // the confirmed-false store (evidence-backed "No", never absence).
       edgeStrength: (subject, predicate, object) => this.edgeStrengthOf(subject, predicate, object),
       negationOf: (subject, predicate, object) => this.negationOf(subject, predicate, object),
+      compositionCost: this.compositionCost,
       // The graded distributed-vector fallback (P1): used only when the
       // symbolic graph above is silent — never overrides a grounded edge.
       relationalScore: (subject, predicate, object) =>
@@ -3394,12 +3403,20 @@ export class TeacherAgent {
     const memorySubjects = groundedSubjects(tokenizeText(contents.join(' ')), relations, denied);
     const useGrounded = utteranceSubjects.length > 0 || utteranceContent.length === 0;
     const grounded = useGrounded
-      ? composeGrounded([...utteranceSubjects, ...memorySubjects], relations, this.compositionRng, 3, this.negations)
+      ? composeGrounded(
+          [...utteranceSubjects, ...memorySubjects],
+          relations,
+          this.compositionRng,
+          undefined,
+          { negations: this.negations, cost: this.compositionCost }
+        )
       : null;
     if (grounded !== null && grounded.edges.length > 0) {
       // The critic already verified the composition in composeGrounded;
       // re-verify against the full graph + negations for the final sentence.
-      const verdict = criticize(grounded.sentence, relations, this.negations);
+      const verdict = criticize(grounded.sentence, relations, this.negations, {
+        cost: this.compositionCost
+      });
       if (verdict.grounded) {
         return {
           sentence: grounded.sentence,

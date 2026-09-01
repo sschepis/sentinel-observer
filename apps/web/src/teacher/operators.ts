@@ -11,7 +11,9 @@
 
 import { isContentWord, tokenizeText } from './context';
 import { isATypeOf, inheritsPart, inheritsEdge, edgeObjects } from './chain';
-import { matchLocationClause, type Relation } from './relations';
+import { chainPhrase, composeClaim } from './composition';
+import type { TokenCostModel } from './mdl';
+import { matchLocationClause, type Relation, type RelationPredicate } from './relations';
 
 export type OperatorResult =
   | { kind: 'definition'; word: string; answer: string }
@@ -34,6 +36,7 @@ export type OperatorResult =
   | { kind: 'causes'; subject: string; effect: string; answer: string; score?: number }
   | { kind: 'opposite-of'; subject: string; opposite: string; answer: string; score?: number }
   | { kind: 'requires'; subject: string; requirement: string; via: string | null; answer: string; score?: number }
+  | { kind: 'composed'; subject: string; predicate: RelationPredicate; object: string; hops: Array<{ subject: string; predicate: RelationPredicate; object: string }>; support: number; answer: string }
   | { kind: 'compiled-rule'; concept: string; drill: string; answer: string }
   | { kind: 'self-knowledge'; word: string; answer: string }
   | null;
@@ -63,6 +66,9 @@ export interface OperatorContext {
   edgeStrength?(subject: string, predicate: string, object: string): number;
   /** The confirmed-false entry for a claim (P8), or null — the only "No". */
   negationOf?(subject: string, predicate: string, object: string): { evidence: string } | null;
+  /** The MDL frequency prior for composition gating (P10). When omitted,
+   *  the composed fallback derives one from the relation graph. */
+  compositionCost?: TokenCostModel;
   // ── Distributed-vector recall (P1 — graded fallback beneath the graph)
   /** The unbind+cleanup score of one object under (subject, predicate). */
   relationalScore?(subject: string, predicate: string, object: string): number;
@@ -1135,6 +1141,69 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     }
   }
 
+  // P10 MULTI-PREDICATE COMPOSITION: every single-predicate path above was
+  // silent, yet a SOUND chain of stored edges may still back the claim —
+  // "can a bird pump" via bird is-a animal, animal has-part heart, heart
+  // capable-of pump. The chain must match a composition rule, clear the MDL
+  // gate, and survive the confirmed-false store; otherwise the observer
+  // honestly falls through (absence of evidence is never answered as
+  // absence). The answer cites the full chain, hedged when any hop's edge
+  // was weakened by wrong grades.
+  const composed = composedClosedAnswer(text, ctx);
+  if (composed !== null) return composed;
+
+  return null;
+}
+
+/**
+ * The P10 composed fallback for the closed relational forms: re-parse the
+ * same question shapes the single-predicate branches handled and back them
+ * with a sound multi-predicate chain. Only utterances those branches already
+ * claimed are tried — composition never extends the operator grammar.
+ */
+function composedClosedAnswer(text: string, ctx: OperatorContext): OperatorResult {
+  if (ctx.relations === undefined) return null;
+  const relations = ctx.relations();
+  if (relations.length === 0) return null;
+  const forms: Array<{
+    re: RegExp;
+    predicate: RelationPredicate;
+    subjectGroup: number;
+    objectGroup: number;
+  }> = [
+    { re: LEAD_IS_A, predicate: 'is-a', subjectGroup: 1, objectGroup: 2 },
+    { re: LEAD_HAS_PART, predicate: 'has-part', subjectGroup: 1, objectGroup: 2 },
+    { re: LEAD_MADE_OF, predicate: 'made-of', subjectGroup: 1, objectGroup: 2 },
+    { re: LEAD_USED_FOR, predicate: 'used-for', subjectGroup: 2, objectGroup: 3 },
+    { re: LEAD_DOES_CAUSE, predicate: 'causes', subjectGroup: 2, objectGroup: 3 },
+    { re: LEAD_DOES_REQUIRE, predicate: 'requires', subjectGroup: 2, objectGroup: 3 },
+    { re: LEAD_CAPABLE, predicate: 'capable-of', subjectGroup: 2, objectGroup: 3 },
+    { re: LEAD_PROPERTY, predicate: 'has-property', subjectGroup: 2, objectGroup: 3 }
+  ];
+  for (const form of forms) {
+    const match = text.match(form.re);
+    if (match === null) continue;
+    const subject = match[form.subjectGroup];
+    const object = match[form.objectGroup];
+    if (subject === undefined || object === undefined) continue;
+    const claim = composeClaim(relations, subject, form.predicate, object, {
+      denied: (s, p, o) => {
+        const negation = ctx.negationOf?.(s, p, o);
+        return negation !== null && negation !== undefined;
+      },
+      cost: ctx.compositionCost ?? null
+    });
+    if (claim === null) continue;
+    return {
+      kind: 'composed',
+      subject: claim.subject,
+      predicate: claim.predicate,
+      object: claim.object,
+      hops: claim.hops.map((hop) => ({ subject: hop.subject, predicate: hop.predicate, object: hop.object })),
+      support: claim.support,
+      answer: `${claim.support >= 1 ? 'Yes — ' : 'Probably — '}${chainPhrase(claim)}.`
+    };
+  }
   return null;
 }
 
