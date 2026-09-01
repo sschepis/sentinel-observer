@@ -78,6 +78,53 @@ export interface OscillatorFieldState extends OscillatorFieldTick {
   ticks: number;
 }
 
+/**
+ * Phase-cluster readout: the PARTIAL-synchronization structure of the active
+ * oscillators, as opposed to the single global order parameter `coherence`.
+ *
+ * See `phaseClusterMetrics` for the exact, deterministic definition.
+ */
+export interface PhaseClusterMetrics {
+  /** Number of phase clusters among the active oscillators (0 when quiescent). */
+  clusterCount: number;
+  /**
+   * Size-weighted mean of the per-cluster order parameters, in [0, 1].
+   * 1 means every cluster is internally locked.
+   */
+  withinR: number;
+  /**
+   * Order parameter of the cluster MEAN PHASES, size-weighted, in [0, 1].
+   * 1 means the clusters share a phase (i.e. they are not really separate);
+   * 0 means the cluster phases are maximally spread. A single cluster reports
+   * 1 by construction — there is no separation to measure.
+   */
+  betweenR: number;
+  /** Active oscillator count this reading was taken over. */
+  activeCount: number;
+  /** Cluster sizes, in deterministic scan order. */
+  sizes: readonly number[];
+  /**
+   * Deterministic partition signature: the occupied-bin pattern followed by
+   * the cluster sizes. Two ticks carrying the same signature hold the same
+   * phase partition, which is what the stability requirement compares.
+   */
+  signature: string;
+}
+
+/** Options for `phaseClusterMetrics`. */
+export interface PhaseClusterOptions {
+  /** Phase bins spanning [0, 2π) (default 12, clamped to [2, 360]). */
+  phaseBins?: number;
+  /** Amplitude at or above which an oscillator counts as active (default 0.05). */
+  activeThreshold?: number;
+}
+
+/** Defaults for the phase-cluster readout. */
+export const PHASE_CLUSTER_DEFAULTS = {
+  phaseBins: 12,
+  activeThreshold: 0.05
+} as const;
+
 /** Captured evolution state, used for atomic rollback (see `restore`). */
 export interface PrimeOscillatorSnapshot {
   /** Oscillator phases at snapshot time. */
@@ -104,6 +151,168 @@ const DEFAULTS = {
   decayRate: 0.01,
   activeThreshold: 0.05
 } as const;
+
+const TWO_PI = Math.PI * 2;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE-CLUSTER STRUCTURE (partial synchronization)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Phase-cluster metrics for a coupled oscillator ensemble.
+ *
+ * WHY THIS EXISTS. `coherence` is the GLOBAL Kuramoto order parameter
+ * `R = |Σ e^{iφ}| / n` over the active oscillators. `R → 1` means every active
+ * oscillator shares one phase, so the phase configuration collapses to a
+ * single point and carries no combinatorial information. The informative
+ * regime for coupled oscillators is PARTIAL (cluster / chimera)
+ * synchronization: several groups lock internally at DIFFERENT phases, and
+ * *which* groups lock is a partition — a combinatorial code rather than a
+ * single point. This function reads that structure.
+ *
+ * THE DEFINITION (deterministic, O(n + B), no randomness, no iteration):
+ *
+ *  1. ACTIVE SET — oscillator `j` is active when `amplitudes[j] >=
+ *     activeThreshold`. A non-finite amplitude fails that comparison and is
+ *     therefore inactive; a non-finite phase on an ACTIVE oscillator is
+ *     refused loudly (`NonFiniteValueError`) instead of being folded into a
+ *     bin. `n` is the active count; `n === 0` reports the quiescent zero
+ *     reading (clusterCount 0, withinR 0, betweenR 0).
+ *  2. BINNING — each active phase is wrapped into `[0, 2π)` and assigned to
+ *     bin `floor(φ / 2π · B)`, `B = phaseBins` (default 12, clamped to
+ *     [2, 360]).
+ *  3. CLUSTERS — a cluster is a MAXIMAL CIRCULAR RUN of consecutive OCCUPIED
+ *     bins; runs are separated by at least one EMPTY bin. The scan starts at
+ *     the LOWEST-INDEX EMPTY bin, so the partition never depends on where a
+ *     run happens to wrap around 2π. When every bin is occupied there is no
+ *     separating gap, so the field is ONE cluster by definition.
+ *  4. WITHIN-CLUSTER ORDER — for cluster `c`, `R_c = |Σ_{j∈c} e^{iφⱼ}| / |c|`.
+ *     `withinR = Σ_c |c|·R_c / n` (size-weighted mean, in [0, 1]).
+ *  5. BETWEEN-CLUSTER ORDER — `ψ_c = arg(Σ_{j∈c} e^{iφⱼ})` is cluster `c`'s
+ *     mean phase; `betweenR = |Σ_c |c|·e^{iψ_c}| / n` (in [0, 1]). One
+ *     cluster reports exactly 1: there is no separation to measure.
+ *  6. SIGNATURE — the occupied-bin pattern (`B` characters, bin order, so it
+ *     is independent of the scan start) plus the cluster sizes in scan order.
+ *     Identical signatures on consecutive ticks mean the partition held.
+ *
+ * RELATION TO GLOBAL R. With a single cluster, `withinR === R` and
+ * `betweenR === 1`. With tight, well-separated clusters `R ≈ withinR ·
+ * betweenR`, so a HIGH `withinR` with a LOW `betweenR` is exactly the regime
+ * global R reports as INCOHERENT while the ensemble is in fact organized.
+ *
+ * Every returned number is finite and bounded; the counts are integers.
+ */
+export function phaseClusterMetrics(
+  phases: readonly number[],
+  amplitudes: readonly number[],
+  options: PhaseClusterOptions = {}
+): PhaseClusterMetrics {
+  const rawBins = options.phaseBins ?? PHASE_CLUSTER_DEFAULTS.phaseBins;
+  if (!Number.isFinite(rawBins)) throw new NonFiniteValueError('phaseBins', rawBins);
+  const bins = Math.min(360, Math.max(2, Math.floor(rawBins)));
+  const rawThreshold = options.activeThreshold ?? PHASE_CLUSTER_DEFAULTS.activeThreshold;
+  if (!Number.isFinite(rawThreshold)) throw new NonFiniteValueError('activeThreshold', rawThreshold);
+  const threshold = Math.max(0, rawThreshold);
+
+  // 1-2. Active set, wrapped and binned. Per-bin resultant accumulators keep
+  // the pass O(n) — cluster resultants are sums of their bins' resultants.
+  const binCount = new Array<number>(bins).fill(0);
+  const binX = new Array<number>(bins).fill(0);
+  const binY = new Array<number>(bins).fill(0);
+  const limit = Math.min(phases.length, amplitudes.length);
+  let active = 0;
+  for (let i = 0; i < limit; i++) {
+    if (!(amplitudes[i] >= threshold)) continue;
+    const phase = phases[i];
+    if (!Number.isFinite(phase)) throw new NonFiniteValueError(`phases[${i}]`, phase);
+    let wrapped = phase % TWO_PI;
+    if (wrapped < 0) wrapped += TWO_PI;
+    const bin = Math.min(bins - 1, Math.floor((wrapped / TWO_PI) * bins));
+    binCount[bin] += 1;
+    binX[bin] += Math.cos(wrapped);
+    binY[bin] += Math.sin(wrapped);
+    active += 1;
+  }
+
+  if (active === 0) {
+    return { clusterCount: 0, withinR: 0, betweenR: 0, activeCount: 0, sizes: [], signature: '' };
+  }
+
+  let occupancy = '';
+  let emptyBins = 0;
+  for (let b = 0; b < bins; b++) {
+    if (binCount[b] > 0) {
+      occupancy += '1';
+    } else {
+      occupancy += '0';
+      emptyBins += 1;
+    }
+  }
+
+  // 3. Circular runs of occupied bins. No empty bin => no separating gap =>
+  //    exactly one cluster covering the whole active set.
+  const sizes: number[] = [];
+  let withinSum = 0;
+  let centroidX = 0;
+  let centroidY = 0;
+
+  const closeCluster = (size: number, x: number, y: number): void => {
+    if (size === 0) return;
+    const resultant = Math.hypot(x, y);
+    sizes.push(size);
+    withinSum += clampRange(safeDivide(resultant, size, 0), 0, 1) * size;
+    // Size-weighted unit vector at the cluster's mean phase ψ_c. When the
+    // resultant is degenerate (an exactly antipodal cluster) the mean phase
+    // is undefined and contributes nothing rather than a fabricated angle.
+    if (resultant > 0) {
+      centroidX += (size * x) / resultant;
+      centroidY += (size * y) / resultant;
+    }
+  };
+
+  if (emptyBins === 0) {
+    let x = 0;
+    let y = 0;
+    for (let b = 0; b < bins; b++) {
+      x += binX[b];
+      y += binY[b];
+    }
+    closeCluster(active, x, y);
+  } else {
+    let start = 0;
+    while (binCount[start] > 0) start += 1; // guaranteed to terminate: emptyBins > 0
+    let size = 0;
+    let x = 0;
+    let y = 0;
+    for (let step = 0; step < bins; step++) {
+      const b = (start + step) % bins;
+      if (binCount[b] > 0) {
+        size += binCount[b];
+        x += binX[b];
+        y += binY[b];
+      } else {
+        closeCluster(size, x, y);
+        size = 0;
+        x = 0;
+        y = 0;
+      }
+    }
+    closeCluster(size, x, y);
+  }
+
+  const withinR = clampRange(safeDivide(withinSum, active, 0), 0, 1);
+  const betweenR =
+    sizes.length <= 1 ? 1 : clampRange(safeDivide(Math.hypot(centroidX, centroidY), active, 0), 0, 1);
+
+  return {
+    clusterCount: sizes.length,
+    withinR: requireFinite(withinR, 'withinR'),
+    betweenR: requireFinite(betweenR, 'betweenR'),
+    activeCount: active,
+    sizes,
+    signature: `${occupancy}|${sizes.join(',')}`
+  };
+}
 
 export class PrimeOscillatorField implements Initializable {
   private readonly kernel: SemanticKernel;
@@ -355,6 +564,22 @@ export class PrimeOscillatorField implements Initializable {
       throw new NotInitializedError('PrimeOscillatorField');
     }
     return { ...this.lastMetrics };
+  }
+
+  /**
+   * PARTIAL-synchronization readout over the live field: how many phase
+   * clusters the active oscillators form, how tightly each locks, and how far
+   * apart the clusters sit. See `phaseClusterMetrics` for the exact
+   * definition. Read-only — it never advances or perturbs the field.
+   *
+   * The field's own `activeThreshold` is used unless overridden, so the
+   * cluster reading and `coherence` are taken over the SAME active set.
+   */
+  clusterStructure(options: PhaseClusterOptions = {}): PhaseClusterMetrics {
+    return phaseClusterMetrics(this.getPhases(), this.getAmplitudes(), {
+      activeThreshold: this.options.activeThreshold,
+      ...options
+    });
   }
 
   /** Complete field state, safe to hand to the SMF and holographic layers. */

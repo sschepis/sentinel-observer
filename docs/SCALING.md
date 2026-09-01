@@ -715,3 +715,161 @@ because it is corroborated by the deck. Residual noise remains visible
 ("It is noun") — the reader is at ~95% precision, not 100%, and the honest
 consequence is that a few weak claims are held and hedged rather than
 silently dropped.
+
+## 17. Cluster synchronization as the moment criterion — a clean negative
+
+**The hypothesis.** `PrimeOscillatorField` computes `coherence` as the GLOBAL
+Kuramoto order parameter `R = |Σ e^{iφ}| / n` over the active oscillators
+(`computeMetrics`), and `SemanticObserver` emits a moment when that line
+crosses `momentThreshold` going up. A globally synchronized field is
+information-poor: `R → 1` means every active oscillator shares one phase, so
+the phase configuration is a single point plus perturbations. The informative
+regime for coupled oscillators is PARTIAL (cluster / chimera)
+synchronization — several groups lock internally at DIFFERENT phases, and
+*which* groups lock is a partition, which is combinatorial. If the emission
+criterion is what starves the code, gating on cluster structure should raise
+the retrieval margin.
+
+It does not. Every number below is from
+`apps/web/src/teacher/clusterMomentBenchmark.test.ts` (200 words + the
+728-pair conversation curriculum, 928 traces, 200 taught cues probed).
+
+### 17a. Two corrections the measurement forced first
+
+**The field is not synchronized by coupling — it is synchronized by the
+reset.** `settleField()` calls `field.reset()`, which zeroes every phase;
+`teachResponse` then observes the cue and stores after ONE `tick(0.02)`.
+Measured at the moment of storage over 200 pairs: mean `R = 0.9999`, and the
+phase-cluster reading is `{1: 200}` — one cluster, every time, `withinR`
+1.000, `betweenR` 1.000. The state space at store time is not merely
+collapsed, it is a single point, and the cause is the settle-then-one-tick
+protocol rather than the Kuramoto dynamics.
+
+**Moments gate nothing.** `storeMemory` is called directly by the teacher and
+never consults the moment stream. Measured over a full training run: **0
+moments emitted across 4,568 teaching ticks — under BOTH criteria.** The
+system does not "wait for global synchrony before recording"; it records
+without recording a moment at all. Any emission criterion is therefore off
+the retrieval path by construction, which the A/B below confirms to the digit.
+
+### 17b. The metric (`phaseClusterMetrics`, default OFF)
+
+Deterministic, `O(n + B)`, no randomness, no iteration:
+
+1. ACTIVE SET — `amplitudes[j] >= activeThreshold`; a non-finite amplitude is
+   inactive, a non-finite phase on an ACTIVE oscillator is refused loudly.
+2. BINNING — phases wrapped into `[0, 2π)`, bin `floor(φ/2π·B)`, `B = 12`.
+3. CLUSTERS — a cluster is a maximal CIRCULAR RUN of occupied bins, separated
+   by at least one EMPTY bin. The scan starts at the lowest-index empty bin,
+   so the partition never depends on where a run wraps. All bins occupied ⇒
+   no separating gap ⇒ ONE cluster.
+4. `withinR = Σ_c |c|·R_c / n` where `R_c = |Σ_{j∈c} e^{iφⱼ}| / |c|`.
+5. `betweenR = |Σ_c |c|·e^{iψ_c}| / n` where `ψ_c = arg(Σ_{j∈c} e^{iφⱼ})`.
+   ONE cluster reports exactly 1 — there is no separation to measure.
+6. SIGNATURE — occupied-bin pattern + cluster sizes, in scan order.
+
+With one cluster `withinR === R` and `betweenR === 1`; with tight separated
+clusters `R ≈ withinR · betweenR`. High `withinR` with low `betweenR` is
+exactly the regime global R calls incoherent while the ensemble is organized.
+
+`momentCriterion: 'phase-clusters'` (opt-in; `'global-R'` is the default and
+the honest control) emits on the RISING EDGE of
+`clusterCount >= 2 ∧ withinR >= 0.9 ∧ betweenR <= 0.5`, held for
+`stabilityTicks = 2` consecutive ticks on the same signature. A CHANGE of
+partition re-arms the edge: a different partition is a different code.
+
+### 17c. The A/B — identical to the digit
+
+| | global-R (control) | phase-clusters |
+|---|---|---|
+| moments while teaching | 0 / 4568 ticks | 0 / 4568 ticks |
+| moments free-running (20 cues × 600 ticks) | 21 | **107** |
+| cluster count at emission | `{1: 20, 2: 1}` | `{2: 8, 3: 86, 4: 10, 5: 3}` |
+| mean withinR / betweenR at emission | 0.990 / 0.996 | 0.973 / **0.354** |
+| top-1 rank rate (200 cues) | 100.0% | 100.0% |
+| mean true score | 0.8170 | 0.8170 |
+| mean best-distractor score | 0.6819 | 0.6819 |
+| **mean margin** | **+0.1351** | **+0.1351** |
+| sketch DC ratio | 0.7323 | 0.7323 |
+| mean unrelated-pair cosine | 0.4327 | 0.4327 |
+| conversation competency | 99.0% | 99.0% |
+| word recognition (200 words) | 99.5% | 99.5% |
+| traces | 928 | 928 |
+
+The metric works — it selects precisely the regime global R rejects (107
+multi-cluster emissions at `betweenR` 0.354 versus 21 emissions of which 20
+are `k = 1` at `betweenR` 0.996). The retrieval numbers are byte-identical
+because emission is not on the retrieval path. **Δmargin = +0.0000.**
+
+### 17d. The control that decides it: an UNCOUPLED field clusters MORE
+
+An ensemble of independent oscillators also drifts through phase partitions —
+accidental bunching, not locking. The same probe at `K = 0`:
+
+| free-running, 20 cues × 600 ticks | K = 0.45 (coupled) | K = 0 (uncoupled) |
+|---|---|---|
+| cluster moments emitted | 107 (8.92/1k ticks) | **165 (13.75/1k ticks)** |
+| cluster counts | `{2: 8, 3: 86, 4: 10, 5: 3}` | `{2: 5, 3: 134, 4: 26}` |
+
+The criterion fires **54% MORE OFTEN with the coupling switched off**. It is
+measuring frequency dispersion, not synchronization. This is the same failure
+the random-split baseline catches for the auto-sharder in §14: a partition
+that a null model produces just as well is not organization.
+
+### 17e. The causal test: depth helps, clustering does not
+
+Emission is decoupled from storage, but the stored PHASE CONFIGURATION does
+reach retrieval — the compact bank scores a cue by the order parameter of the
+stored-versus-cue phase differences. So: store and recall at a settle depth
+where the field has actually entered the partial-synchronization regime.
+(200 pairs, 60 words — a smaller corpus than §17c, so the baseline margin
+differs; the three arms below share it exactly.)
+
+| | depth 1 (shipped) | depth 200, K = 0.45 | depth 200, K = 0 |
+|---|---|---|---|
+| mean R at store | 0.9999 | 0.2974 | 0.2202 |
+| cluster count at store | `{1: 200}` | `{1:34, 2:77, 3:72, 4:16, 5:1}` | `{1:47, 2:83, 3:55, 4:15}` |
+| mean withinR / betweenR | 1.000 / 1.000 | 0.698 / 0.560 | 0.633 / 0.538 |
+| top-1 rank rate | 100.0% | 100.0% | 100.0% |
+| mean true score | 0.9967 | 1.0000 | 1.0000 |
+| mean best-distractor score | 0.8097 | 0.7471 | 0.7400 |
+| **mean margin** | **+0.1870** | **+0.2529** | **+0.2600** |
+
+Deep settling really does raise the margin (+0.0659). But the UNCOUPLED field
+at the same depth raises it MORE (+0.0730). The gain is DEPHASING, not
+clustering: spreading the phases drops the distractors' phase order parameter
+(0.8097 → 0.74) while the true trace saturates at 1.0000, because the true
+trace's phases were laid down by the same cue at the same depth. Coupling
+contributes nothing to the improvement and very slightly subtracts from it.
+
+### 17f. Verdict
+
+**No. Cluster-gated emission does not carry more retrievable information than
+global-R-gated emission.** Three independent readings say so:
+
+1. the two arms are identical on every retrieval number (Δmargin +0.0000),
+   because moment emission is decoupled from memory storage;
+2. the cluster criterion fires MORE on an uncoupled field than a coupled one,
+   so what it detects is dispersion, not organization;
+3. when the phase configuration IS made causal (settle depth), the entire
+   margin gain survives with the coupling removed.
+
+The clean negative is not "the physics is wrong" — the informative-regime
+argument for chimera states stands on its own. It is that **this field does
+not have a chimera regime to gate on.** With 12.8 active oscillators out of
+256 (mean, at store time), prime-derived natural frequencies, and `K = 0.45`,
+the ensemble does not lock into stable groups; it dephases, and the "clusters"
+found deep in the evolution are the bins that dispersion happens to leave
+empty. Gating on them is gating on noise.
+
+`momentCriterion` and `phaseClusterMetrics` stay, default OFF, as documented
+controls in exactly the way `centerSketches` stayed after §15: the flag, the
+metric, its unit tests, and the benchmark are the record of a hypothesis that
+was measured and refused.
+
+**What the measurement did hand over**, honestly attributed: a settle depth
+of 200 ticks at store and recall raises the mean margin +0.0659 (and +0.0730
+uncoupled) by lowering distractor scores. That is a real, reproducible effect
+on the number §15 identified as the one that matters — and it belongs to
+phase DISPERSION at storage time, not to cluster structure. It costs ~200×
+the ticks per lesson, so it is a lead to price out, not a change to ship.
