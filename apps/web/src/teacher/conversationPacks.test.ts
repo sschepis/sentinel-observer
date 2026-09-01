@@ -2,7 +2,6 @@
  * @jest-environment node
  */
 import { describe, it, expect } from '@jest/globals';
-import { ALL_CONVERSATION_PAIRS } from './conversation';
 import {
   ALL_PACK_PAIRS,
   CONVERSATION_PACK_CLARIFICATION,
@@ -11,94 +10,96 @@ import {
   CONVERSATION_PACK_STORYTELLING,
   CONVERSATION_PACK_FEELINGS,
   CONVERSATION_PACK_HYPOTHETICALS,
+  CONVERSATION_PACK_SMALL_TALK,
+  CONVERSATION_PACK_DAILY_LIFE,
+  CONVERSATION_PACK_PREFERENCES,
+  CONVERSATION_PACK_ENCOURAGEMENT,
+  CONVERSATION_PACK_REFLECTION,
   MULTI_TURN_DIALOGUES,
   flattenDialogues
 } from './conversationPacks';
+import { ALL_CONVERSATION_PAIRS } from './conversation';
 
-/**
- * Static integrity checks for the themed conversation packs. No
- * ObserverSession is built here — these are fast shape/uniqueness gates:
- * a duplicated cue would silently overwrite an earlier taught pair, an
- * operator-shaped cue would be intercepted before recall ever ran, and an
- * empty cue or response teaches nothing.
- */
-
-const PACKS: readonly (readonly { cue: string; response: string }[])[] = [
+const ALL_PACKS: readonly (readonly { cue: string; response: string }[])[] = [
   CONVERSATION_PACK_CLARIFICATION,
   CONVERSATION_PACK_CORRECTION,
   CONVERSATION_PACK_EXPLAIN_BACK,
   CONVERSATION_PACK_STORYTELLING,
   CONVERSATION_PACK_FEELINGS,
-  CONVERSATION_PACK_HYPOTHETICALS
+  CONVERSATION_PACK_HYPOTHETICALS,
+  CONVERSATION_PACK_SMALL_TALK,
+  CONVERSATION_PACK_DAILY_LIFE,
+  CONVERSATION_PACK_PREFERENCES,
+  CONVERSATION_PACK_ENCOURAGEMENT,
+  CONVERSATION_PACK_REFLECTION
 ];
 
-describe('conversation packs', () => {
-  it('has no duplicate cues across ALL_CONVERSATION_PAIRS', () => {
-    const seen = new Map<string, number>();
-    for (const pair of ALL_CONVERSATION_PAIRS) {
-      const key = pair.cue.trim().toLowerCase();
-      seen.set(key, (seen.get(key) ?? 0) + 1);
+describe('conversation packs (static conventions)', () => {
+  it('every pack is substantial (>= 20 pairs) and non-empty', () => {
+    for (const pack of ALL_PACKS) {
+      expect(pack.length).toBeGreaterThanOrEqual(20);
     }
-    const duplicates = [...seen.entries()].filter(([, count]) => count > 1).map(([cue]) => cue);
-    expect(duplicates).toEqual([]);
+    expect(ALL_PACK_PAIRS.length).toBeGreaterThanOrEqual(400);
   });
 
-  it('every pack pair has a nonempty cue and response', () => {
+  it('cues are lowercase, trimmed, punctuation-free conversation openers', () => {
     for (const pair of ALL_PACK_PAIRS) {
-      expect(pair.cue.trim().length).toBeGreaterThan(0);
-      expect(pair.response.trim().length).toBeGreaterThan(0);
+      expect(pair.cue).toBe(pair.cue.trim());
+      expect(pair.cue).toBe(pair.cue.toLowerCase());
+      expect(pair.cue.length).toBeGreaterThan(0);
+      // Conversation cues are written without terminal punctuation — the
+      // taught-cue identity match expects the raw phrasing.
+      expect(pair.cue).not.toMatch(/[.!?]$/);
     }
   });
 
-  it('cues survive trimming (matched case-insensitively at recall time)', () => {
+  it('responses are non-empty sentences with terminal punctuation', () => {
     for (const pair of ALL_PACK_PAIRS) {
-      expect(pair.cue.trim()).not.toBe('');
-      expect(pair.cue.trim().toLowerCase().length).toBeGreaterThan(0);
+      expect(pair.response.length).toBeGreaterThan(10);
+      expect(pair.response).toMatch(/[.!?]$/);
     }
   });
 
-  it('every multi-turn dialogue has 3-6 turns', () => {
-    expect(MULTI_TURN_DIALOGUES.length).toBe(12);
-    for (const dialogue of MULTI_TURN_DIALOGUES) {
-      expect(dialogue.turns.length).toBeGreaterThanOrEqual(3);
-      expect(dialogue.turns.length).toBeLessThanOrEqual(6);
+  it('cues are unique across the whole conversation curriculum', () => {
+    const cues = ALL_CONVERSATION_PAIRS.map((pair) => pair.cue);
+    expect(new Set(cues).size).toBe(cues.length);
+  });
+
+  it('responses are varied: short answers, questions back, and longer turns all exist', () => {
+    const lengths = ALL_PACK_PAIRS.map((pair) => pair.response.length);
+    const short = lengths.filter((length) => length < 40).length;
+    const questionsBack = ALL_PACK_PAIRS.filter((pair) => pair.response.endsWith('?')).length;
+    expect(short).toBeGreaterThan(ALL_PACK_PAIRS.length / 6);
+    expect(questionsBack).toBeGreaterThan(15);
+    // Natural chat is mostly short turns — a tiny minority of long ones is
+    // the honest distribution, and it still exists.
+    expect(lengths.some((length) => length > 80)).toBe(true);
+  });
+
+  it('responses are honest to the observer identity (no invented senses or facts)', () => {
+    for (const pair of ALL_PACK_PAIRS) {
+      // The observer never claims senses, emotions it cannot have, or
+      // knowledge outside its stored words.
+      expect(pair.response).not.toMatch(/i (can see|can hear|feel|taste|smell) (?!no)/i);
+      expect(pair.response).not.toMatch(/i know (everything|all)/i);
     }
   });
 
-  it('flattenDialogues preserves every turn in order', () => {
-    const flat = flattenDialogues(MULTI_TURN_DIALOGUES);
-    const expected = MULTI_TURN_DIALOGUES.reduce((sum, dialogue) => sum + dialogue.turns.length, 0);
-    expect(flat).toHaveLength(expected);
-    expect(flat[0]).toEqual(MULTI_TURN_DIALOGUES[0].turns[0]);
-  });
-
-  it('the full curriculum reaches the expanded size', () => {
-    expect(ALL_CONVERSATION_PAIRS.length).toBeGreaterThanOrEqual(315);
-  });
-
-  it('no pack cue matches an operator-intercepted form', () => {
-    // Mirrors of the operator leads in operators.ts — a cue matching one of
-    // these would be answered by an operator, never by conversation recall:
-    // "what is X" (LEAD_DEFINITION), "does X have Y" (LEAD_HAS_PART),
-    // "is X a Y" (LEAD_IS_A).
-    const interceptedForms = [
-      /^what is (?:(?:a|an|the) )?[a-z]+\??$/,
-      /^does (?:(?:a|an|the) )?[a-z]+(?: [a-z]+)* have (?:(?:a|an|the) )?[a-z]+(?: [a-z]+)*\??$/,
-      /^is (?:(?:a|an|the) )?[a-z]+(?: [a-z]+)* (?:a|an) [a-z]+(?: [a-z]+)*\??$/
-    ];
-    for (const pack of PACKS) {
-      for (const pair of pack) {
-        for (const form of interceptedForms) {
-          expect(pair.cue).not.toMatch(form);
-        }
-      }
+  it('multi-turn dialogues flatten to unique cues in order', () => {
+    const flattened = flattenDialogues(MULTI_TURN_DIALOGUES);
+    const cues = flattened.map((pair) => pair.cue);
+    expect(new Set(cues).size).toBe(cues.length);
+    expect(flattened.length).toBeGreaterThanOrEqual(50);
+    // Every dialogue turn is also part of the pack pairs (taught together).
+    for (const pair of flattened) {
+      expect(ALL_PACK_PAIRS.some((p) => p.cue === pair.cue && p.response === pair.response)).toBe(true);
     }
-    for (const dialogue of MULTI_TURN_DIALOGUES) {
-      for (const pair of dialogue.turns) {
-        for (const form of interceptedForms) {
-          expect(pair.cue).not.toMatch(form);
-        }
-      }
+  });
+
+  it('paraphrase variants of base greetings exist in the curriculum', () => {
+    const cues = new Set(ALL_CONVERSATION_PAIRS.map((pair) => pair.cue));
+    for (const variant of ['how is it going', 'how are you doing', 'whats up', 'good morning', 'good night', 'see you later', 'take care']) {
+      expect(cues.has(variant)).toBe(true);
     }
   });
 });

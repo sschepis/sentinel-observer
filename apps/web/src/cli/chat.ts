@@ -24,7 +24,7 @@
  *   /save <path> export the observer's bootstrap to a JSON file
  *   /quit        exit (Ctrl-D / Ctrl-C work too)
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { ObserverSession } from '../observer/engine'
 import { OBSERVER_OPTIONS } from '../observer/options'
@@ -48,6 +48,10 @@ const cyan = (text: string): string => paint(36, text)
 const WORDS = process.argv.includes('--words') ? Number(process.argv[process.argv.indexOf('--words') + 1] ?? 400) : 400
 const LOAD = process.argv.includes('--load') ? process.argv[process.argv.indexOf('--load') + 1] ?? '' : ''
 const SAVE = process.argv.includes('--save') ? process.argv[process.argv.indexOf('--save') + 1] ?? '' : ''
+/** The shipped trained observer (public/bootstrap.json, built by npm run
+ *  train) — the CLI's default: a fully-taught conversational core instead
+ *  of a scratch 400-word observer. */
+const SHIPPED_BOOTSTRAP = new URL('../../public/bootstrap.json', import.meta.url).pathname
 const FLAG_WITH_VALUE = new Set(['--words', '--load', '--save'])
 const positional: string[] = []
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -100,6 +104,7 @@ function printHelp(): void {
   console.log('  /templates   learned language templates (admitted/candidates)')
   console.log('  /relations   relation graph size + a sample of edges')
   console.log('  /sweep       run the contradiction sweep over the relation graph')
+  console.log('  /teach       teach a phrase: /teach <cue> :: <response> (the practice loop)')
   console.log('  /save <path> export the observer bootstrap to JSON')
   console.log('  /quit        exit')
   console.log('')
@@ -189,6 +194,30 @@ function saveBootstrap(teacher: TeacherAgent, path: string): void {
   console.log(dim(`saved observer to ${path}`))
 }
 
+/** /teach <cue> :: <response> — the practice loop: the human teaches a
+ *  phrase the observer did not know, and the observer immediately practices
+ *  it (store + speak), so the very next encounter recalls it. */
+function teachPhrase(teacher: TeacherAgent, argument: string): void {
+  const separator = argument.indexOf('::')
+  if (separator <= 0) {
+    console.log(dim('usage: /teach <cue> :: <response>  (e.g. /teach good morning :: A bright start!)'))
+    return
+  }
+  const cue = argument.slice(0, separator).trim().toLowerCase()
+  const response = argument.slice(separator + 2).trim()
+  if (cue.length === 0 || response.length === 0) {
+    console.log(dim('usage: /teach <cue> :: <response>'))
+    return
+  }
+  teacher.teachConversationDeck([{ cue, response }])
+  const practiced = teacher.respond(cue)
+  const outcome =
+    practiced.response !== null && practiced.confidence !== null && practiced.confidence >= 0.8
+      ? green(`recalled (conf ${practiced.confidence.toFixed(2)})`)
+      : dim(`recalling (conf ${practiced.confidence?.toFixed(2) ?? '—'}) — one more practice will seal it`)
+  console.log(`  taught "${cue}" · practice: ${outcome} — "${practiced.response ?? response}"`)
+}
+
 async function main(): Promise<void> {
   const session = new ObserverSession(OBSERVER_OPTIONS, 100)
   await session.initialize()
@@ -198,6 +227,11 @@ async function main(): Promise<void> {
     const record = JSON.parse(readFileSync(LOAD, 'utf8')) as BootstrapRecord
     const imported = teacher.importBootstrap(record)
     console.log(dim(`imported ${imported.restored} traces · ${imported.conversations} conversations · ${imported.definitions} definitions from ${LOAD}`))
+  } else if (!process.argv.includes('--words') && existsSync(SHIPPED_BOOTSTRAP)) {
+    // Default: the shipped trained observer (full conversation curriculum).
+    const record = JSON.parse(readFileSync(SHIPPED_BOOTSTRAP, 'utf8')) as BootstrapRecord
+    const imported = teacher.importBootstrap(record)
+    console.log(dim(`loaded the trained observer — ${imported.restored} traces · ${imported.conversations} conversations from ${SHIPPED_BOOTSTRAP}`))
   } else if (WORDS > 0) {
     console.log(dim(`training ${WORDS} words…`))
     for (const entry of ACTIVE_DECK.slice(0, WORDS)) {
@@ -209,7 +243,7 @@ async function main(): Promise<void> {
     }
   }
   const report = teacher.conversationReport()
-  console.log(dim(`ready — ${teacher.listWords().filter((w) => w.traceId !== null).length} words · competency ${(report.competency * 100).toFixed(0)}% · type /help for commands`))
+  console.log(dim(`ready — ${teacher.listWords().filter((w) => w.traceId !== null).length} words · ${ALL_CONVERSATION_PAIRS.length} conversation exchanges · competency ${(report.competency * 100).toFixed(0)}% · type /help for commands`))
   console.log('')
 
   const ask = (question: string, echoQuestion: boolean): void => {
@@ -258,6 +292,9 @@ async function main(): Promise<void> {
             } else {
               console.log(dim('usage: /save <path.json>'))
             }
+            break
+          case '/teach':
+            teachPhrase(teacher, argument)
             break
           case '/quit':
             finish()
