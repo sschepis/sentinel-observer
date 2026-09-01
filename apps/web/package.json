@@ -25,7 +25,8 @@
     "template-bench": "tsx src/cli/template-bench.ts",
     "chat": "tsx src/cli/chat.ts",
     "read": "tsx src/cli/read.ts",
-    "fetch-curriculum": "tsx src/cli/fetch-curriculum.ts"
+    "fetch-curriculum": "tsx src/cli/fetch-curriculum.ts",
+    "margin-bench": "tsx src/cli/margin-bench.ts"
   },
   "dependencies": {
     "@aleph-ai/tinyaleph": "^1.8.2",
