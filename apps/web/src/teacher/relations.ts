@@ -57,6 +57,47 @@ export const RELATION_PREDICATES: readonly RelationPredicate[] = [
 export type RelationOrigin = 'regex' | 'authored' | 'chaperone';
 
 /**
+ * P14 CORROBORATION SOURCE CLASSES — the INDEPENDENT knowledge channels an
+ * edge can be supported by. A relation stated by exactly one class is a
+ * WEAK claim: it may still be spoken, but hedged (never fabricated, never
+ * deleted — the graph keeps it for the next corroborating source). Two or
+ * more independent classes corroborate it: confidence rises and hedging is
+ * removed. Classes are deliberately coarse so agreement is real agreement —
+ * the technical curriculum and the everyday supplement are both
+ * 'curriculum', and agreeing with yourself is not corroboration.
+ *
+ *   curriculum      — regex-extracted from taught deck definitions, or
+ *                     authored in the technical / everyday / grounded-facts
+ *                     curriculum decks.
+ *   definition      — LLM-chaperoned definitions/edges (origin 'chaperone'):
+ *                     a single untrusted source until another class agrees.
+ *   conversation    — mined from user statements ("my dog can bark" is
+ *                     evidence for dog capable-of bark) and past chat
+ *                     transcripts.
+ *   world-feedback  — the world accepted a graded answer citing the edge
+ *                     (a strong semantic grade confirms the claim).
+ */
+export type SourceClass = 'curriculum' | 'conversation' | 'world-feedback' | 'definition';
+
+/** Every source class, in policy-order. */
+export const SOURCE_CLASSES: readonly SourceClass[] = [
+  'curriculum',
+  'conversation',
+  'world-feedback',
+  'definition'
+];
+
+/** The source class a provenance origin states by itself. */
+export function sourceClassForOrigin(origin: RelationOrigin): SourceClass {
+  return origin === 'chaperone' ? 'definition' : 'curriculum';
+}
+
+/** True when `value` names a real source class (persistence guard). */
+export function isSourceClass(value: unknown): value is SourceClass {
+  return typeof value === 'string' && (SOURCE_CLASSES as readonly string[]).includes(value);
+}
+
+/**
  * The natural English verb a predicate reads as, article included where the
  * verb demands one ("bird is-a animal" -> "is an animal"). Used for belief
  * phrasing and operator answers so edges speak English, not predicate IDs.
@@ -104,9 +145,19 @@ export interface Relation {
   /** Provenance: regex-extracted, authored by the curriculum, or LLM-supplied. */
   origin: RelationOrigin;
   /**
-   * Confidence weight (P8): 1 = a single stated source. Agreement between
-   * sources and correct grades of answers citing the edge bump it; wrong
-   * grades weaken it. Absent = 1.
+   * P14 corroboration provenance: the INDEPENDENT source classes supporting
+   * this edge (always includes the class of `origin`). One class = a weak
+   * single-source claim (hedged when spoken); two or more = corroborated.
+   * Stamped on the derived graph by the edge store; persisted per-key so a
+   * reload keeps the accumulated agreement.
+   */
+  sourceClasses?: readonly SourceClass[];
+  /**
+   * Confidence weight (P8/P14): the corroboration base (1 = a single stated
+   * curriculum source; 0.6 = a single LLM-chaperoned source; 1.0 / 1.2 / 1.4
+   * for 2 / 3 / 4 independent source classes) plus the agreement/grade
+   * overlay. Agreement between sources and correct grades of answers citing
+   * the edge bump it; wrong grades weaken it. Absent = 1.
    */
   strength?: number;
 }
@@ -185,7 +236,10 @@ export function reconcileRelations(
  * Merge relation lists with provenance priority: regex > authored > chaperone.
  * A same-key edge is kept once; when a later (lower-priority) source repeats
  * the key, the earlier source wins. This is the tie rule behind "regex and
- * authored edges keep priority in answering".
+ * authored edges keep priority in answering". Corroboration is NOT computed
+ * here — the edge store re-stamps `sourceClasses` from the per-key evidence
+ * store after the merge (merging would confuse "the deck repeats itself"
+ * with "an independent source agrees").
  */
 export function mergeRelations(...lists: readonly (readonly Relation[])[]): Relation[] {
   const originPriority: Record<RelationOrigin, number> = { regex: 0, authored: 1, chaperone: 2 };
@@ -319,7 +373,7 @@ export function extractRelations(
     const key = `${subject}\u0000${predicate}\u0000${object}`;
     if (seen.has(key)) return;
     seen.add(key);
-    relations.push({ subject, predicate, object, source, origin: 'regex' });
+    relations.push({ subject, predicate, object, source, origin: 'regex', sourceClasses: ['curriculum'] });
   };
 
   for (const entry of words) {

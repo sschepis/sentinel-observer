@@ -19,6 +19,8 @@
  * exposure of each answer.
  */
 import { isContentWord, tokenizeText, singularize } from './context';
+import { hedgeForClaim, stripClaimHedges, type HedgeWord } from './corroboration';
+import type { Relation } from './relations';
 
 export interface GroundingResult {
   /** Fraction of content words that come directly from the seeds (0..1). */
@@ -79,4 +81,28 @@ export function groundingAttribution(grounding: number): {
   // deviation-from-fact exposure.
   const deviated = Math.max(0, Math.min(1, 1 - grounding));
   return { grounded: 1 - deviated, deviated };
+}
+
+/**
+ * P14 CORROBORATION-AWARE HEDGE (the grounding path's integration point):
+ * the hedge word a single claim may be spoken with, from the corroboration
+ * of its backing edge — '' (assert flatly) only when the claim is backed by
+ * >= 2 independent source classes and not weakened by grades; 'I think' when
+ * a single source states it; 'Probably' when grades weakened the edge. The
+ * hedge is presentation on top of a grounded claim — it never fabricates.
+ */
+export function claimHedge(
+  relations: readonly Relation[],
+  subject: string,
+  predicate: string,
+  object: string
+): HedgeWord {
+  return hedgeForClaim(relations, subject, predicate, object);
+}
+
+/** Strip corroboration hedge markers from a spoken sentence — the deviation
+ *  meter scores the composition, not the presentation ("I think" is not
+ *  stitched content). */
+export function stripHedges(sentence: string): string {
+  return stripClaimHedges(sentence);
 }

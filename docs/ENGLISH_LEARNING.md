@@ -101,6 +101,11 @@ TTS).
   recall confidence, trace strength, coherence of the observer's own field.
 - When the observer is wrong, the journal says so. Its diary includes
   failures — that IS the learning record.
+- **Claims are corroborated or hedged (P14).** A relation backed by exactly
+  one source class is spoken with "I think"; only agreement across two or
+  more independent source classes (curriculum deck, user conversation,
+  world-feedback grades, LLM-chaperoned definitions) removes the hedge. See
+  [CORROBORATION.md](CORROBORATION.md).
 
 ## 6. The two agents
 

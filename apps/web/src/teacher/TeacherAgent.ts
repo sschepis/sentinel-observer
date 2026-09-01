@@ -12,12 +12,17 @@ import {
   type TransitionWeights
 } from './conversation';
 import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
-import { composeGrounded, criticize, groundedSubjects } from './groundedFrames';
+import { composeGrounded, criticize, groundedSubjects, hedgeComposition } from './groundedFrames';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
 import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classifyUtterance, blendReward, FADE_FLOOR, type FadeState, type GradeClass } from './fade';
 import { compositeScore } from './composite';
-import { groundingScore, groundingAttribution } from './grounding';
-import { extractRelations, mergeRelations, reconcileRelations, predicateVerb, type Relation, type RelationPredicate, type Negation } from './relations';
+import { groundingScore, groundingAttribution, stripHedges } from './grounding';
+import { extractRelations, mergeRelations, reconcileRelations, predicateVerb, sourceClassForOrigin, isSourceClass, type Relation, type RelationPredicate, type Negation, type SourceClass } from './relations';
+import {
+  corroborationConfidence,
+  distinctClasses,
+  evidenceInText
+} from './corroboration';
 import { RelationalHologram, mulberry32 } from '@sschepis/sentient-core';
 import { matchArgs, evaluate, canonicalNumber, conversionPairOf, type DSLExpr } from './technical/dsl';
 
@@ -45,6 +50,7 @@ import { GROUNDED_FACTS_RELATIONS } from './decks/groundedFacts';
 import { OperatorLearner } from './operators/learning';
 import { TokenCostModel } from './mdl';
 import { ACTIVE_DECK } from './decks';
+import { loadConversations } from './conversations';
 import { computeDrives, chooseBehavior, updateDriveWeight, ARCHETYPAL_BEHAVIORS, type DriveSignals, type DriveState, type BehaviorOption, type BehaviorWeights } from './drives';
 import { WorkingMemory, resolveReferences, extractUnknownSubject, tokenizeText, singularize, isContentWord, cosineSimilarity, type WorkingTurn } from './context';
 import { clampRange } from '@sschepis/sentient-core';
@@ -194,7 +200,7 @@ export interface AnswerProvenance {
 export type ChatAnswer =
   | { mode: 'memorized'; response: string; confidence: number | null; cue: string | null; provenance: AnswerProvenance }
   | { mode: 'operator'; response: string; operator: OperatorResult; provenance: AnswerProvenance }
-  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; provenance: AnswerProvenance }
+  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; hedged: boolean; provenance: AnswerProvenance }
   | { mode: 'ask'; response: string; provenance: AnswerProvenance }
   | { mode: 'decline'; provenance: AnswerProvenance };
 
@@ -206,6 +212,9 @@ export interface CreativeReply extends CreativeComposition {
   /** P5: true when the sentence was generated from typed frames and passed
    *  the internal critic; false = the labeled Markov fallback. */
   grounded: boolean;
+  /** P14: true when the spoken sentence carries a corroboration hedge (any
+   *  cited claim is single-source or weakened by grades). */
+  hedged: boolean;
   /** The edges backing a grounded composition (empty for the fallback). */
   edges: EdgeRef[];
 }
@@ -606,6 +615,26 @@ export class TeacherAgent {
    */
   private edgeConfidence = new Map<string, number>();
   /**
+   * P14 per-edge corroboration store: key = subject\u0000predicate\u0000object,
+   * value = the INDEPENDENT source classes that support the edge beyond its
+   * own origin class — conversation evidence mined from user statements,
+   * world-feedback from accepted graded answers, and definition-class credit
+   * from an agreeing chaperone edge. Rides the derived graph as
+   * `Relation.sourceClasses`; persisted with the learning state.
+   */
+  private edgeSources = new Map<string, SourceClass[]>();
+  /**
+   * P14 example corpus index: content token -> deck example sentences (from
+   * the taught states' `example` fields). Built once per relations-cache
+   * build; a chaperone edge corroborated by a curriculum example sentence
+   * ("A bird can fly." is the deck itself confirming bird capable-of fly)
+   * gains the 'curriculum' class.
+   */
+  private exampleIndex: Map<string, string[]> | null = null;
+  /** P14 user statements from PERSISTED conversations, mined once at
+   *  construction (the live turns are mined as they arrive). */
+  private readonly persistedConversationTexts: string[] = [];
+  /**
    * The confirmed-false store (P8): claims explicitly taught ("golf is not a
    * bird") or confirmed by a graded "No" answer. The ONLY source of "No" —
    * absence of evidence never answers absence.
@@ -721,6 +750,25 @@ export class TeacherAgent {
         dueAt: null,
         lastIntervalDays: null
       });
+    }
+    // P14: mine PAST conversations as corroborating evidence. User statements
+    // from persisted transcripts corroborate the deck's relations before the
+    // session even starts ("my dog can bark" yesterday is still evidence for
+    // dog capable-of bark today). Best-effort: no transcripts -> live turns
+    // still mine as they arrive.
+    try {
+      for (const conversation of loadConversations()) {
+        for (const message of conversation.messages) {
+          if (message.role !== 'user') continue;
+          if (this.persistedConversationTexts.length >= 300) break;
+          this.persistedConversationTexts.push(message.text);
+        }
+      }
+    } catch {
+      // Transcripts unavailable — live-turn mining still applies.
+    }
+    if (this.persistedConversationTexts.length > 0) {
+      this.noteConversationEvidence(this.persistedConversationTexts.join(' '));
     }
   }
 
@@ -980,6 +1028,17 @@ export class TeacherAgent {
             if (typeof value === 'number' && Number.isFinite(value)) this.edgeConfidence.set(key, value);
           }
         }
+        if (typeof learningState.edgeSources === 'object' && learningState.edgeSources !== null) {
+          // P14: the corroboration source classes survive reloads — evidence
+          // mined yesterday still corroborates today (malformed entries drop).
+          this.edgeSources.clear();
+          for (const [key, value] of Object.entries(learningState.edgeSources as Record<string, unknown>)) {
+            if (Array.isArray(value)) {
+              const classes = (value as unknown[]).filter(isSourceClass);
+              if (classes.length > 0) this.edgeSources.set(key, classes);
+            }
+          }
+        }
         if (Array.isArray(learningState.negations)) {
           // The confirmed-false store survives reloads (P8).
           this.negations = (learningState.negations as Array<Partial<Negation>>)
@@ -1220,6 +1279,7 @@ export class TeacherAgent {
         compiledRules: this.compiledRules,
         answerGrades: this.answerGrades,
         edgeConfidence: Object.fromEntries(this.edgeConfidence),
+        edgeSources: Object.fromEntries(this.edgeSources),
         negations: this.negations,
         authoredAnswers: [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
           utterance,
@@ -1403,6 +1463,16 @@ export class TeacherAgent {
       this.edgeConfidence.clear();
       for (const [key, value] of Object.entries(record.edgeConfidence as Record<string, unknown>)) {
         if (typeof value === 'number' && Number.isFinite(value)) this.edgeConfidence.set(key, value);
+      }
+    }
+    if (typeof record.edgeSources === 'object' && record.edgeSources !== null) {
+      // P14: corroboration source classes ride the bootstrap record.
+      this.edgeSources.clear();
+      for (const [key, value] of Object.entries(record.edgeSources as Record<string, unknown>)) {
+        if (Array.isArray(value)) {
+          const classes = (value as unknown[]).filter(isSourceClass);
+          if (classes.length > 0) this.edgeSources.set(key, classes);
+        }
       }
     }
     if (Array.isArray(record.negations)) {
@@ -2171,9 +2241,11 @@ export class TeacherAgent {
   }
 
   /** Drop the cached edge graph so the next read re-extracts (definitions
-   *  may have changed, or chaperone edges arrived). */
+   *  may have changed, or chaperone edges arrived). Also drops the example
+   *  corpus index — it is derived from the taught states like the graph. */
   invalidateRelations(): void {
     this.relationsCache = null;
+    this.exampleIndex = null;
   }
 
   /**
@@ -2210,10 +2282,13 @@ export class TeacherAgent {
     // technical curriculum is a belief to verify too.
     const { agreed, llmOnly, conflicts } = reconcileRelations(mergeRelations(extracted, authored), relevant);
 
-    // P8: AGREEMENT is evidence — a chaperone edge that matches an existing
-    // one bumps that edge's confidence (+1 per agreeing source).
+    // P8/P14: AGREEMENT is evidence — a chaperone edge that matches an
+    // existing one bumps that edge's confidence (+1 per agreeing source)
+    // AND adds the LLM-definition source class, corroborating the claim
+    // across independent classes (hedging is removed on the next read).
     for (const relation of agreed) {
       this.bumpEdge(relation.subject, relation.predicate, relation.object, +1);
+      this.addEdgeSource(relation.subject, relation.predicate, relation.object, 'definition');
     }
 
     let accepted = 0;
@@ -2255,17 +2330,25 @@ export class TeacherAgent {
       // edges that CONFLICTED with a regex edge were already diverted to
       // beliefs in applyRelations, so what lands here is agreed or new.
       this.relationsCache = mergeRelations(extracted, authored, this.chaperoneRelations)
-        // P8: the confidence overlay rides on the derived graph — every edge
-        // carries its effective strength (base 1 per stated source + grade/
-        // agreement deltas), floored so weakened edges still answer hedged.
-        .map((relation) => ({
-          ...relation,
-          strength: Math.max(
-            0.1,
-            (relation.strength ?? 1) +
-              (this.edgeConfidence.get(edgeKey(relation.subject, relation.predicate, relation.object)) ?? 0)
-          )
-        }));
+        // P14: corroboration rides the derived graph — every edge carries its
+        // source classes (its origin class + the accumulated independent
+        // evidence: agreeing chaperone edges, mined conversation evidence,
+        // accepted graded answers, curriculum example sentences) and its
+        // effective strength (corroboration base + grade/agreement overlay),
+        // floored so weakened edges still answer hedged.
+        .map((relation) => {
+          const key = edgeKey(relation.subject, relation.predicate, relation.object);
+          const classes = this.classesFor(relation);
+          return {
+            ...relation,
+            sourceClasses: classes,
+            strength: Math.max(
+              0.1,
+              corroborationConfidence(classes) +
+                (this.edgeConfidence.get(key) ?? 0)
+            )
+          };
+        });
       // P12 held-out gate: hidden edges leave the SYMBOLIC graph only — the
       // loose hologram below still binds them, so graded recovery works.
       if (this.hiddenRelationKeys !== null && this.hiddenRelationKeys.size > 0) {
@@ -2277,6 +2360,106 @@ export class TeacherAgent {
       this.rebuildRelationalHologram();
     }
     return this.relationsCache;
+  }
+
+  /**
+   * P14: the corroboration classes of a derived edge — its origin class,
+   * plus the accumulated independent evidence for its key, plus curriculum
+   * class credit when a taught EXAMPLE sentence states the same claim (the
+   * reviewed deck itself confirming a chaperone-supplied edge).
+   */
+  private classesFor(relation: Relation): SourceClass[] {
+    const key = edgeKey(relation.subject, relation.predicate, relation.object);
+    const classes = [sourceClassForOrigin(relation.origin), ...(this.edgeSources.get(key) ?? [])];
+    // Example sentences are curriculum material: an example that STATES the
+    // edge ("A bird can fly.") corroborates a chaperone-only edge — the
+    // reviewed deck agrees with the LLM.
+    if (relation.origin === 'chaperone' && this.exampleCorroborates(relation)) {
+      classes.push('curriculum');
+    }
+    return distinctClasses(classes);
+  }
+
+  /** P14: does any taught example sentence corroborate this relation? The
+   *  example corpus is token-indexed once per cache build. */
+  private exampleCorroborates(relation: Relation): boolean {
+    if (this.exampleIndex === null) {
+      const index = new Map<string, string[]>();
+      for (const state of this.states.values()) {
+        const example = state.word.example.trim().toLowerCase();
+        if (example.length === 0) continue;
+        const seen = new Set<string>();
+        for (const token of tokenizeText(example)) {
+          if (seen.has(token)) continue;
+          seen.add(token);
+          const list = index.get(token) ?? [];
+          list.push(example);
+          index.set(token, list);
+        }
+      }
+      this.exampleIndex = index;
+    }
+    const candidates = this.exampleIndex.get(relation.subject) ?? [];
+    for (const example of candidates) {
+      if (evidenceInText(example, relation.subject, relation.predicate, relation.object)) return true;
+    }
+    return false;
+  }
+
+  /** P14: record an independent corroborating source class for an edge. */
+  addEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void {
+    const key = edgeKey(subject, predicate, object);
+    const current = this.edgeSources.get(key) ?? [];
+    if (current.includes(sourceClass)) return;
+    this.edgeSources.set(key, [...current, sourceClass]);
+    this.invalidateRelations();
+  }
+
+  /** P14: drop a corroborating source class (e.g. the world later rejected
+   *  the claim it had accepted). */
+  removeEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void {
+    const key = edgeKey(subject, predicate, object);
+    const current = this.edgeSources.get(key) ?? [];
+    if (!current.includes(sourceClass)) return;
+    this.edgeSources.set(key, current.filter((cls) => cls !== sourceClass));
+    this.invalidateRelations();
+  }
+
+  /** P14: the corroborating source classes of an edge key (read-only). */
+  edgeSourcesOf(subject: string, predicate: string, object: string): readonly SourceClass[] {
+    const key = edgeKey(subject, predicate, object);
+    const found = this.relations().find(
+      (r) => r.subject === subject && r.predicate === predicate && r.object === object
+    );
+    return found !== undefined ? (found.sourceClasses ?? []) : (this.edgeSources.get(key) ?? []);
+  }
+
+  /**
+   * P14 CONVERSATION-EVIDENCE MINING: a user statement is evidence — "my dog
+   * can bark" corroborates dog capable-of bark, "a robin is a bird I saw"
+   * corroborates robin is-a bird. Only DECLARATIVE statements with the
+   * predicate expressed are mined (questions and negations never are), and
+   * only for edges that already exist — an utterance never invents an edge.
+   */
+  private noteConversationEvidence(text: string): void {
+    if (text.trim().length === 0) return;
+    const tokens = new Set(tokenizeText(text).map(singularize));
+    if (tokens.size === 0) return;
+    // Deck objects are often plural ("wings", "legs") — match the raw form
+    // or its singular ("the bird has wings" covers both).
+    const mentioned = (word: string): boolean => tokens.has(word) || tokens.has(singularize(word));
+    const relations = this.relations();
+    let changed = false;
+    for (const relation of relations) {
+      if (!mentioned(relation.subject) || !mentioned(relation.object)) continue;
+      if (!evidenceInText(text, relation.subject, relation.predicate, relation.object)) continue;
+      const key = edgeKey(relation.subject, relation.predicate, relation.object);
+      const current = this.edgeSources.get(key) ?? [];
+      if (current.includes('conversation')) continue;
+      this.edgeSources.set(key, [...current, 'conversation']);
+      changed = true;
+    }
+    if (changed) this.invalidateRelations();
   }
 
   /** Rebuild the distributed-vector view from the current relation graph. */
@@ -2674,6 +2857,11 @@ export class TeacherAgent {
       ? utterance.trim()
       : resolveReferences(utterance, this.workingMemory.all(), (word) => known.has(word));
     this.workingMemory.note('user', utterance);
+    // P14: the user's own words are corroborating evidence — a declarative
+    // statement that expresses an existing relation ("my dog can bark")
+    // adds the conversation source class to that edge. Questions and
+    // negations never mine (evidenceInText gates them).
+    this.noteConversationEvidence(resolved);
     // Encounter tracking: deck words the observer HEARS but has no
     // definition for become curiosity fuel.
     for (const token of tokenizeText(utterance)) {
@@ -2877,11 +3065,13 @@ export class TeacherAgent {
         this.noteAuthoredAnswer(utterance, reply.seedTraceIds);
         // PHASE 8 GROUNDING: the deviation meter's per-composition verdict —
         // how much of this answer comes from the observer's own seeds vs.
-        // stitched. Scored from the recalled seed contents themselves.
+        // stitched. Scored from the recalled seed contents themselves, with
+        // the P14 hedge markers stripped: "I think" is presentation, not
+        // stitched content.
         const seedContents = this.session.observer.getMemoryBank().all()
           .filter((trace) => reply.seedTraceIds.includes(trace.id))
           .map((trace) => trace.content);
-        this.noteGrounding(groundingScore(reply.sentence, seedContents).grounding);
+        this.noteGrounding(groundingScore(stripHedges(reply.sentence), seedContents).grounding);
         return {
           mode: 'creative',
           response: reply.sentence,
@@ -2889,6 +3079,7 @@ export class TeacherAgent {
           seedTraceIds: reply.seedTraceIds,
           seedCount: reply.seedCount,
           grounded: reply.grounded,
+          hedged: reply.hedged,
           provenance: { traceIds: reply.seedTraceIds, edges: reply.edges }
         };
       }
@@ -3108,7 +3299,7 @@ export class TeacherAgent {
   creativeReply(utterance: string, extraSeeds: readonly string[] = []): CreativeReply {
     const cue = utterance.trim();
     if (cue.length === 0) {
-      return { sentence: '', seedCount: 0, confidence: null, seedTraceIds: [], grounded: false, edges: [] };
+      return { sentence: '', seedCount: 0, confidence: null, seedTraceIds: [], grounded: false, hedged: false, edges: [] };
     }
 
     // The moment (converged field) selects the seeds — recallMemories
@@ -3148,12 +3339,17 @@ export class TeacherAgent {
       // re-verify against the full graph + negations for the final sentence.
       const verdict = criticize(grounded.sentence, relations, this.negations);
       if (verdict.grounded) {
+        // P14: the claims are graph-backed, but single-source claims are
+        // still WEAK — phrase them with their corroboration hedge instead of
+        // asserting them flatly. Corroborated claims are spoken assertively.
+        const spoken = hedgeComposition(grounded.sentence, relations);
         return {
-          sentence: grounded.sentence,
+          sentence: spoken.sentence,
           seedCount: memories.length,
           confidence: bestScore,
           seedTraceIds,
           grounded: true,
+          hedged: spoken.hedged,
           edges: verdict.edges
         };
       }
@@ -3171,6 +3367,7 @@ export class TeacherAgent {
       confidence: bestScore,
       seedTraceIds,
       grounded: false,
+      hedged: false,
       edges: []
     };
   }
@@ -3267,6 +3464,13 @@ export class TeacherAgent {
     // a strong answer confirms them, a weak one calls them into question.
     for (const edge of citedEdges) {
       this.bumpEdge(edge.subject, edge.predicate, edge.object, delta > 0 ? +0.2 : delta < 0 ? -0.2 : 0);
+    }
+    // P14: the world's verdict is a source class. An ACCEPTED graded answer
+    // corroborates the edges it cited (>= 2 independent classes -> spoken
+    // assertively); a rejected one withdraws that credit.
+    for (const edge of citedEdges) {
+      if (delta > 0) this.addEdgeSource(edge.subject, edge.predicate, edge.object, 'world-feedback');
+      else if (delta < 0) this.removeEdgeSource(edge.subject, edge.predicate, edge.object, 'world-feedback');
     }
     // The P7 grade ledger: this answer's producers (and the edges it cited —
     // consumed by P8's per-edge confidence) are recorded for surgical repair.
@@ -3432,6 +3636,7 @@ export class TeacherAgent {
       answerGrades: this.answerGrades.length > 0 ? this.answerGrades : undefined,
       edgeConfidence:
         this.edgeConfidence.size > 0 ? Object.fromEntries(this.edgeConfidence) : undefined,
+      edgeSources: this.edgeSources.size > 0 ? Object.fromEntries(this.edgeSources) : undefined,
       negations: this.negations.length > 0 ? this.negations : undefined,
       authoredAnswers:
         this.authoredAnswers.size > 0

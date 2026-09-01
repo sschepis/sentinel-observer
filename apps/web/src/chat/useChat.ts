@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TeacherAgent } from '../teacher/TeacherAgent';
+import type { EdgeRef, TeacherAgent } from '../teacher/TeacherAgent';
 import {
   Chaperone,
   OpenAICompatProvider,
@@ -118,7 +118,7 @@ export function useChat(
   const gradeCreative = useCallback(
     async (
       utterance: string,
-      reply: { sentence: string; confidence: number | null; seedTraceIds: string[] },
+      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[] },
       conversationId: string
     ) => {
       if (teacher === null) return;
@@ -141,7 +141,7 @@ export function useChat(
         feedback = 'grading unavailable — configure a teacher model in Settings';
       }
 
-      teacher.creativeGradeFeedback({ traceIds: reply.seedTraceIds, edges: [] }, score, utterance, reply.sentence);
+      teacher.creativeGradeFeedback({ traceIds: reply.seedTraceIds, edges: reply.edges ?? [] }, score, utterance, reply.sentence);
       pushExchange(
         utterance,
         {
@@ -181,7 +181,8 @@ export function useChat(
         void gradeCreative(utterance, {
           sentence: answer.response,
           confidence: answer.confidence,
-          seedTraceIds: answer.seedTraceIds
+          seedTraceIds: answer.seedTraceIds,
+          edges: answer.provenance.edges
         }, conversationId);
         return;
       }
