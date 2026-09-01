@@ -4,7 +4,9 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
-import { STARTER_DECK } from './deck';
+import { DECK_100 } from './decks/en-100';
+
+const STARTER_DECK = DECK_100.slice(0, 12);
 
 /** Poll until a predicate holds or the timeout elapses. */
 async function waitFor(predicate: () => boolean, timeoutMs = 30000, intervalMs = 50): Promise<void> {

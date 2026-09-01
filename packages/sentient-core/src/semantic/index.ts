@@ -87,15 +87,25 @@ export type {
 export {
   SedenionMemoryField,
   UnknownSMFAxisError,
-  SMF_DIMENSION
+  SMF_DIMENSION,
+  MAX_SMF_WIDTH
 } from './SedenionMemoryField';
 export type {
   SMFAxisRef,
   DominantAxis,
   SMFSnapshot,
   PrimeActivitySample,
-  PrimeActivityOptions
+  PrimeActivityOptions,
+  SedenionMemoryFieldOptions
 } from './SedenionMemoryField';
+
+// Signed random projection (the SMF imprint's JL sketch)
+export { SignedRandomProjection, mulberry32 } from './SketchProjection';
+export type { SignedRandomProjectionOptions } from './SketchProjection';
+
+// Relational VSA/HRR binding (role–filler traces for graded inference)
+export { RelationalHologram, fnv1a } from './RelationalHologram';
+export type { RelationalHologramOptions, RoleFillerPair, HologramCandidate } from './RelationalHologram';
 
 // Holographic memory
 export { HolographicMemory } from './HolographicMemory';

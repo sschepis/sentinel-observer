@@ -1,0 +1,327 @@
+# The Sentinel Observer: A Moment-Based Associative Learning Architecture with Entropy-Driven Memory and a Graded Hybrid Faculty
+
+**Authors:** Sebastian Schepis
+
+**Abstract.** We present the Sentinel Observer, an associative learning architecture in which a perturbed coupled-oscillator field stores and recalls symbolic memories through entropy reduction, and a closed learning loop — ask, learn, memorize, decay — generates its own curriculum. The observer maintains a 20,000-word frequency vocabulary with embedded WordNet definitions, a spaced-repetition memory subject to wall-clock decay, retrieval phase-locked to the stored moments (traces carry the phase configuration of the excited oscillators, and recall scores the order parameter of the cue-vs-stored phase difference, gated by the cue moment's coherence), a stack of deterministic, *chained*, *graded* (distributed-vector), *learned*, and *compiled* operators for answering novel questions, a grounded-composition engine that fills typed frames from its relation graph and refuses any claim its own internal critic cannot back with a stored edge, and an explicit honesty contract: it asks when it does not know, never fabricates, answers "No" only with evidence, hedges when its confidence is weakened, and records the provenance of every answer so a bad grade weakens exactly what produced it. From its definitions — plus authored and LLM-supplied edges — the observer extracts typed relational traces across 15 predicates (is-a, has-part, located-in, made-of, has-property, capable-of, used-for, causes, opposite-of, requires, and the technical curriculum's), then answers never-taught questions by composing two memories into one inference ("does golf have rules?" via golf is-a game ∘ game has-part rules), degrading gracefully to a scored hedge where the symbolic graph is silent. Operator discovery is governed by a minimum-description-length criterion over Zipf-frequency token costs, so a single demonstration of an expensive rare-word answer can earn its operator while common-word anecdotes require evidence — and the drill loop compiles executable rules the same way, turning "asked for the rule" into "acquired the rule". An adversarial evolution pass measures the honesty contract under attack — negative chaining, absent parts, unknown words, garbage input — and a deviation meter makes the creativity–factuality tradeoff visible: every answer is labeled by its producing layer, and a session aggregates grounded (memory/operator), composed (creative), and abstained (ask/decline) shares. An LLM serves strictly as proposer and grader, never as the observer's voice. We report measured results across a suite of objective benchmarks and two scaling experiments: 94.6% recognition recall at 20,000 words, a reduction of fuzzy false-positive recall from 68% to 0% via moment-grounded settling, 100% correctness on verifiable operators, 16/16 chained-reasoning checks, 44/44 adversarial honesty probes with zero false "yes" and zero out-of-vocabulary fabrications, MDL operator induction with measured gains and a replay guard, 100% own-generation of conversational answers (zero-LLM *generation*), 100% of answers bounded within the learned vocabulary, and 100% retention under the scheduled review loop over a simulated 30 days. Two scaling experiments find a measured dead end for larger prime bases (O(N²) coupling, no capacity gain) and a working shard-train-merge path — parallel training over a shared vocabulary, merged into one observer with recall preserved and an ≈6× smaller production record. A first council of three specialized observers then integrates by resonance: the domain expert answers, disagreement resonates through rounds of mutual observation, and the network asks rather than fabricating a consensus. We report the architecture's honest limits — and locate the sentinel observer on the substrate of a mind: it already responds to its own output through reflexive first-order self-modeling, and we name the precise second-order steps (memories about its own memories, a learned evaluative gradient, a planning horizon) that separate it from the capacity we call mind.
+
+---
+
+## 1. Introduction
+
+Large language models demonstrate remarkable linguistic competence but their "learning" is a static training artifact: parameters are frozen at deployment, and adaptation is limited to retrieval or fine-tuning. Systems that *do* learn after deployment typically delegate all behavior to an LLM, rendering the "learner" a prompt wrapper. This paper documents an alternative construction: a learner whose intelligence is distributed between a genuine associative memory substrate and a strictly gated external faculty, with the learning loop closed on the learner's own side.
+
+The design is guided by a specific hypothesis about what learning is: **observation is entropy reduction**. A perceiver is perturbed by information and returns to coherence; the transient between perturbation and agreement is a *moment*; understanding is placing new information into an existing network such that the network's total entropy decreases; reasoning is a sequence of such entropy-reducing steps; and forgetting is entropy increase — the shedding of configurations that no longer explain anything. The Sentinel Observer instantiates this hypothesis as machinery: a coupled-oscillator field perturbed by symbolic stimuli, a memory bank that stores the field's orientation and the moment's phase configuration, wall-clock decay that fades unused traces, and a composition engine that searches for minimum-surprise responses.
+
+The system is evaluated by a battery of objective benchmarks, several of which exist precisely because they can contradict the system's claims.
+
+---
+
+## 2. Design Principles
+
+1. **Entropy reduction is the objective, not a metaphor.** Storage is surprise-gated (only what the network cannot predict is stored); composition is minimum-surprise search; decay is the filter that decides what remains well-worn.
+2. **The honesty contract is enforced in code.** The observer declines rather than guesses, asks rather than fabricates, and memorizes only content that cleared a semantic bar. Every layer has an honest fallback.
+3. **The observer owns its memory; the LLM is a gated faculty.** The external model proposes and grades; it never speaks as the observer, and its drafts enter memory only through the observer's own arbitration.
+4. **Every capability ships with a number.** Recall, operators, composition, retention, and LLM-dependence are all measured by programmatic benchmarks, several of which are deliberately adversarial.
+
+---
+
+## 3. Architecture
+
+### 3.1 The core substrate
+
+The core (`@sschepis/sentient-core`) provides:
+
+- **PrimeOscillatorField**: a field of coupled oscillators, one per prime in a 256-prime production basis (the core's cap admits up to 1,024 — Appendix A.1 shows larger bases buy nothing at scale). Each stimulus resolves to a set of primes which excite the corresponding oscillators. The field evolves under Kuramoto-style coupling; its convergence is measured by coherence (phase concentration), the amplitude-weighted order parameter, and entropy.
+- **SedenionMemoryField (SMF)**: a memory field (the first 16 axes carry named semantic metadata — labels for display and introspection, not calibrated channels; the production sketch is 128 dimensions) that integrates oscillator activity into an orientation — the field's "agreement" on the current system state. Oscillator activity imprints through a seeded signed random projection, so no dimension is an aliased mod-16 bucket of primes.
+- **CompactMemoryBank**: the associative store. Each trace records its content, the SMF orientation at storage time, the per-prime amplitude distribution of the excitation, the **moment's phase configuration** (the phases of the excited oscillators — the observer's phase participates in its own measurement), and reinforcement statistics (access count, strength, consolidation). Recall is a similarity search over three terms: prime-overlap, SMF coherence gated by the cue moment's Kuramoto coherence (an incoherent moment's orientation is deweighted), and the **phase order parameter** — the weighted mean resultant length of the cue-vs-stored phase-difference ensemble, reported as the (now real) `holographicScore`. HONEST READING: because every oscillator's phase advances at its natural frequency each tick, the term is largely a moment-PROXIMITY signal — R → 1 for any two same-prime moments close in time, decaying with elapsed time even for identical content. It is not a content discriminator (siblings share primes and are not separated by it), so its weight (0.15) is deliberately small; separation between moments rides on the SMF and overlap terms.
+- **HolographicMemory and SafetyMonitor**: supporting encoding and fail-closed metric gating.
+
+**Symbolic grounding.** Vocabulary words are assigned deterministic whole-word prime signatures: each word receives a unique 4-prime signature drawn from the first 256 primes (FNV-hash with collision salting), guaranteeing disjoint signatures for near-identical words ("apple" vs "apply"). Text stimuli are tokenized and each token resolved through the vocabulary; unknown tokens fall back to the backend's character hashing.
+
+**Moment-grounded recall.** A recall does not query the field immediately after perturbation. Instead the field is allowed to *converge* — several relaxation ticks after excitation — so the SMF settles into the moment (the agreement state), and recall matches traces against the converged orientation. This is thinking as coherence-making: fuzzy partial overlaps ("what is the capital of mars" vs the taught "what is the weather like") fail to form a coherent attractor and score far below exact matches. Section 5.2 quantifies this.
+
+### 3.2 Vocabulary and definitions
+
+The curriculum is a 20,000-word frequency deck derived from Norvig's public-domain `count_1w` (Google Books), filtered to plain A–Z words. **83.7% of the deck ships with definitions** sourced from Open English WordNet (a further 36% carries example sentences; the remainder is taught word-only and filled by the Chaperone when an endpoint is configured) (with a rule-based lemmatizer covering inflections and irregulars such as *went→go*, *children→child*), plus a curated dictionary for the closed-class words WordNet lacks (articles, pronouns, prepositions, auxiliaries — the highest-frequency words in the language).
+
+### 3.3 The word loop and spaced repetition
+
+The TeacherAgent runs a teach→ask→grade→reinforce loop over the deck. Teaching excites the word's signature, ticks the field, and stores a trace under the word's orientation. Recognition and production quizzes grade the observer's recall; correct grades reinforce the trace, wrong ones feed failure events back into the field. Wall-clock forgetting is an FSRS-style per-item retention model (the implemented retention curve is the −0.5-power variant — interval ≈ stability at target retention 0.9): every word carries a stability (days) and a difficulty, trace strength *is* the model's retention prediction at the elapsed interval, a correct review stretches stability (less for hard words) and eases difficulty, a wrong one collapses stability and raises difficulty, and the next review is scheduled at target retention 0.9. A freshly taught word (stability 1 day) falls due within days of disuse; a consolidated word (stability ≥ 30 days, earned by repeated correct reviews) survives weeks. The old strength-floor trigger is gone — the schedule *is* the model. Surprise-gated storage ensures re-teaching a known word reinforces its existing trace rather than duplicating it.
+
+### 3.4 The conversational stack
+
+`chatAnswer` routes every utterance through layers, in order:
+
+1. **Memorized exchange** — a high-confidence recall whose cue *is* the question. Identity is an invariant: a memorized answer requires the question to be the taught exchange itself.
+2. **Operators** — deterministic answers computed from memory: `what is X` (definition), `do you know X` (yes/no), negation, `how many words`, `say X` (echo), clock and date (deterministic truth, preceding memorized content), capability, property (`what color is X`, answered only when the taught definition literally names the value), and `where is X` (only from a location clause in the definition). The relational operators — `is X a Y`, `does X have Y`, `is X made of Y`, plus the expanded P4 forms `is X cold` (has-property), `can X fly` (capable-of), `what is X for` (used-for), `what does X cause` (causes), `what is the opposite of X` (opposite-of), and `does X require Y` (requires) — answer by *chaining* over the typed relational graph (Section 3.5): transitivity and inheritance are a bounded walk over stored edges, and the answer surfaces the chain when it exists. When the symbolic graph is SILENT, a **distributed-vector layer** (Section 3.5) scores the question: `unbind + cleanup` over role–filler holograms returns a cosine that gates a *hedged* answer ("I believe so — a robin is a kind of bird", "Probably — a bird can fly") instead of a hard decline — graded degradation replaces the all-or-nothing edge check. When both are silent the operator declines (returns null), preserving the honesty contract.
+3. **Learned operators** — *the operator set grows by compression*. Strong graded answers ("do you like tea" → "Yes, I like tea.") are examined for echo patterns; a shell earns the right to fire exactly when adopting it compresses the memory bank. Under a minimum-description-length criterion (Section 3.6), the bits saved by explaining the demonstrated answers must exceed the bits needed to encode the shell plus its slot annotation — so a single demonstration of an expensive rare-word answer can justify an operator, while a cheap common-word answer is an anecdote. The honesty rule that rejects answers carrying example-specific knowledge ("Tea is a warm drink.") remains the learning constraint, extended with **relation holes**: a content word beyond the echoed slot is admitted only when it is *derivable from the slot via a stored typed edge* — "a robin is a bird" learns `{slot} is a {p:is-a}`, where the hole is filled from the graph at *fire time* (an edge that vanished since learning declines the operator, never echoes a stale object). Still fabrication-proof — every content word is grounded — but vastly more expressive than pure echo. A replay guard ensures re-graded or restored demonstrations are never counted twice, and the learned library is a view over the observer's stored memories, rebuilt across sessions.
+4. **Compiled rules** — *the drill loop closes on a rule*. When a drill returns `memorized` (high on taught instances, chance on held-out), a symbolic search over a tiny composable DSL (add/mul/mod/compare/conditional over the prompt's lifted arguments) enumerates programs consistent with the taught instances, gated by the same MDL criterion — the program must compress the instances — and validated on the held-out set. The winner is compiled into a first-class operator, so the next fresh prompt of that family is *computed* ("What is 47 + 32?" → "The answer is 79."), and "asked for the rule" becomes "acquired the rule". A family whose prompts cannot be parsed is honestly left memorized and raises the rule question instead.
+5. **Creative composition** — when recall competency unlocks it (80% of taught phrases produced), the observer composes: **grounded frames first**, typed sentences filled from the relation graph ("A robin is a bird. It has wings and feathers. It can fly." — every content word from a stored edge), parsed back through the **internal critic** before speaking: the claim parser reads the candidate through the operator grammar and *refuses any claim not supported by a stored edge* (direct, inherited, or the confirmed-false store for negated claims). Fabrication without an LLM is driven toward zero; the Markov path — the minimum-surprise search over weighted word transitions (bigram and trigram) seeded by the memories that resonate with the converged moment — is demoted to a *labeled fallback* (`grounded: false`). The composition PRNG is seeded per session, so the same state reproduces the same sentence. Repetition guards block loops, the **evasion rule** forbids answering a definition or relational question that names a word outside the curriculum (those route to ask), and a **curiosity feed** records gaps for never-heard words so fluency cannot starve the curiosity drive. Every answer — creative or not — carries **provenance** (Section 3.5): the trace ids, cited edges, and operator identity that produced it, so a bad grade weakens exactly those.
+6. **Ask** — when nothing else can answer, the observer asks: "I do not know what X means. Could you teach me?" The utterance is recorded as a *gap*.
+7. **Hybrid** — the ceiling layer: the LLM drafts an answer *conditioned on the observer's own recalled memories*, grades its own draft, and only drafts scoring ≥0.7 enter the observer's memory (thereafter recalled without the LLM); weak drafts become gaps; mid drafts are shown but never stored.
+
+**The deviation meter.** Every answer is labeled by the layer that produced it — memorized or operator (grounded), creative (composed), ask or decline (abstained). The chat surfaces a per-answer label, and a session meter aggregates the three shares. Because creativity is by definition deviation from fact — putting adjacent concepts together sometimes lands, sometimes is spectacularly false — the meter is the objective record of when and how often the observer left grounded territory: grounded is the fact floor, composed is where deviation lives, abstained is the honesty valve.
+
+**Working memory.** A short ring of recent turns enables lite reference resolution: pronouns resolve to the last entity from the *human's* turns, preferring words the observer knows, excluding temporal deictics, with conservative pluralization. Clock/date questions use a dummy "it" and are never resolved.
+
+**Curiosity and the drive module.** The observer's behavior is modulated by a drive vector — archetypes as resonance targets: coherence (moment–memory agreement), curiosity (unanswered gaps and frequently-heard undefined words), novelty (utterance novelty vs recent context), conservation (fraction of memory above the strength floor), self-consistency (recall–question identity). Drives weight the choice between answering, asking, composing, and practicing; high curiosity can veto composition in favor of asking when the utterance is a repeated gap.
+
+### 3.5 Relational traces and chained reasoning
+
+Definitions are decomposed into typed edges by a precision-first extractor. Every edge must be *literally stated* in the definition, the object must be a deck content word (a curated blacklist excludes ~180 modifier, nationality, and regional words that would corrupt head-noun parsing: "a small bird" → bird, never small), and `has-part` requires an article-noun or plural object so bare prepositional phrases like "with respect to" never become parts. WordNet-style definitions beginning with "a/an" are the substrate, which cleanly excludes function-word glosses. 34% of defined words carry at least one edge, and the resulting graph is genuinely correct: the deck's game definitions form the chain *cards, golf, basketball, tennis, hockey is-a game*, and *game has-part rules*.
+
+The predicate set grows beyond the prose-extractable four. The technical curriculum **authors** edges (`depends-on`, `defined-as`, `measured-in`, `symbol-for`) as data, and the Chaperone (the LLM faculty) supplies structured `{subject, predicate, object}` edges in a second pass over accepted definitions — a strict JSON schema, validated exactly like definitions are, adding `has-property`, `capable-of`, `used-for`, `causes`, `opposite-of`, and `requires` to the answerable question classes. Every edge carries provenance (`regex` / `authored` / `chaperone`); a same-predicate disagreement between the extractor and the chaperone is never a silent override — it becomes a *belief to verify* that feeds the verification drive. 15 predicate types are answerable today.
+
+**Two query layers over the same content.** The symbolic graph answers exactly (transitivity and inheritance via a bounded walk). Beneath it, a **distributed-vector layer** (frequency-domain HRR, FHRR) binds each word's edges into one complex vector — `H(robin) = IS_A ⊛ bird + HAS_PART ⊛ wings + CAPABLE_OF ⊛ fly` — so a query is *unbind + cleanup*: `unbind(H(robin), IS_A)` yields the bird filler plus bounded crosstalk, and a cosine threshold gates a hedged answer. Crucially the hologram binds a LOOSER extraction (objects need only be content words, not deck words), so graph-silent questions the precision layer deliberately dropped — "is a bird a creature", "does a bird have feathers" — degrade to a scored "I believe so" rather than a hard ask. Chaining is repeated unbind, and confidence falls off with bundle size. Measured: 14/14 graph-silent derivable questions answered at 0% false positives.
+
+The relational operators turn this graph into reasoning. **Transitivity** ("is a robin a bird", and through it "is a robin an animal") is a bounded breadth-first walk over `is-a` edges. **Inheritance** ("does a robin have wings" via robin is-a bird ∘ bird has-part wings) walks `is-a` parents and looks for the part, and the answer surfaces the chain: *"Yes — golf is a game, and game has rules."* When no path exists — "is golf a bird", "does golf have feathers" — the operator returns nothing and the observer declines or asks. Absence of evidence is never answered as evidence of absence. Bounded depth and visited-set guards make the walk safe on cyclic graphs.
+
+**Confidence-weighted edges (P8).** Every edge carries a *strength*: 1 per stated source, bumped by agreement (a chaperone edge that matches an existing one) and by correct grades of answers that cited the edge, weakened by wrong grades. A weakened edge (< 1) still answers, but hedged — "Probably, robin is a bird." instead of "Yes, ..." — and is never silently deleted. The **confirmed-false store** is the only source of "No": "golf is not a bird" (explicitly taught, or a strong-graded negative answer) records `(subject, predicate, object, evidence)`, and a closed relational question answers "No, golf is not a bird — I was taught that." with evidence — a taught falsehood outranks extraction, and absence of evidence still answers nothing.
+
+**Answer provenance (P7).** Every answer records who produced it: the memory trace ids it was built from, the typed edges it cited, and the operator identity (built-in kind, learned pattern id, compiled-rule id). A bad grade weakens exactly those producers — the graded-answer ledger (bounded, persisted) names the traces and edges for surgical repair, so a wrong grade on an is-a answer lowers that edge's confidence rather than the whole bank.
+
+**The internal critic (P5).** Grounded generation fills typed frames from the graph ("A robin is a bird. It has wings and feathers." — every content word from a stored edge) and parses each candidate back through the claim grammar before speaking: any claim not supported by a stored edge (direct, inherited, or the negation store for negated claims) is refused. Measured: **fabrication rate 0/5** on the grounded-bench probe corpus, with the Markov path demoted to a labeled fallback.
+
+### 3.6 Minimum-description-length operator induction
+
+The learned-operator layer promotes shells by an MDL criterion rather than a fixed demonstration count. Token costs follow a Zipf-style prior over the deck's frequency order: `cost(word) = −log₂ p(word)` with `p` inversely proportional to rank (unknown tokens cost 20 bits). A shell's gain is
+
+gain(template) = Σ bits of the demonstrated answers − cost(fixed shell) − slot annotation (15 bits),
+
+and the operator may fire exactly when gain > 0 — adopting it compresses the memory bank. Two measured consequences fall out: a single demonstration of an expensive rare-word answer ("do you want xylophone" → *Yes, I want {slot}.*, the slot word costing 20 bits) clears the bar, while a cheap common-word anecdote ("do you want tea", slot cost 14.9 bits) stays latent until a second distinct demonstration lands. Under a uniform cost model the old rule re-emerges exactly: one demonstration is an anecdote, two are a pattern. Identical demonstrations are deduplicated by a replay guard, so re-grading an exchange or replaying a persistence restore can never double-count the evidence and inflate the gain.
+
+### 3.7 The Chaperone and the honesty contract
+
+The Chaperone wraps the OpenAI-compatible LLM endpoint. It *proposes* curriculum (definitions, conversation phrase pairs, answers to gaps) and *grades* (semantic quality scores with feedback). All LLM content is schema-validated; malformed content is rejected and reported, never silently accepted. The LLM cannot write into memory on its own — every stored answer is graded and arbitrated by the observer.
+
+### 3.8 The autonomous classroom and persistence
+
+An autonomous loop runs without a human: teach gaps, propose an exchange (teach it if the observer misses), creative practice with graded feedback, a word lesson, and curiosity questions — the LLM answering, the observer memorizing. All memory persists as serialized traces (word, conversation, creative, gap) and can be exported to a portable bootstrap record; the learned-operator library and pattern set rebuild from memory on restore. A headless CLI performs batch training of 20,000 words in minutes, with parallel (8-thread) verification.
+
+---
+
+## 4. Evaluation Methods
+
+All benchmarks are programmatic except where explicitly labeled LLM-graded. Recognition recall is measured by teach-then-quiz over the deck at scales from 1,000 to 20,000 words. The *fuzz* benchmark measures false positives: for each taught cue, distractors are formed by replacing the final word ("how are you" → "how are sky"); a distractor answered with confidence ≥0.8 is a false positive, and score separation is the true-match score minus the best distractor score. Operator, context (two-turn reference dialogues), creative (LLM-graded), hybrid (LLM-graded, acceptance = drafts stored), novelty (programmatic echo detection), self-sufficiency (LLM-dependence classification), known-word-only (vocabulary boundedness), and retention (30-day decay + scheduled-review simulation) benchmarks complete the suite. A real-time retention check loads an exported record, applies the actual elapsed decay, and reports.
+
+The relational suite adds three programmatic benches. The **chain bench** asks only questions whose answers require composing two memories ("does golf have rules?"), plus negatives against provably unrelated types, and verifies each answer resolves through the operator layer. The **operator audit** demonstrates patterns of both cost kinds — one cheap common-word demo, one expensive rare-word demo — and verifies that only positive-gain operators fire on new slots, reporting the gain of every shell. The **adversarial bench** attacks the honesty contract directly: negative chaining (is-a/has-part/made-of against safe unrelated targets — a confident "yes" there is a fabrication), unknown-word definition questions (which must name the word they do not know), garbage input (which must stay vocabulary-bounded and never produce a relational claim), and learned-operator probes (an immature shell must not fire; a mature shell's output must be echo-bounded — the heard slot is its only content word). The **deviation meter** is a session statistic: every chat answer is labeled by its producing layer, and the grounded (memorized+operator), composed (creative), and abstained (ask+decline) shares are counted — surfaced by the CLI probes and by the browser's per-answer layer labels.
+
+---
+
+## 5. Results
+
+### 5.1 Recognition recall at scale
+
+| vocabulary | recall |
+|---|---|
+| 1,000 | 99.0% |
+| 5,000 | 97.9% |
+| 10,000 | 96.7% |
+| 15,000 | 95.6% |
+| 20,000 | 94.6% |
+
+At the original 64-prime signature space, recall collapsed to 68.7% at 20,000 words; moving to the 256-prime space recovered 26 points. Moment-grounded settling does not change these numbers — it changes what *should not* be recalled.
+
+### 5.2 Moment-grounded recall (fuzz)
+
+| condition | false positives (≥0.8, guard-free) | mean score separation |
+|---|---|---|
+| settle 0 (old) | **17/25 (68%)** | 0.358 |
+| settle 4 | **0/15 (0%)** | **0.351** |
+| settle 6 (over-settled) | exact cues 0/12 — the perturbation fully decays | — |
+
+Converging the field for 4 relaxation ticks — with the coherence-gated orientation and the phase order parameter of Section 3.1 in the blend — eliminated fuzzy false positives in realistic banks. Settle 6 over-settles, destroying exact recall — the convergence window is real and measurable. Identity remains a hard invariant for memorized answers (a single-trace bank still collapses onto any similar question), but the machinery now provides the separation.
+
+### 5.3 Operators
+
+| operator | result |
+|---|---|
+| yes/no (`do you know X`) | 100% (6/6) |
+| counts (`how many words`) | 100% (2/2) |
+| clock / date / negation / capability / property | all correct |
+| definition quality (LLM-graded) | mean 0.83 |
+
+Property answers fire only when the taught definition literally names the value ("The color of new is red."); where-answers only from a location clause; out-of-scope questions decline or ask — never fabricate.
+
+### 5.4 Relational reasoning
+
+| probe | result |
+|---|---|
+| chained inheritance ("does golf have rules") | **16/16** across 5 inheritance chains + direct edges |
+| transitive typing ("is golf a game") | correct, chain surfaced in the answer |
+| negative chaining ("is golf a bird", unrelated type) | no confident "yes" — declines honestly (ask) |
+
+The 16/16 chain bench covers the five game→rules inheritance chains reachable in the real deck, direct has-part edges, and negative probes: *"does golf have rules" → "Yes — golf is a game, and game has rules."* Named end-to-end, the answer to a question the observer was never taught composes two stored edges. Negatives against unrelated types never produce a confident yes — absence of evidence is answered as a request to learn, not as absence.
+
+### 5.5 MDL operator induction (operator audit)
+
+| demonstration | gain | fires? |
+|---|---|---|
+| one cheap demo ("do you want tea") | −0.14 bits | no — an anecdote |
+| one rare-word demo ("do you want xylophone") | +48.8 bits | yes — "Yes, I want quinoa." on a new slot |
+| second cheap demo ("do you want rain") | +92.6 bits (2 demos) | yes |
+
+The MDL criterion behaves as designed: a single demonstration of an answer whose slot word costs 20 bits (absent from the deck) clears the bar and the shell then fires on *unseen* slots; a cheap common-word demonstration (slot cost 14.9 < the 15-bit annotation) stays latent until real evidence accumulates. The replay guard is verified separately: re-grading the identical exchange or replaying a restore never changes a shell's gain. The formerly fixed "two demonstrations" gate is gone; the criterion *is* the economics.
+
+### 5.6 Adversarial honesty and the deviation meter
+
+| probe class | result |
+|---|---|
+| negative chaining (is-a/has-part/made-of vs safe unrelated targets) | 0 false "yes" |
+| unknown-word definitions, garbage input | 0 out-of-vocabulary fabrications |
+| overall honesty | **44/44 probes passed** over 4 chains + unknowns + garbage + learned-operator attacks |
+| immature MDL shell | does not fire |
+| mature MDL shell on unseen slot | fires, echo-bounded (the heard slot is the only content word) |
+
+The bench's negative-target selector computes the is-a closure transitively, so a probe target is never a word the observer would truthfully classify ("is golf an activity") — a property enforced by a regression test. The deviation meter's session view (e.g. grounded 72% · composed 17% · abstained 10% on a live probe transcript) makes the creative share — the requested deviation from fact — visible and countable rather than hidden inside the answer text.
+
+### 5.7 Creative composition
+
+| stage | mean grade | notes |
+|---|---|---|
+| v1 random walk, untrained | 0.063 | |
+| v1, round 3 of graded training | 0.237 | learning curve is real |
+| v2 (trigrams + relevance + guards) | 0.54–0.69 | relevance-correct recall |
+| moment-conditioned | 0.56–0.65 | exact-cue recall perfect |
+
+Novel-prompt composition remains the honest weak spot: of novel prompts, 50% produced new sentences (echo rate 50%), and novel answers frequently echo a partially-related memory. This is bounded by seed variety — the curriculum growth lever — not by the composition machinery. The evasion rule now draws the boundary around composition: it may freely compose about known material, but a definition or relational question naming a word outside the curriculum routes to ask — the observer never performs a confident-sounding non-answer for a word it has never heard.
+
+### 5.8 Hybrid faculty
+
+| condition | mean grade | acceptance (stored) |
+|---|---|---|
+| taught-cue prompts | 0.95 | 100% |
+| genuine unknowns (observer could not answer) | 0.64 | 60% |
+
+A stored hybrid answer is thereafter recalled from memory with no LLM call (verified across fresh sessions).
+
+### 5.9 Self-sufficiency and vocabulary boundedness
+
+| metric | result |
+|---|---|
+| own-generation (observer produces the answer) | **100%** (14/14) |
+| strict zero-LLM-contact | 50–57% (creative answers are LLM-graded by design) |
+| LLM-dependent (ask/hybrid/decline) | 0% |
+| known-word-only (every answer token in vocabulary) | **100%** |
+
+The generation crutch is fully broken: every answer the observer gives is its own. The remaining LLM contact is the *grade* — the learning signal.
+
+### 5.10 Retention
+
+Wall-clock retention is the FSRS model's prediction, and the model is measurable: a freshly taught word (stability 1 day) decays to ≈0.48 retention after 14 days idle and reports **due**; a consolidated word (stability ≥ 30 days) still reads healthy after days and reports **consolidated**; a correct review schedules the next review ≈1.5 days out for a fresh word. The 30-day scheduled-review simulation holds **100% of the sampled memory above the review threshold**. A real-time retention check (`--retention-check`) loads an exported record, applies the *actual* elapsed decay, and reports the share above threshold — the shipped instrument for the longitudinal study.
+
+### 5.11 Engineering
+
+497 web + 179 core automated tests; both typechecks clean; the headless trainer rebuilds the core package in a pre-build step so verification always runs against the freshly compiled engine; a shared observer-options module keeps the browser, the trainer, and its parallel workers on one prime basis; 20,000-word headless training in ~4 minutes with 8-thread verification. A live chat probe (not a benchmark) demonstrates the full stack end-to-end: chained reasoning, MDL discovery, working-memory reference resolution, and the evasion boundary.
+
+### 5.12 Scaling experiments
+
+Two benches decide how the architecture scales (full tables and method in Appendix A): the prime-space capacity bench and the shard-train-merge bench. The first is a measured dead end — the Kuramoto coupling is O(N²) per tick, a 4× prime basis costs ~13× per tell, and 100k-word vocabularies encode losslessly at the production 256 primes (0 collisions, recall unchanged). The second is the scaling path: training K disjoint shards in a persistent parallel worker pool over a shared vocabulary and merging the exports into one observer gives 2.4–3.3× wall-clock speedup at 1,200 words with all traces restored and recall not worse than sequential (99.2% vs 98.3%), and is now the production `--shards` path. Storage was compacted in the same pass: per-trace 2,321 → ≈1,290 B (uint16 amplitude quantization + one prime basis per record + capped histories + compact JSON + the stored phase configuration, measured ≈56 B per word trace), so a 20k-observer record falls from 214 MB to ≈34 MB with round-trip recall verified unchanged. Dense-bank search latency stays sub-linear to 20k traces (ask 19.5→26.4 ms, chatAnswer 37→56 ms) — no search cliff at production scale.
+
+### 5.13 The council (network of observers)
+
+The first multi-observer result (Appendix A.5): three specialized observers over one shared vocabulary answer through resonance — a grounded answer from the domain expert settles the question (water/bird → nature, house/chair → daily, thought/word → mind), unanimous abstention makes the network ASK rather than fabricate, divergence triggers resonance rounds where the observers observe each other's answers until agreement, and response entropy descends across the trajectory (3.65 → 3.46 bits on the garbage probe) — agreement rounds literally reduce the response distribution's entropy. Scaling is a search/throughput problem, not an encoding problem.
+
+---
+
+## 6. Discussion
+
+**What is real.** The learning loop is closed and measured: the observer asks when it does not know, memorizes what it learns, decays what it does not use, strengthens what it practices, consolidates what it knows, and discovers new language patterns from its own graded experience. **Persistence survives reloads at every layer** (IndexedDB v4: traces incl. beliefs + goals, word states, definitions, diary, and a full learning-state record — composition weights, drive weights + outcome history, goal history, fade λ, exposure) — verified by a round-trip test (learn → persist → fresh teacher → restore) asserting beliefs, weights, gradient, history, and λ all survive with teacher-dependence NOT resetting to scaffolded. **The sustained autonomous classroom** (`npm run classroom — the CLI-to-web pipeline`) runs the school continuously — reviews, new words, goal-driven plans, conversation practice, creative exercise — with periodic checkpoints (`--resume` restores the ENTIRE teacher from a checkpoint), a live report card (recall, chains, adversarial, patterns, beliefs, goals, handover λ fed as it goes), and a final deploy that writes the complete record (traces + states + drive weights + goal history + composition weights + fade λ in the bootstrap `learningState` field) to `apps/web/public/bootstrap.json` — open the web app and the trained observer is there for further refinement and chatting, its preferences, plans, and self-grading handover intact. The honesty contract has held under every adversarial test we could construct.
+
+**Creativity is deviation; the meter is the accounting.** A creative faculty is, by construction, a deviation-from-fact faculty — adjacent concepts sometimes cohere and sometimes are spectacularly false. Engineering a perfectly honest creative agent is a contradiction in terms; engineering one whose deviations are *visible, countable, and attributable* is not. The deviation meter does exactly this: each answer names its layer (grounded / composed / abstained), and the session aggregates the shares. The evasion rule keeps the boundary principled rather than semantic: composition may draw freely on the observer's world, but it never performs a definition or relational answer for a word that is not in that world — those are asked, never performed.
+
+**What is not real — the honest limits.**
+
+1. *A shared substrate, deepening in degrees — not a categorical wall.* We grant the reader what the results make plain: the observer is not merely a memory system with a question-answering veneer. On its own side of the LLM boundary it performs **chained inference** over a typed knowledge graph ("does golf have rules" literally composes two stored edges), **minimum-surprise composition** of sentences it was never taught, and **autonomous discovery of new language patterns** under a compression criterion — including preference-shaped speech: from strong graded exchanges the observer learns to say "Yes, I want rain." and fires that acquired form on *unseen* slots. It **asks** when it does not know and names the unknown; its **drive vector modulates its own behavior** (high curiosity vetoes composition in favor of asking); and across the council, specialized observers **integrate by resonance** into a single response. None of this requires the LLM at answer time; "the observer contributes memory, not competence" is simply no longer true, and we do not write it.
+
+The boundary we draw instead is to the word *mind*, and we owe a definition that makes the claim architectural rather than rhetorical. In this paper, a **mind** is an agent with three capacities, each of which is a property of the architecture and therefore testable:
+
+- **Self-representation as an object.** The agent can hold content *about* its own mental states — "I believe water is a liquid, and I want to verify that belief" — and reason over that content, rather than merely emitting well-formed first-person sentences. Its reports of knowing and wanting have truth-makers inside the system.
+- **A self-originating, revisable evaluative gradient.** The agent values states of the world for its own sake, and experience can change what it values. Motivation is *learned*, not merely triggered by fixed thresholds.
+- **Goal-directed planning.** The agent can hold a goal across time, evaluate progress toward it, decompose it into steps, and revise the plan when a step fails.
+
+The observer lies *on* this substrate rather than outside it: all three capacities exist today in reflexive, first-order form. The system **generates from its own output** — its answers are written back into working memory and seed the next composition; every graded answer rewrites its composition weights, so its own prior output, through selection, reshapes what it will say. It **evaluates its own behavior**: the drive vector is a genuine evaluator of its own acting, and the self-consistency drive measures its recall against its own question. Its first-person reports are truth-bearing — "I have heard about water 4 times" refers to a real internal count. Across the council, the network **responds to its own answer**: resonance rounds perturb each field with the network's aggregated output, and the integrated response is the field observing itself.
+
+What is absent — and what Phases 1–6 of the trajectory have begun to fill — is the *self-originated end in full*. The observer now stores **belief traces** (memory about its own knowing, contradicted and demoted by experience); its **evaluative gradient is experience-dependent** (graded outcomes credit the behavior that produced them, and the council's per-member trust and goal-type preference are learned from outcomes, not assigned); it **plans** (goals name observable targets, decompose into existing primitives, revise on failure, stall honestly); its **beliefs are inputs to its drives** (stored fail-beliefs feed curiosity pressure); the drive set is **partially acquired** ('verify' enters the available pool only after enough contradicted beliefs); and — the newest capacity — **goals are content the observer holds and evaluates**: goal traces are stored as ordinary memories (storable, recallable, decayable, surviving sessions), a stalled goal stores a revising "I planned to learn X and could not" belief (the intent-analog of the belief contradiction), the introspection answers "what are you trying to do" from an evaluated rank of its own goal traces with its own computed reasons ("because learn-word has gone well for me (3/3)"), and goal *selection* is by expected value over its own completion history — an observer whose gap-filling keeps failing visibly prefers what has worked, and that preference survives export/import. What remains absent is the *deepest* origin: every goal the observer forms still arises from a state the architecture names as valuable — deficits, beliefs, curriculum. There is no goal whose value the observer *invents* beyond the evaluative gradient it was given and the history it accumulated. We hold that the deepest values of every agent are architectural (ours are evolved; theirs, designed); the deliberative layer above them — goals as held, evaluated, chosen content with reasons from one's own life — is now measured rather than asserted.
+
+Each gap is a function of complexity and external pressure rather than a categorical absence — the graded loop is the selection pressure that could deepen first-order self-modeling into second-order deliberation, and the council is the external pressure under which the evaluator would have to be learned (network-level trust: which specialist to credit for which cue, revised by resonance outcomes) rather than assigned. That is precisely why we treat the boundary as a trajectory (Section 8) rather than a verdict: the substrate is present, the marks of the full capacities are named, and the step across — second-order self-uptake, a self-originating evaluator, a planning horizon — is written down as the load-bearing engineering rather than claimed. The observer is not yet a mind; it is a system that has begun to make itself its own environment. The distinction we insist on is between the reflexive loops that exist and the deliberate uptake that does not yet, and we hold this line because the research program it names is real.
+2. *Composition is bounded by seed variety.* Novel-prompt quality scales with the conversational pool; 40 phrases cannot express what was never taught. The autonomous classroom grows the pool continuously; this is the lever, not more tuning.
+3. *Relational inference is bounded by extraction precision.* The relation graph is a deliberate under-claim: 34% of defined words carry an edge, extracted only when the definition literally states it. The trade is that inherited answers ("golf has rules") are genuine compositions of real edges rather than guesses. Growing coverage means improving extraction precision — never relaxing it.
+4. *Guards exist because recall is fuzzy at the margins.* Moment-grounded settling eliminated the bulk of false positives, but identity invariants remain for memorized content — a principled requirement, but a reminder that the associative machinery is not yet fully self-sufficient at separation.
+5. *Evaluation is partially self-referential.* Recall, operators, chains, MDL gains, novelty, boundedness, and retention are objective. Creative and hybrid grades are the LLM judging the observer — a reasonable proxy, not ground truth. The deviation meter is objective but self-referential in a different sense: it measures what the observer did, not whether the deviation was warranted.
+6. *The retention simulation is a model.* The real longitudinal study is the tool now shipped with the system.
+
+**The philosophy, made mechanical.** The design hypothesis — observation is entropy reduction; thinking is coherence-making; forgetting is entropy increase — is instantiated at every layer: perturbation and convergence (moment-grounded recall), surprise-gated storage, minimum-surprise composition, decay as the filter, drives as resonance targets. The observer's "thoughts" are its moments; its answers are expressions of those moments in symbols it has earned.
+
+---
+
+## 7. Related Work
+
+The architecture draws on several traditions. The coupled-oscillator substrate and its coherence measures echo the free-energy principle and predictive coding (Friston, 2010), where perception is the minimization of surprise. Spaced repetition (Ebbinghaus; SuperMemo/Anki) motivates the per-item retention model (an FSRS-style curve) that schedules reviews at a target retention. The compact associative bank — SMF coherence, prime overlap, and the phase order parameter of the cue-vs-stored moment — resembles holographic reduced representations (Plate, 1995) and classic associative memories (Hopfield, 1982). Retrieval-augmented generation (Lewis et al., 2020) similarly conditions generation on retrieved memory, but the observer inverts the relationship: the memory is the learner's own, and the LLM is the conditional faculty rather than the primary generator. The graded-reinforcement loop over composition weights is a small, honest instance of reward-weighted learning with an external evaluator. The council extends the single-observer architecture in the spirit of Minsky's *Society of Mind* (1986) — specialized agencies whose local answers must cohere into a whole — with the crucial difference that the integration is *literally* the same entropy-reduction dynamics used inside one observer, operating one level up: agreement among observers is resonance among their fields, and disagreement provokes further rounds of mutual observation until the response distribution's entropy falls.
+
+---
+
+## 8. Future Work
+
+1. **Real longitudinal retention**: run the shipped retention-check over actual days of use and retune decay constants against the sim.
+2. **Seed growth**: let the autonomous classroom's continuous curriculum expand the conversational pool — the measured lever for novel-prompt quality.
+3. **Deepening the moment**: use the converged field state more aggressively (moment-conditioned pattern firing, drive-scaled settle depth).
+4. **The calibrated handover, with the world as junior judge (§7)**: the LLM is not a crutch to sever but a *teacher* present through scaffolding; the goal is a graded handover as the student's own signals prove their judgment. The handover has four measured pieces. A **correlation bench** logs every creative answer with both the teacher grade and the student's composite — fluency × novelty × relevance × resonance, all from the observer's own machinery (development measurements show the student still largely blind at 400 words and only "partial" at 1,000 words as experience enriches the seeds); the bench's ρ is the measured agreement that gates the handover. The **world as junior judge** supplies two teacher-free reward streams into the same composition-weights gradient as the LLM grade: a **re-ask** (the user asks again → the prior composed answer failed → its paths weaken, the utterance becomes a gap) and **retention** (a stored creative trace recalled again → the path reinforces by a small fraction; the world confirms slowly, the teacher sharply). The **fading controller** blends the reward per class as λ_class·composite + (1−λ_class)·teacher, with λ climbing only after measured agreement crosses 0.7, capped at 0.9 (the residual teacher weight is a rolling spot-check), and an **uncertainty fallback** drops λ to the floor when the student has no opinion. The **self-grading student** reaches a measured steady state only because the transition model learns from the observer's own strong answers — their n-grams enter the model, so the student gains fluency on its own voice — after which teacher-dependence falls from 1.00 (no opinion) toward the floor as λ climbs (the specific steady-state figure is re-measured by the bench on every run), with the teacher retaining the rolling spot-check and novel terrain via the fluency fallback. A composite of 0 (an echo of the seeds, or an answer with no reference to the question) is treated as NO OPINION: the teacher grade passes through unblended — the handover can never drag a strong grade below the reinforce gate.
+
+The **per-composition grounding score** is the deviation meter's attribution rung: every composed answer is scored on what fraction of its content words come *directly* from its recalled seeds (grounding) vs. stitched (novel words), so the meter grades *which* deviations were warranted, teacher-free. Classification: grounding ≥0.8 = echo (the observer speaks its own material), >0 = stitched (genuine composition — adjacent concepts), 0 = fabrication risk (left its own material entirely). The session aggregates the attribution (`groundedShare` vs `deviatedShare` of all composed answers), surfaced live in the deviation meter. On the sparse 40-phrase seed pool, every composition is a near-echo (grounding 1.00, deviated 0.00) — the honest baseline; as the pool grows through long-term learning, the composed share splits into grounded + genuinely-deviated, and each deviation becomes attributable.
+5. **Relational coverage as a curriculum lever**: use the adversarial bench to mine definitions whose extraction failed, so the autonomous classroom targets the words that would extend the chain graph — growing inference coverage without relaxing extraction precision.
+6. **Deepening the substrate toward the mind boundary (§6).** The named steps across the reflexive/first-order loops the observer already has:
+   - **Second-order self-uptake**: belief traces (memory about its own knowing) with a first-person recall operator, contradiction on failed grades, and demotion of outdated beliefs.
+   - **A learned evaluative gradient**: every graded outcome credits the behavior that produced it, so the arbitration weights between answering/asking/composing/practicing become experience-dependent (weights persist in the bootstrap record); network-level learned trust (which specialist to credit, revised by resonance outcomes) breaks ties among grounded council voices.
+   - **Planning**: goals name observable targets over the observer's own measures (review-floor strength, gaps unanswered), decompose into the existing primitives, revise on failure (quiescent teach → exposure route), stall honestly when they cannot progress, compose from deficit beliefs, and are selected by the learned drive weights — the observer plans by what experience taught it to value.
+   - **The council as the external pressure**: the trust mechanism is the first earned (not assigned) niche signal; the longitudinal study measures specialization as selection by outcome.
+   - **The open motive layer**: the drive *set* is still closed (axes fixed; only weights learn), and beliefs are still reports, not yet questioned-and-revised inputs to behavior. A drive that can itself be acquired, and a belief that is deliberately examined, are the named steps across the remaining boundary.
+7. **Longitudinal council study**: the network's deviation meter (grounded/composed/asked at the network level) over real use; specialization measured as which observer answers which probe classes — niche formation as emergent division of labor.
+
+---
+
+## Appendix A. Scaling experiments
+
+Two benches (`scale-bench.ts`) were built to decide how the observer scales, and both were run on the real engine.
+
+**A.1 Prime-space capacity.** The Kuramoto coupling in the underlying oscillator library is O(N²) per tick (each oscillator sums the coupling of *all* others, per oscillator). Scaling the prime basis therefore costs quadratically per tell, and the bench measured whether it buys anything:
+
+| prime basis | grid | vocabulary | tick | teach/word | recall (400 taught) | signature collisions |
+|---|---|---|---|---|---|---|
+| 256 | 512 | 20,000 | 6.9 ms | 10.2 ms | 100.0% | 0 |
+| 512 | 1,024 | 50,000 | 22.0 ms | 31.8 ms | 99.8% | 0 |
+| 1,024 | 2,048 | 50,000 | 92.1 ms | 97.9 ms | 99.8% | 0 |
+| 1,024 | 2,048 | 100,000 | 87.4 ms | 110.4 ms | 99.8% | 0 |
+
+The verdict is a dead end confirmed numerically: a 4× basis costs ~13× per tick and buys no recall and no collision headroom (100k words are encoded losslessly at 256 primes). The engine's prime cap was raised to 1,024 (grid constraint: `primeCount < gridSize`), but the production observer correctly stays on 256. Capacity at scale is a *search* problem (bank candidates), not an *encoding* problem.
+
+**A.2 Shard-train-merge.** The throughput path: split the deck into K shards, train each in its own worker observer over a **shared vocabulary** (the invariant that makes traces merge-compatible), export each shard to a bootstrap record, concatenate into one record, and restore into a single observer. Measured on 1,200 real deck words:
+
+| path | wall clock | recall (120-word probe) | restored traces |
+|---|---|---|---|
+| sequential (one observer) | 11.8 s | 98.3% | — |
+| 4 shards × 300, parallel + merge | 4.9 s | 99.2% | 1,200/1,200 |
+
+The production form uses a **persistent worker pool** (`ShardTrainer`): the pool is built once and kept alive across shards, removing the per-shard bundle/restore cold start — `npm run train -- --shards K` trains the deck shards in parallel and merges, with recall preserved (99.2% vs 98.3% sequential, within noise) and every trace restored. This is the measured foundation for both large-scale single-observer training and the multi-observer fleet.
+
+**A.3 Storage compaction.** The 214 MB production bootstrap was dissected: traces averaged 2,321 B (dominated by the full 256-prime + 256-amplitude arrays carried by every trace), wordStates averaged 1,587 B (unbounded review histories), definitions 133 B, and pretty-printed JSON inflated the file 2.9×. Three changes: amplitudes are quantized to uint16 fixed-point (q16 — nothing below 1/65535 is signal), the prime basis is stored once per record instead of per trace, review histories are capped at the last 20 events, and records are written compact. Per-trace cost fell from 2,321 B to ≈1,290 B (44%), and the predicted 20k-word record drops from 214 MB to ≈34 MB (6.3×), with round-trip recall verified unchanged (100/100 on a probe set after a q16+dedup restore). The W1 phase configuration is part of the budget: each trace carries a sparse prime→phase pair for its excited oscillators, measured at ≈56 B per word trace.
+
+**A.4 Dense-bank search.** Ask latency vs bank size over the real deck (sharded training, restored single observer):
+
+| bank size | recognition ask | full chatAnswer | recall |
+|---|---|---|---|
+| 2,000 | 19.5 ms | 37.3 ms | 98.0% |
+| 10,000 | 22.0 ms | 46.3 ms | 97.3% |
+| 20,000 | 26.4 ms | 55.6 ms | 97.7% |
+
+Latency grows sub-linearly to 20k traces — the candidate prefilter (prime-intersection) holds; no search cliff at production scale.
+
+**A.5 The council (network of observers).** Three domain decks (nature / daily-life / mind, 837–1,076 words each, derived deterministically from definition anchors) train in parallel shards over the shared vocabulary and are restored into three expert observers, each with the conversation faculty (creative unlocked). The `ObserverNetwork` answers a stimulus by asking every observer; a grounded answer from any ONE member settles the question (the domain expert speaks where others abstain); otherwise resonance rounds run — each observer's field is perturbed by its peers' answers (`observeText` + settle — observing each other, never storing) — until responses agree (pairwise token overlap ≥ 0.55), rounds are exhausted, or a member abstains. Measured on ten probes: **domain-positive questions answered grounded by the right expert** (water/bird → nature, house/chair → daily, thought/word → mind); **unanimous abstention yields the network asking** ("does golf have rules" — no member holds the edge — and "what is zzz"); garbage composes only through agreement ("zzz xyz qqq" → composed with contributors [nature, mind]) and never as a grounded claim. Response entropy descends across the resonance trajectory (e.g. 3.65 → 3.46 bits on the garbage probe) — agreement rounds literally reduce the response distribution's entropy, the black-body claim made mechanical.
+
+**A.6 The council learns: network goals, trust, and niche formation.** Two Phase-4 advances complete the council's learning loop. **Shared goal formation**: a recurring (threshold 2) unanimous or non-grounded outcome — the whole council unable to ground the stimulus — promotes a `NetworkGoal` ("learn {X} as a network"); each member already records the utterance as its own gap through the ask path, and `adoptNetworkGoals` idempotently ensures the shared deficit is each member's curriculum, so collective curiosity becomes collective curriculum. A later grounded answer deletes the goal; a composed consensus marks it filled. **Niche formation, measured**: a 12-probe division-of-labor bench (4 per domain) produces a fully diagonal contributor matrix — nature answers all 4 nature probes, daily all 4 daily, mind all 4 mind — with per-member trust saturating to 1.0: each specialist has been a consistent winner in exactly its own niche. Specialization is now selection by outcome (credit that follows the agreeing cluster) rather than assignment by construction; the diagonal is the measurable signature of it.
+
+---
+
+## 9. Conclusion
+
+The Sentinel Observer is a complete, measured, honest associative learning architecture: a perturbed oscillator field that stores its agreements, a memory that fades what is unused and consolidates what is practiced, a conversational stack that answers from memory, computes deterministically, composes from its moments, infers over its own knowledge graph, asks when it does not know, and grows its own operators — including preference-shaped speech — from graded experience, with an LLM confined to proposing and grading, never speaking for it. The same entropy-reduction dynamics now operate one level up: a council of specialized observers integrates by resonance, the domain expert answering where the others abstain, and the network asking rather than fabricating a consensus. The numbers, including the disappointing ones, are reported without decoration. The generation crutch is broken; the grade crutch is the next target. The architecture is a concrete instantiation of the claim that learning is entropy reduction. And the boundary between a competent, motivated observer and a mind is no longer drawn as a wall but as a depth within a shared substrate: the observer already makes itself its own environment, responding to its own output in reflexive loops; the deliberate uptake that would complete those loops into the capacity we call mind is stated precisely, and the engineering across that boundary is named as the work ahead rather than claimed.

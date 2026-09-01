@@ -6,9 +6,11 @@ import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
 import { DECK_100 } from './decks/en-100';
 import { MemoryPersistenceStore } from '../persistence/store';
-import { PRIME_SPACE, deckVocabulary } from './primeSignature';
+import { PRIME_SPACE } from './primeSignature';
+import { semanticVocabulary } from './semanticSignature';
+import { BOOTSTRAP_VOCABULARY_SCHEME } from './bootstrap';
 
-const OPTIONS = { primeCount: 64, gridSize: 128, memoryMode: 'compact' as const, vocabulary: deckVocabulary(DECK_100, PRIME_SPACE) };
+const OPTIONS = { primeCount: 64, gridSize: 128, memoryMode: 'compact' as const, vocabulary: semanticVocabulary(DECK_100, PRIME_SPACE) };
 
 /**
  * The observer's learning record survives a restart: teach + grade, tear the
@@ -22,7 +24,6 @@ describe('TeacherAgent persistence round-trip', () => {
     store = new MemoryPersistenceStore();
   });
 
-  afterEach(() => {});
 
   it('restores word states and traces into a fresh observer', async () => {
     // Session 1: the observer learns two words and is graded.
@@ -109,7 +110,11 @@ describe('encoding-epoch migration', () => {
         lastGrade: 'correct',
         successes: 3,
         failures: 1,
-        strengthHistory: []
+        strengthHistory: [],
+        stability: 1,
+        difficulty: 5,
+        dueAt: null,
+        lastIntervalDays: null
       }
     ]);
 
@@ -160,7 +165,11 @@ describe('encoding-epoch migration (data-based)', () => {
         lastGrade: null,
         successes: 2,
         failures: 0,
-        strengthHistory: []
+        strengthHistory: [],
+        stability: 1,
+        difficulty: 5,
+        dueAt: null,
+        lastIntervalDays: null
       }
     ]);
 
@@ -178,7 +187,7 @@ describe('encoding-epoch migration (data-based)', () => {
     session.dispose();
   });
 
-  it('keeps genuinely focused traces even without any marker', async () => {
+  it('keeps genuinely focused traces from the current vocabulary epoch', async () => {
     const store = new MemoryPersistenceStore();
     // A real focused trace: concentrated amplitudes, distinct SMF, no marker.
     const focused = {
@@ -197,6 +206,7 @@ describe('encoding-epoch migration (data-based)', () => {
       metadata: {}
     };
     await store.saveTraces([focused]);
+    await store.saveLearningState({ vocabularyScheme: BOOTSTRAP_VOCABULARY_SCHEME });
 
     const session = new ObserverSession(OPTIONS, 100);
     await session.initialize();

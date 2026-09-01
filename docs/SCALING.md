@@ -26,7 +26,7 @@ discrimination**, **trace memory**, and **persistence** — in that order.
   hash** (FNV-1a over the word string), not per-character hashing. 'apple' and
   'apply' then get unrelated signatures.
 - Raise `primeCount` to 32–64 (the field capacity exists: `MAX_PRIME_COUNT =
-  256`, grid ≤ 4096). More field primes = fewer cue collisions.
+  1024`, grid ≤ 4096). More field primes = fewer cue collisions.
 - Keep an **encoding table** (word → primes) persisted with the deck, built
   offline by a deck-builder tool — reproducible, auditable, no runtime magic.
 
@@ -37,10 +37,13 @@ deck stays above a measured baseline (see §4).
 ### B. Memory: lean traces + candidate filtering
 
 - **Lean traces**: stop storing a 17 KB holographic pattern per trace. Store
-  per trace: content, 16-dim SMF vector, prime signature, amplitudes — ~200
-  bytes. Keep the holographic layer for the *session field*; for ranking,
-  combine SMF cosine + prime-overlap Jaccard, with holographic correlation
-  computed only for the top candidates on demand.
+  per trace: content, SMF sketch vector, prime signature, amplitudes, and the
+  moment's sparse phase configuration — ~1.2 KB at the 128-dim width with q8
+  serialization (the phase pair adds ~a few hundred bytes for the active
+  primes). Keep the holographic layer for the *session field*; for ranking,
+  combine SMF cosine (gated by the cue moment's coherence) + prime-overlap +
+  the phase order parameter of the cue-vs-stored phase-difference ensemble —
+  the lean replacement for the per-trace holographic correlation.
 - **Candidate prefiltering**: recall first selects traces whose prime
   signatures overlap the cue (a Map from prime → trace ids). At 10K words a
   cue touches dozens, not 10K.
@@ -119,9 +122,126 @@ The fixes are all real physics: settling the field, focusing the excitation
 on the word's own signature, and imprinting the SMF.
 
 Remaining confusion pairs (6/30: apple/make, work/morning, sleep/friend,
-eat/friend, walk/apple, answer/apple) are 16-dim SMF orientation collisions
-between distinct 3-prime signatures — the next lever (phase 3) is candidate
-prefiltering + stronger holographic weighting rather than more primes.
+eat/friend, walk/apple, answer/apple) were 16-dim SMF orientation collisions
+between distinct 3-prime signatures — the fold imprinted `axis = j mod 16`,
+aliasing 16 oscillators onto each axis.
 
-CI gates now enforce: 100 unique deck signatures (collision audit) and
->= 70% top-1 recognition accuracy on 30 words.
+## 8. Phase 3 — projection fix (P3, measured results)
+
+The fold is replaced by a seeded signed random projection (JL) and the SMF
+sketch width is configurable. Measured on the same recognition gates:
+
+| Sketch | 1k words | 20k vocab (400 probes) | B/trace (q8) |
+|---|---|---|---|
+| fold-16 (legacy) | 99.8% | 99.3% | 999 |
+| jl-16 | 99.7% | **91.0%** | 1001 |
+| jl-64 | 99.8% | 99.0% | 938 |
+| **jl-128 (production)** | **99.8%** | **99.8%** | **1147** |
+| jl-256 | 99.8% | 99.8% | 1570 |
+
+The width-16 projection is a REGRESSION: the fold's mod-16 grouping acted as a
+regularizer correlated with the prime overlap. The knee is width 128 — it
+beats the fold baseline at 20k (99.8% vs 99.3%, 1 confusion vs 3) and stays
+under the 2048 B/trace footprint gate via q8 fixed-point SMF serialization
+(components stored as [-127, 127] integers + a scale factor, direction
+preserved to 7 bits; 100% restore-fidelity recall on re-import).
+
+The full `SemanticMemoryBank`'s fold-era weights (0.6 SMF / 0.4 holographic)
+let the decorrelated JL sketch tip recognitions (30-word gate 76.7% → 53.3%).
+Re-balanced to 0.4 / 0.6 — the holographic term is the strong exact-prime
+signal; SMF stays a subordinate context cue — the 30-word gate went to 100.0%.
+
+CI gates: 100 unique deck signatures (collision audit), ≥ 70% top-1 on 30
+words (now 100.0%), ≥ 70% on 1,000 (99.8%), and ≥ 70% on 400 probes of the
+20,000-word vocabulary at the production sketch width (99.8%).
+
+## 9. Phases 4-6 — the knowledge-acquisition stack (measured results)
+
+**Structured relation supply (P4).** The chaperone emits schema-validated
+{subject, predicate, object} edges in a second pass over accepted
+definitions, adding six answerable predicates (has-property, capable-of,
+used-for, causes, opposite-of, requires) on top of the four prose-extractable
+ones and the technical curriculum's. A same-predicate disagreement with the
+precision-first extractor is never a silent override — it becomes a
+`relation-conflict` belief that feeds the verification drive. Every edge
+carries provenance (regex / authored / chaperone).
+
+**Distributed-vector relations (P1).** A frequency-domain HRR (FHRR) layer
+binds each word's edges into one complex vector (H(robin) = IS_A ⊛ bird +
+HAS_PART ⊛ wings + CAPABLE_OF ⊛ fly); queries are unbind + cleanup, chaining
+is repeated unbind, and the hologram binds a LOOSER extraction (objects need
+only be content words) so graph-silent questions degrade to a scored hedge
+instead of a hard ask. Measured: 14/14 graph-silent derivable questions
+answered at **0.0% false positives** on a negative probe set (gate < 2%).
+Calibrated thresholds: cosine ≥ 0.5 → "I believe so", ≥ 0.32 → "Probably",
+below → ask.
+
+**Executable rule induction (P2).** The drill loop, which measured
+**16/16 memorized / 0 induced** at baseline, now searches a tiny composable
+DSL over the taught instances when a drill returns memorized: a program
+consistent with them, cheaper than the instances themselves (the same MDL
+criterion), and accurate on the held-out set is compiled into a first-class
+operator. Measured (24-concept bench, one round each): **12 rule-induced
++ 0 induced + 11 memorized + 1 unlearned** — addition, subtraction,
+multiplication, division, remainder, inequality, order-of-operations,
+absolute value, factor, even number, square, and percent each compiled an
+executable rule that answers fresh prompts ("What is 47 + 32?" → "The
+answer is 79.", "What is 12 percent of 400?" → "The answer is 48."; the
+measurement families — minute, second, liter, gram, and volume conversion
+— join the compiled set on their rounds). percent and volume became
+inducible once the DSL enumeration's per-operator budget stopped
+starving div/mul-based programs; place-value stays memorized honestly
+(its prompts have no parser).
+
+**The dispatch order** (chatAnswer): clock/date → memorized → operators
+(symbolic graph, then graded holographic fallback) → learned operators →
+compiled rules → creative → ask → hybrid. The ASK-rate audit over a 12-probe
+corpus spanning every layer: **17% ask (the two genuine unknowns), 83%
+zero-LLM answers**.
+
+Cross-feature: chaperone-supplied edges feed the hologram traces (P4 → P1);
+legacy 16-dim and production 128-dim traces both restore through the same
+bank (the fromArray width rule + q8 encoding marker); compiled rules and
+chaperone relations survive bootstrap export/import.
+
+## 10. Phases 7-10 — integrity and grounded fluency (measured results)
+
+**Answer provenance (P7).** Every answer records its producer — the memory
+trace ids, the typed edges cited, and the operator identity — and a bounded
+grade ledger (200 entries, persisted) names exactly what a bad grade should
+weaken. Measured: a wrong quiz grade now weakens the producing trace itself
+(−0.1, floor-gated) instead of only the contradicted belief; the ledger and
+the world-feedback credit map (`authoredAnswers`) survive export/import.
+
+**Confidence-weighted edges + confirmed-false store (P8).** Edges carry a
+strength: 1 per stated source, +1 for chaperone agreement, ±0.2 per grade of
+an answer that cited them. A weakened edge answers hedged ("Probably, robin
+is a bird."), never confident; a taught "golf is not a bird" (or a
+strong-graded negative) records a confirmed-false entry, and the question
+answers "No, golf is not a bird — I was taught that." with evidence. Measured
+on the relations bench: **4/4 negated probes answered No with evidence, while
+the unnegated negatives stay 0/10 false positives** — the absence-of-evidence
+rule holds by construction.
+
+**Grounded generation + internal critic (P5).** Creative composition is now
+grounded-first: typed frames filled from the relation graph ("A robin is a
+bird. It has wings and feathers."), every candidate parsed back through a
+claim grammar and refused unless every claim is backed by a stored edge
+(direct, inherited, or the negation store). The Markov path is demoted to a
+labeled fallback, and the composition PRNG is seeded for reproducibility.
+Measured on `npm run grounded-bench` (10 probes): **fabrication rate 0/5 in
+grounded answers — PASS**, 63% grounded / 37% labeled fallback.
+
+**Relation-hole templates (P6).** The echo learner's honesty guard admits a
+content word beyond the slot only when it is derivable from the slot via a
+stored edge — "a robin is a bird" learns `{slot} is a {p:is-a}`, the hole
+resolved from the graph at fire time (an edge that vanished since learning
+declines the operator). Pure echo behavior is unchanged; the extended
+vocabulary-boundedness audit names the hole objects as allowed.
+
+**Dispatch order (final):** clock/date → negation statements (teach) →
+memorized → operators (symbolic graph → confirmed-false "No" → graded
+holographic fallback) → learned operators (relation-hole templates) →
+compiled rules → creative (grounded frames + critic → labeled Markov
+fallback) → ask → hybrid. ASK-rate audit: **17% ask (the two genuine
+unknowns), 83% zero-LLM answers**, unchanged across all seven phases.

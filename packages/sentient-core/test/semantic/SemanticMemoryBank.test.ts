@@ -7,7 +7,7 @@
  *   - prune() double-counting weak removals and over-deleting.
  */
 import { describe, it, expect } from '@jest/globals';
-import { SemanticMemoryBank, SedenionMemoryField } from '../../src/semantic';
+import { SemanticMemoryBank, SedenionMemoryField, type SerializedTrace } from '../../src/semantic';
 
 const PRIMES = [2, 3, 5, 7, 11, 13, 17, 19];
 
@@ -307,5 +307,54 @@ describe('SemanticMemoryBank persistence', () => {
     const data = bank.serializeTrace(trace.id)!;
     const duplicate = bank.restoreTrace(data);
     expect(duplicate).toBeNull();
+  });
+
+  it('restores malformed snapshots without crashing the next capacity trim', () => {
+    const bank = new SemanticMemoryBank({ capacity: 4 });
+    const base = bank.serializeTrace(
+      bank.store('sane', SedenionMemoryField.identity(), [2, 3, 5]).id
+    )!;
+    // A snapshot missing lastAccessAt (legacy/hand-written) must restore with
+    // a finite timestamp — a NaN `Date.now() - lastAccessAt` in the prune's
+    // retentionScore used to throw far from the restore site.
+    const broken = { ...base, id: 'broken', lastAccessAt: undefined } as unknown as SerializedTrace;
+    const restored = bank.restoreTrace(broken);
+    expect(restored).not.toBeNull();
+    expect(Number.isFinite(restored!.lastAccessAt)).toBe(true);
+    // And NaN amplitudes must be sanitized, not encoded into the pattern.
+    const poisoned = {
+      ...base,
+      id: 'poisoned',
+      amplitudes: [0.7, Number.NaN, 1]
+    } as unknown as SerializedTrace;
+    expect(bank.restoreTrace(poisoned)).not.toBeNull();
+
+    // Force a prune: must not throw, and both restored traces survive the trim.
+    bank.setCapacity(1);
+    expect(() => bank.all()).not.toThrow();
+    expect(bank.get('broken') ?? bank.get('poisoned')).toBeDefined();
+  });
+
+  it('zip-dedups the cue so phases stay aligned with their primes', () => {
+    const bank = new SemanticMemoryBank({ capacity: 8 });
+    const trace = bank.store('phased', SedenionMemoryField.identity(), [2, 3, 5], {
+      phases: [0.5, 1.0, 2.0]
+    });
+    // The same cue with a duplicated prime: the phase must travel with its
+    // prime (first occurrence wins) instead of mispairing after dedup.
+    const deduped = bank.recall({ primes: [2, 2, 3, 5], phases: [0.5, 9.9, 1.0, 2.0] }, 3);
+    const clean = bank.recall({ primes: [2, 3, 5], phases: [0.5, 1.0, 2.0] }, 3);
+    expect(deduped[0].trace.id).toBe(trace.id);
+    expect(deduped[0].holographicScore).toBeCloseTo(clean[0].holographicScore, 10);
+  });
+
+  it('clear() drops grade-evidence extras with the traces', () => {
+    const bank = new SemanticMemoryBank({ capacity: 8 });
+    const trace = bank.store('x', SedenionMemoryField.identity(), [2, 3, 5]);
+    bank.bumpUtility(trace.id, 3);
+    bank.clear();
+    expect(bank.all()).toHaveLength(0);
+    const trace2 = bank.store('y', SedenionMemoryField.identity(), [2, 3, 5]);
+    expect(bank.serializeTrace(trace2.id)?.utilityExtra).toBeUndefined();
   });
 });

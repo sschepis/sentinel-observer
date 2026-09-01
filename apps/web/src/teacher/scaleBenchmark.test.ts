@@ -19,7 +19,7 @@ describe('compact-bank scale benchmark (1000 real words)', () => {
 
   beforeAll(async () => {
     session = new ObserverSession(
-      { primeCount: 64, gridSize: 128, memoryMode: 'compact', vocabulary: deckVocabulary(deck, PRIME_SPACE) },
+      { primeCount: 64, gridSize: 128, memoryMode: 'compact', smfWidth: 128, vocabulary: deckVocabulary(deck, PRIME_SPACE) },
       100
     );
     await session.initialize();

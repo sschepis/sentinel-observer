@@ -9,8 +9,14 @@
 /** Hard cap on holographic grid allocations (cells), enforced at construction. */
 export const MAX_GRID_SIZE = 4096;
 
-/** Hard cap on the prime basis size, enforced at construction. */
-export const MAX_PRIME_COUNT = 256;
+/**
+ * Hard cap on the prime basis size, enforced at construction.
+ *
+ * 256 was the original ceiling; the scale bench (src/cli/scale-bench.ts)
+ * measures whether 512/1024-prime bases buy vocabulary headroom, so the
+ * limit now admits them. The app ships on 256; larger bases are opt-in.
+ */
+export const MAX_PRIME_COUNT = 1024;
 
 /**
  * Raised when a constructor argument exceeds a hard allocation cap.

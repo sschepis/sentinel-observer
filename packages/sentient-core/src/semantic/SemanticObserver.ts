@@ -40,16 +40,22 @@ import {
   type OscillatorFieldTick,
   type PrimeOscillatorSnapshot
 } from './PrimeOscillatorField';
-import { SedenionMemoryField, SMF_DIMENSION } from './SedenionMemoryField';
+import { SedenionMemoryField, SMF_DIMENSION, MAX_SMF_WIDTH } from './SedenionMemoryField';
 import { SMF_AXES, type SMFAxisIndex } from '../common/types';
 import { HolographicMemory } from './HolographicMemory';
 import {
   SemanticMemoryBank,
   type MemoryTrace,
-  type RecallResult
+  type RecallResult,
+  type SemanticMemoryBankOptions
 } from './SemanticMemoryBank';
-import { CompactMemoryBank, type MemoryBank, type TraceLike } from './CompactMemoryBank';
 import {
+  CompactMemoryBank,
+  type CompactMemoryBankOptions,
+  type MemoryBank,
+  type TraceLike
+} from './CompactMemoryBank';
+import { SEVERITY_WEIGHT,
   SafetyMonitor,
   type SafetyCheckResult,
   type SafetyViolation
@@ -107,6 +113,27 @@ export interface SemanticObserverOptions {
    * candidate prefiltering — the scale substrate for thousands of words.
    */
   memoryMode?: 'full' | 'compact';
+  /**
+   * Optional tuning for the memory bank (weights, thresholds, capacity).
+   * Passed through to whichever bank `memoryMode` selects.
+   */
+  memoryBankOptions?: Partial<CompactMemoryBankOptions & SemanticMemoryBankOptions>;
+  /**
+   * SMF sketch width (default 16 = the named SMF_AXES). Wider sketches spread
+   * the orientation's discrimination across more dimensions; the first 16
+   * components stay the named axes.
+   */
+  smfWidth?: number;
+  /**
+   * Imprint via the seeded signed random projection instead of the legacy
+   * `axis = j mod width` fold (default true). Disabling restores the fold for
+   * A/B measurement of the projection's effect.
+   */
+  smfProjection?: boolean;
+  /** Determinism seed for the SMF projection matrix (default 0x5eed). */
+  smfProjectionSeed?: number;
+  /** Non-zero density of the SMF projection rows in (0, 1] (default 1). */
+  smfProjectionDensity?: number;
 }
 
 /** A coherence-driven moment. */
@@ -177,14 +204,37 @@ export type SemanticInput = string | readonly number[];
 
 export class SemanticObserver implements Initializable {
   private readonly kernel: SemanticKernel;
-  private readonly options: Required<
-    Omit<SemanticObserverOptions, 'kernel' | 'safety' | 'vocabulary' | 'memoryMode'>
-  > & { safety?: SafetyMonitor };
+  private readonly options: Omit<
+    Required<
+      Omit<
+        SemanticObserverOptions,
+        | 'kernel'
+        | 'safety'
+        | 'vocabulary'
+        | 'memoryMode'
+        | 'memoryCapacity'
+        | 'memoryBankOptions'
+        | 'smfProjectionSeed'
+        | 'smfProjectionDensity'
+      >
+    >,
+    never
+  > & { memoryCapacity: number | undefined; safety?: SafetyMonitor };
   private readonly vocabulary: Readonly<Record<string, readonly number[]>>;
 
   private readonly field: PrimeOscillatorField;
-  private readonly smf = SedenionMemoryField.identity();
+  private readonly smf: SedenionMemoryField;
   private readonly memory: MemoryBank;
+  /**
+   * W1: whether the bank consumes the moment's phase configuration and
+   * coherence in retrieval. The compact bank's phase ORDER PARAMETER is
+   * robust to the teach/recall evolution-depth difference (it measures the
+   * concentration of the differences, not their absolute values); the full
+   * bank's exact pattern correlation is not — feeding it differently-evolved
+   * phases would decorrelate exact cues. The full bank keeps its
+   * phase-free pattern correlation, which is already phase-aware by design.
+   */
+  private readonly momentPhasesInRetrieval: boolean;
   private hologram: HolographicMemory;
   private previousHologram: HolographicMemory | null = null;
   private readonly safety: SafetyMonitor;
@@ -232,7 +282,12 @@ export class SemanticObserver implements Initializable {
       driftDropThreshold: options.driftDropThreshold ?? 0.03,
       driftDecliningRatio: options.driftDecliningRatio ?? 0.75,
       dt: options.dt ?? 0.016,
-      memoryCapacity: Math.max(1, Math.floor(options.memoryCapacity ?? 256)),
+      // Undefined lets each memory bank use its own documented default
+      // (compact mode scales to thousands of traces) instead of overriding
+      // it with a small generic number.
+      memoryCapacity: options.memoryCapacity !== undefined ? Math.max(1, Math.floor(options.memoryCapacity)) : undefined,
+      smfWidth: Math.max(1, Math.floor(options.smfWidth ?? SMF_DIMENSION)),
+      smfProjection: options.smfProjection ?? true,
       requireSafetyClear: options.requireSafetyClear ?? true,
       safety: options.safety
     };
@@ -270,6 +325,9 @@ export class SemanticObserver implements Initializable {
           `wavenumber per prime inside the grid`
       );
     }
+    if (this.options.smfWidth > MAX_SMF_WIDTH) {
+      throw new ConfigurationLimitError('smfWidth', MAX_SMF_WIDTH, this.options.smfWidth);
+    }
 
     this.momentThreshold = clampRange(this.options.momentThreshold, Number.EPSILON, 1);
 
@@ -281,15 +339,27 @@ export class SemanticObserver implements Initializable {
 
     this.memory =
       options.memoryMode === 'compact'
-        ? new CompactMemoryBank({ capacity: this.options.memoryCapacity })
+        ? new CompactMemoryBank({ capacity: this.options.memoryCapacity, ...options.memoryBankOptions })
         : new SemanticMemoryBank({
             capacity: this.options.memoryCapacity,
             gridSize: this.options.gridSize,
-            primes: undefined // basis is chosen per encode call from the field primes
+            primes: undefined, // basis is chosen per encode call from the field primes
+            ...options.memoryBankOptions
           });
+    this.momentPhasesInRetrieval = options.memoryMode === 'compact';
 
     this.hologram = new HolographicMemory({ gridSize: this.options.gridSize });
     this.safety = options.safety ?? SafetyMonitor.forObserver();
+
+    // The SMF sketch: width-configurable, and imprinted via the seeded JL
+    // projection (the field knows the oscillator count it reads from). The
+    // projection can be disabled to A/B against the legacy mod-width fold.
+    this.smf = SedenionMemoryField.identity({
+      width: this.options.smfWidth,
+      ...(this.options.smfProjection ? { primeCount: this.options.primeCount } : {}),
+      projectionSeed: options.smfProjectionSeed,
+      projectionDensity: options.smfProjectionDensity
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -476,8 +546,10 @@ export class SemanticObserver implements Initializable {
   // ── stimulus internals ───────────────────────────────────────────────────
 
   private currentCoherence(): number {
+    // getState() recomputes metrics from the live field; getMetrics() returns
+    // the value cached at the last tick, which observe() never advances.
     const state = this.field.getState();
-    return state.totalAmplitude > 0 ? this.field.getMetrics().coherence : 0;
+    return state.totalAmplitude > 0 ? state.coherence : 0;
   }
 
   private normalizeWeight(weight: number | undefined): number {
@@ -493,7 +565,7 @@ export class SemanticObserver implements Initializable {
       throw new NonFiniteValueError('attention intensity', intensity);
     }
     const kindFactor: Record<string, number> = { reading: 1, review: 0.9, quiz: 1.1, idle: 0.3 };
-    const factor = (kindFactor[focus] ?? 1) * (0.5 + 0.5 * intensity);
+    const factor = kindFactor[focus] * (0.5 + 0.5 * intensity);
     this.applyCouplingFactor(factor);
   }
 
@@ -518,9 +590,9 @@ export class SemanticObserver implements Initializable {
     const projection = this.smf.clone();
     projection.updateFromPrimeActivity(this.field.getState());
     const touched: string[] = [];
-    for (let i = 0; i < SMF_DIMENSION; i++) {
+    for (let i = 0; i < projection.width; i++) {
       if (Math.abs(projection.get(i) - this.smf.get(i)) > 1e-9) {
-        touched.push(SMF_AXES[i as SMFAxisIndex].name);
+        touched.push(i < SMF_DIMENSION ? SMF_AXES[i as SMFAxisIndex].name : `axis:${i}`);
       }
     }
     return touched;
@@ -529,14 +601,28 @@ export class SemanticObserver implements Initializable {
   /**
    * Store the current orientation as a memory trace.
    * Returns the created trace (null when the field is quiescent).
+   *
+   * W1: the moment's phase configuration is stored with the trace — the
+   * observer's own phase participates in its measurement, so recall can
+   * later ask how well the cue's converged moment phase-locks with this
+   * stored moment (the phase order parameter of the difference ensemble).
    */
-  storeMemory(content: string): TraceLike | null {
+  storeMemory(content: string, options: { metadata?: Record<string, unknown> } = {}): TraceLike | null {
     this.requireInitialized();
     const state = this.field.getState();
     if (state.totalAmplitude <= 0) return null;
 
     const amplitudes = this.memoryPatternAmplitudes(state);
-    const trace = this.memory.store(content, this.smf.clone(), this.field.primes, { amplitudes });
+    const trace = this.memory.store(content, this.smf.clone(), this.field.primes, {
+      amplitudes,
+      // W1: the compact bank stores the moment's phase configuration (state.phases
+      // is indexed by oscillator = by basis prime, exactly the alignment
+      // `trace.primes` — the full basis — expects). The full bank encodes
+      // phases into its holographic pattern only when the caller provides
+      // them; it does not, so its behavior is unchanged.
+      ...(this.momentPhasesInRetrieval ? { phases: state.phases } : {}),
+      ...(options.metadata !== undefined ? { metadata: options.metadata } : {})
+    });
     this.signals.push({
       kind: 'memory',
       at: Date.now(),
@@ -553,13 +639,53 @@ export class SemanticObserver implements Initializable {
    * `content` is resolved to a prime cue against a TRANSIENT projection: the
    * oscillator field is never excited by a recall, so querying memory cannot
    * change what the next `tick()` observes.
+   *
+   * W1: the cue carries the field's CURRENT phase configuration (aligned to
+   * the resolved cue primes) and the moment's Kuramoto coherence, so the
+   * compact bank's phase order parameter and the coherence gate on the SMF
+   * term are fed by the live field.
    */
   recallMemory(content?: string, topK = 5): RecallResult[] {
     this.requireInitialized();
     const folded = content ? this.resolvePrimes(content) : undefined;
     const queryPrimes = folded ? folded.filter(p => p > 0) : undefined;
+    // W1 (compact bank only): the cue carries the field's CURRENT phase
+    // configuration (aligned to the resolved cue primes) and the moment's
+    // Kuramoto coherence, so the phase order parameter and the coherence
+    // gate on the SMF term are fed by the live field. The live amplitudes
+    // ride along so the bank can gate the cue side of the phase ensemble
+    // like the store side — a quiescent oscillator's phase is not a reading.
+    // The full bank keeps its exact pattern correlation phase-free at the
+    // query side.
+    let queryPhases: number[] | undefined;
+    let queryAmplitudes: number[] | undefined;
+    let queryCoherence: number | undefined;
+    if (this.momentPhasesInRetrieval) {
+      const state = this.field.getState();
+      queryPhases =
+        queryPrimes !== undefined && queryPrimes.length > 0
+          ? queryPrimes.map(p => {
+              const index = this.field.indexOfPrime(p);
+              return index >= 0 ? state.phases[index] : 0;
+            })
+          : undefined;
+      queryAmplitudes =
+        queryPrimes !== undefined && queryPrimes.length > 0
+          ? queryPrimes.map(p => {
+              const index = this.field.indexOfPrime(p);
+              return index >= 0 ? state.amplitudes[index] : 0;
+            })
+          : undefined;
+      queryCoherence = state.coherence;
+    }
     const results = this.memory.recall(
-      { smf: this.smf.clone(), primes: queryPrimes },
+      {
+        smf: this.smf.clone(),
+        primes: queryPrimes,
+        phases: queryPhases,
+        amplitudes: queryAmplitudes,
+        coherence: queryCoherence
+      },
       topK
     );
     for (const result of results) {
@@ -718,7 +844,7 @@ export class SemanticObserver implements Initializable {
           payload: { momentId: moment.id, axis: 'coherence', coherence: moment.coherence }
         });
       }
-      this.updateDriftDetection(metrics.coherence, step);
+      this.updateDriftDetection(metrics.coherence);
       this.sweepMemorySignals();
 
       return event;
@@ -755,8 +881,7 @@ export class SemanticObserver implements Initializable {
    * clearly rising again (< 60% declining), so a sustained decline emits
    * exactly one signal. Window and thresholds are constructor options.
    */
-  private updateDriftDetection(coherence: number, step: number): void {
-    void step;
+  private updateDriftDetection(coherence: number): void {
     const windowTicks = this.options.driftWindowTicks;
     this.coherenceHistory.push({ at: this.elapsed, coherence });
     while (this.coherenceHistory.length > windowTicks * 3) {
@@ -809,6 +934,16 @@ export class SemanticObserver implements Initializable {
   private sweepMemorySignals(): void {
     this.memorySweepCounter += 1;
     if (this.memorySweepCounter % 50 !== 0) return;
+
+    // Pruned traces leave the bank but their decay flags would otherwise
+    // persist forever (the resident-only sweep below can never re-arm them).
+    // Reconcile the flag set against residency once per sweep so the set
+    // stays bounded at the resident trace count.
+    if (this.decayFlagged.size > 0) {
+      for (const id of this.decayFlagged) {
+        if (this.memory.get(id) === undefined) this.decayFlagged.delete(id);
+      }
+    }
 
     for (const trace of this.memory.all()) {
       if (trace.strength < 0.5 && !this.decayFlagged.has(trace.id)) {
@@ -924,7 +1059,7 @@ export class SemanticObserver implements Initializable {
     this.requireInitialized();
     this.field.reset();
     this.smf.set(0, 1);
-    for (let i = 1; i < 16; i++) this.smf.set(i, 0);
+    for (let i = 1; i < this.smf.width; i++) this.smf.set(i, 0);
     this.hologram.clear();
     this.previousHologram = null;
     this.memory.clear();
@@ -964,7 +1099,20 @@ export class SemanticObserver implements Initializable {
       const backend = this.kernel.createSemanticBackend({
         vocabulary: this.vocabulary as Record<string, number[]>
       });
-      primes = backend.encode(input);
+      // Vocabulary words must encode even when the backend's default NLP
+      // stop-word list tags them as stop words ('the', 'a', 'of', ...): a
+      // curriculum assigns every deck word an explicit prime signature, and
+      // dropping stop words here would silence a large share of a frequency
+      // deck — nothing stored, nothing recalled. Unknown stop tokens are
+      // still excluded, preserving default behavior for ordinary sentences.
+      primes = [
+        ...new Set(
+          backend
+            .tokenize(input, false)
+            .filter((token) => token.known || !token.isStop)
+            .flatMap((token) => token.primes)
+        )
+      ];
     } else {
       primes = Array.from(input);
     }
@@ -972,10 +1120,11 @@ export class SemanticObserver implements Initializable {
 
     const basis = this.field.primes;
     return primes.map(p => {
-      if (!Number.isFinite(p) || p <= 0) return -1;
+      // Integers only: a fractional prime would index `basis[2.5]` -> undefined.
+      if (!Number.isInteger(p) || p <= 0) return -1;
       const rank = this.kernel.primeRankOf(p);
       if (rank >= 0) return basis[rank % basis.length];
-      return basis[(p % basis.length + basis.length) % basis.length];
+      return basis[p % basis.length];
     });
   }
 
@@ -1055,13 +1204,6 @@ class IsolatedSubject<T> {
     });
   }
 }
-
-const SEVERITY_WEIGHT: Record<SafetyViolation['severity'], number> = {
-  low: 0.25,
-  medium: 0.5,
-  high: 0.75,
-  critical: 1
-};
 
 /**
  * Map a safety verdict onto a [0, 1] score so callers can chart it: 1.0 when

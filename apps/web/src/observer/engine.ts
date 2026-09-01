@@ -14,7 +14,6 @@ export interface ObserverSessionState {
   status: ObserverStatus;
   error: string | null;
   metrics: SemanticObserverState | null;
-  kernelLoaded: boolean;
 }
 
 /**
@@ -51,10 +50,6 @@ export class ObserverSession {
     this.observer.settleField();
   }
 
-  observeAttention(focus: 'reading' | 'review' | 'quiz' | 'idle', intensity: number): StimulusResult {
-    return this.observer.observe({ kind: 'attention', focus, intensity });
-  }
-
   observeEvent(
     type: 'quiz.answer' | 'review.completed' | 'note.created' | 'source.ingested',
     outcome: 'success' | 'failure',
@@ -65,10 +60,12 @@ export class ObserverSession {
 
   /**
    * Store the current orientation as a memory trace — the observer's way of
-   * committing what it was just taught to long-term memory.
+   * committing what it was just taught to long-term memory. `metadata`
+   * tags the trace (e.g. `{ kind: 'conversation', cue }`) so recall can
+   * distinguish learned words from learned exchanges.
    */
-  storeMemory(content: string): TraceLike | null {
-    return this.observer.storeMemory(content);
+  storeMemory(content: string, options: { metadata?: Record<string, unknown> } = {}): TraceLike | null {
+    return this.observer.storeMemory(content, options);
   }
 
   /**
@@ -79,17 +76,9 @@ export class ObserverSession {
     return this.observer.recallMemory(cue, topK);
   }
 
-  setNoise(level: number): StimulusResult {
-    return this.observer.observe({ kind: 'noise', level });
-  }
-
   /** Subscribe to the observer's signal stream; returns an unsubscribe fn. */
   onSignal(listener: (signal: ObserverSignal) => void): () => void {
     return this.observer.getSignals().subscribe('*', listener);
-  }
-
-  signalHistory(): readonly ObserverSignal[] {
-    return this.observer.getSignals().history();
   }
 
   start(onTick: (state: SemanticObserverState) => void): void {

@@ -4,3 +4,9 @@ dist/
 .env.*
 .DS_Store
 .playwright-mcp/
+# Generated training artifacts (214MB+ bootstrap records must never be versioned)
+apps/web/public/bootstrap.json
+apps/web/public/bootstrap.json.bak-*
+# Agent Manager worktree checkouts and MCP state (machine-local)
+.kilo/worktrees/
+.obotovs/

@@ -79,6 +79,13 @@ export interface SerializedTrace {
   consolidated: boolean;
   smfEntropy: number;
   metadata: Record<string, unknown>;
+  /** When present, `smf` holds q8 fixed-point integers (dequantized on
+   *  restore) instead of float components — the wide-sketch footprint lever. */
+  smfEncoding?: 'q8';
+  /** Max absolute component used to scale the q8 fixed-point encoding. */
+  smfMax?: number;
+  /** P11: grade-evidence utility extra, restored so usefulness survives. */
+  utilityExtra?: number;
 }
 
 /** Optional per-trace overrides for `store`. */
@@ -136,9 +143,9 @@ export interface SemanticMemoryBankOptions {
   gridSize?: number;
   /** Prime basis for holographic patterns. Required to match query primes. */
   primes?: readonly number[];
-  /** Weight of the SMF term in the combined score (default 0.6). */
+  /** Weight of the SMF term in the combined score (default 0.4). */
   smfWeight?: number;
-  /** Weight of the holographic term in the combined score (default 0.4). */
+  /** Weight of the holographic term in the combined score (default 0.6). */
   holographicWeight?: number;
   /** Strength below which an unconsolidated trace becomes prunable (default 0.25). */
   minStrength?: number;
@@ -159,8 +166,12 @@ export interface SemanticMemoryBankOptions {
 const DEFAULTS = {
   capacity: 256,
   gridSize: 64,
-  smfWeight: 0.6,
-  holographicWeight: 0.4,
+  // 0.4/0.6: the fold-era 0.6 SMF weight let the signed-random-projection
+  // sketch's (decorrelated) orientation noise tip recognitions. The
+  // holographic term is the strong exact-prime signal; SMF stays a
+  // subordinate context cue (measured: 53.3% -> 100% on the 30-word gate).
+  smfWeight: 0.4,
+  holographicWeight: 0.6,
   minStrength: 0.25,
   importanceFloor: 0.7,
   entropyLockThreshold: 0.75,
@@ -170,6 +181,8 @@ const DEFAULTS = {
 
 export class SemanticMemoryBank implements MemoryBank {
   private readonly traces = new Map<string, MemoryTrace>();
+  /** P11: grade-evidence extras (graded-correct answers), per trace id. */
+  private readonly utilityExtras = new Map<string, number>();
   private readonly config: Required<Omit<SemanticMemoryBankOptions, 'primes'>> & { primes?: readonly number[] };
   private readonly gridSize: number;
   private readonly primeBasis?: readonly number[];
@@ -233,6 +246,16 @@ export class SemanticMemoryBank implements MemoryBank {
     return this.traces.get(id);
   }
 
+  /** Adjust a trace's strength (positive = reinforce, negative = weaken). */
+  reinforce(traceId: string, amount = 0.1): boolean {
+    const trace = this.traces.get(traceId);
+    if (!trace) return false;
+    trace.strength = clampRange(trace.strength + amount, 0, 1);
+    trace.lastAccessAt = Date.now();
+    trace.smfEntropy = trace.smf.normalizedEntropy();
+    return true;
+  }
+
   /** Snapshot of all traces in insertion order. */
   all(): readonly MemoryTrace[] {
     return Array.from(this.traces.values());
@@ -281,6 +304,12 @@ export class SemanticMemoryBank implements MemoryBank {
       smf: smfCopy,
       primes: primeList,
       amplitudes,
+      // The full bank encodes phases into the holographic pattern itself
+      // (W1: `pattern.encode(primes, amplitudes, phases)`); the trace-level
+      // sparse phase pair is the compact bank's representation and stays
+      // empty here.
+      phases: [],
+      phasePrimes: [],
       pattern,
       createdAt: now,
       lastAccessAt: now,
@@ -323,16 +352,35 @@ export class SemanticMemoryBank implements MemoryBank {
 
     // Cue primes are deduplicated defensively: text folding can map several
     // tokens onto the same prime, and a holographic basis with duplicate
-    // primes is invalid by construction.
-    const cuePrimes = query.primes ? [...new Set(query.primes)] : undefined;
+    // primes is invalid by construction. The dedup is ZIP-ALIGNED: phase and
+    // amplitude travel with their prime (first occurrence wins), so a caller
+    // passing duplicates with index-aligned arrays can never have its phase
+    // mispaired against the deduplicated prime list.
+    const cueTriples: { prime: number; amplitude: number; phase: number | undefined }[] = [];
+    if (query.primes !== undefined) {
+      const seen = new Set<number>();
+      for (let i = 0; i < query.primes.length; i += 1) {
+        const prime = query.primes[i];
+        if (seen.has(prime)) continue;
+        seen.add(prime);
+        cueTriples.push({
+          prime,
+          amplitude: query.amplitudes?.[i] ?? 1,
+          phase: query.phases?.[i]
+        });
+      }
+    }
+    const cuePrimes = cueTriples.length > 0 ? cueTriples.map((t) => t.prime) : undefined;
 
     let queryPattern: HolographicMemory | null = null;
     if (cuePrimes && cuePrimes.length > 0) {
-      const amplitudes = query.amplitudes
-        ? Array.from(query.amplitudes)
-        : cuePrimes.map(() => 1);
+      const amplitudes = cueTriples.map((t) => t.amplitude);
+      // Zip-aligned with cuePrimes; encode() treats any non-finite entry as 0.
+      const phases = cueTriples.some((t) => t.phase !== undefined)
+        ? (cueTriples.map((t) => t.phase) as number[])
+        : undefined;
       queryPattern = this.createPattern(cuePrimes);
-      queryPattern.encode(cuePrimes, amplitudes, query.phases);
+      queryPattern.encode(cuePrimes, amplitudes, phases);
     }
 
     const useSmf = query.smf !== undefined;
@@ -470,6 +518,9 @@ export class SemanticMemoryBank implements MemoryBank {
   /** Drop everything (statistics counters are preserved). */
   clear(): void {
     this.traces.clear();
+    // P11: grade-evidence extras describe dead traces — drop them with the
+    // traces so the map stays bounded across resets.
+    this.utilityExtras.clear();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -524,10 +575,11 @@ export class SemanticMemoryBank implements MemoryBank {
   serializeTrace(traceId: string): SerializedTrace | null {
     const trace = this.traces.get(traceId);
     if (!trace) return null;
+    const { q, maxAbs } = SedenionMemoryField.toCompact(trace.smf.toArray());
     return {
       id: trace.id,
       content: trace.content,
-      smf: trace.smf.toArray(),
+      smf: q,
       primes: [...trace.primes],
       amplitudes: [...trace.amplitudes],
       createdAt: trace.createdAt,
@@ -537,7 +589,10 @@ export class SemanticMemoryBank implements MemoryBank {
       importance: trace.importance,
       consolidated: trace.consolidated,
       smfEntropy: trace.smfEntropy,
-      metadata: { ...trace.metadata }
+      metadata: { ...trace.metadata },
+      smfEncoding: 'q8',
+      smfMax: maxAbs,
+      utilityExtra: this.utilityExtras.get(trace.id) ?? undefined
     };
   }
 
@@ -547,34 +602,74 @@ export class SemanticMemoryBank implements MemoryBank {
    * bank never silently overwrites a live trace with stale data.
    */
   restoreTrace(data: SerializedTrace): MemoryTrace | null {
+    // Malformed payloads are refused like the compact bank does — a partial
+    // snapshot must not crash the restore path with a raw TypeError.
+    if (
+      data === null ||
+      typeof data !== 'object' ||
+      typeof data.id !== 'string' ||
+      data.id.length === 0 ||
+      !Array.isArray(data.primes) ||
+      data.primes.length === 0 ||
+      !Array.isArray(data.amplitudes) ||
+      !Array.isArray(data.smf)
+    ) {
+      return null;
+    }
     if (this.traces.has(data.id)) return null;
     const primeList = Array.from(data.primes);
     if (primeList.length === 0) return null;
 
     const pattern = this.createPattern(primeList);
-    const amplitudes = Array.from(data.amplitudes);
+    // Non-finite amplitudes sanitized to 0 (they would leak NaN into every
+    // pattern correlation); finite fields validated like the compact bank.
+    const amplitudes = Array.from(data.amplitudes).map((a) =>
+      Number.isFinite(a) ? a : 0
+    );
     while (amplitudes.length < primeList.length) amplitudes.push(1);
     pattern.encode(primeList, amplitudes.slice(0, primeList.length));
 
+    const smfValues =
+      data.smfEncoding === 'q8'
+        ? SedenionMemoryField.fromCompact(data.smf, data.smfMax ?? 0)
+        : data.smf;
+
+    // Timestamps and counters drive the prune's retentionScore
+    // (`Date.now() - lastAccessAt`): a missing or non-finite lastAccessAt
+    // would make the next capacity trim crash with NaN arithmetic instead of
+    // refusing loudly at the restore site.
+    const createdAt = Number.isFinite(data.createdAt) ? data.createdAt : Date.now();
     const trace: MemoryTrace = {
       id: data.id,
       content: data.content,
-      smf: SedenionMemoryField.fromArray(data.smf),
+      smf: SedenionMemoryField.fromArray(smfValues),
       primes: primeList,
       amplitudes,
+      phases: [],
+      phasePrimes: [],
       pattern,
-      createdAt: data.createdAt,
-      lastAccessAt: data.lastAccessAt,
-      accessCount: data.accessCount,
-      strength: data.strength,
-      importance: data.importance,
-      consolidated: data.consolidated,
-      smfEntropy: data.smfEntropy,
-      metadata: { ...data.metadata }
+      createdAt,
+      lastAccessAt: Number.isFinite(data.lastAccessAt) ? data.lastAccessAt : createdAt,
+      accessCount: Math.max(0, Number.isFinite(data.accessCount) ? data.accessCount : 0),
+      strength: clampRange(Number.isFinite(data.strength) ? data.strength : 1, 0, 1),
+      importance: clampRange(Number.isFinite(data.importance) ? data.importance : 0.5, 0, 1),
+      consolidated: data.consolidated ?? false,
+      smfEntropy: Number.isFinite(data.smfEntropy) ? data.smfEntropy : 0,
+      metadata: { ...(data.metadata ?? {}) }
     };
     this.traces.set(trace.id, trace);
     this.storeCount += 1;
+    // P11: the grade-evidence extra survives reloads.
+    if (typeof data.utilityExtra === 'number' && data.utilityExtra > 0) {
+      this.utilityExtras.set(trace.id, data.utilityExtra);
+    }
     return trace;
+  }
+
+  /** P11: accumulate grade evidence for a trace (retrieval usefulness). */
+  bumpUtility(traceId: string, amount: number): void {
+    const current = this.utilityExtras.get(traceId) ?? 0;
+    this.utilityExtras.set(traceId, Math.max(0, current + amount));
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -215,3 +215,145 @@ describe('SedenionMemoryField', () => {
     expect(Object.keys(field.toRecord())).toHaveLength(16);
   });
 });
+
+describe('SedenionMemoryField width & projection', () => {
+  it('constructs a wider sketch and keeps the named axes as the first 16', () => {
+    const field = SedenionMemoryField.identity({ width: 64 });
+    expect(field.width).toBe(64);
+    expect(field.toArray()).toHaveLength(64);
+    expect(field.get(0)).toBe(1);
+    expect(field.get('coherence')).toBe(0);
+    field.set(30, 0.5);
+    expect(field.get(30)).toBe(0.5);
+    // Named-axis metadata stays canonical; unnamed dims get axis:N names.
+    expect(field.dominantAxes(1)[0].name).toBe('visual_salience');
+    field.set(63, 9);
+    expect(field.dominantAxes(1)[0].name).toBe('axis:63');
+  });
+
+  it('index bounds follow the width: 16 is legal on a wide field, illegal on default', () => {
+    const wide = SedenionMemoryField.zero({ width: 64 });
+    expect(() => wide.set(16, 1)).not.toThrow();
+    const narrow = SedenionMemoryField.zero();
+    expect(() => narrow.set(16, 1)).toThrow(UnknownSMFAxisError);
+  });
+
+  it('fromArray restores wider sketches at their own width', () => {
+    const values = Array.from({ length: 64 }, (_, i) => (i + 1) / 64);
+    const field = SedenionMemoryField.fromArray(values);
+    expect(field.width).toBe(64);
+    expect(field.toArray()).toHaveLength(64);
+    expect(field.get(0)).toBeCloseTo(1 / 64, 12);
+    // Short vectors still pad to the default 16.
+    expect(SedenionMemoryField.fromArray([1, 1]).width).toBe(16);
+  });
+
+  it('toJSON/fromJSON round-trips a wide sketch', () => {
+    const field = SedenionMemoryField.fromArray(Array.from({ length: 64 }, (_, i) => Math.sin(i)));
+    const restored = SedenionMemoryField.fromJSON(field.toJSON());
+    expect(restored.width).toBe(64);
+    expect(restored.toArray()).toEqual(field.toArray());
+    // Short snapshots are still refused loudly.
+    expect(() => SedenionMemoryField.fromJSON({ version: 1, components: [1, 2] } as never)).toThrow();
+  });
+
+  it('normalized entropy is width-relative: a spread wide field saturates toward 1', () => {
+    const spread = SedenionMemoryField.fromArray(new Array(64).fill(1));
+    expect(spread.normalizedEntropy()).toBeCloseTo(1, 9);
+    const peaked = SedenionMemoryField.zero({ width: 64 });
+    peaked.set(7, 1);
+    expect(peaked.normalizedEntropy()).toBe(0);
+  });
+
+  it('clone preserves width and the projection', () => {
+    const field = SedenionMemoryField.zero({ width: 64, primeCount: 256, projectionSeed: 11 });
+    const copy = field.clone();
+    expect(copy.width).toBe(64);
+    copy.updateFromPrimeActivity(
+      { primes: [], phases: [0.1, 0.2, 0.3], amplitudes: [0.5, 0.25, 0.125], coherence: 0.9 },
+      { learningRate: 1 }
+    );
+    expect(copy.toArray()).not.toEqual(field.toArray());
+  });
+
+  it('the projection matrix is LAZY: clones never allocate the ~128KB weights until imprint', () => {
+    // The compact bank clones the SMF into every stored trace; if the clone
+    // eagerly allocated the projection matrix (128×256 floats at the
+    // production width) a 20k-trace bank would hold ~2.5 GB of dead matrix
+    // memory. Construction and cloning must not allocate; the first imprint
+    // builds the deterministic matrix on demand.
+    const field = SedenionMemoryField.zero({ width: 128, primeCount: 256, projectionSeed: 11 });
+    expect(field.projectionAllocated()).toBe(false);
+
+    const copies = [field.clone(), field.clone(), field.clone()];
+    for (const copy of copies) expect(copy.projectionAllocated()).toBe(false);
+
+    // Clones still imprint correctly — the matrix builds on first use, and
+    // determinism is preserved across separately-built matrices.
+    const sample = {
+      primes: [],
+      phases: Array.from({ length: 256 }, (_, i) => i * 0.013),
+      amplitudes: Array.from({ length: 256 }, (_, i) => (i % 3) / 3),
+      coherence: 0.9
+    };
+    copies[0].updateFromPrimeActivity(sample, { learningRate: 1 });
+    expect(copies[0].projectionAllocated()).toBe(true);
+    expect(copies[1].projectionAllocated()).toBe(false);
+    copies[1].updateFromPrimeActivity(sample, { learningRate: 1 });
+    expect(copies[0].toArray()).toEqual(copies[1].toArray());
+  });
+
+  it('updateFromPrimeActivity with a projection is deterministic and different from the fold', () => {
+    const sample = {
+      primes: [],
+      phases: Array.from({ length: 32 }, (_, i) => i * 0.11),
+      amplitudes: Array.from({ length: 32 }, (_, i) => (i % 4) / 4),
+      coherence: 0.9
+    };
+    const projected = SedenionMemoryField.zero({ width: 16, primeCount: 32, projectionSeed: 7 });
+    const projected2 = SedenionMemoryField.zero({ width: 16, primeCount: 32, projectionSeed: 7 });
+    const folded = SedenionMemoryField.zero();
+
+    projected.updateFromPrimeActivity(sample, { learningRate: 1 });
+    projected2.updateFromPrimeActivity(sample, { learningRate: 1 });
+    folded.updateFromPrimeActivity(sample, { learningRate: 1 });
+
+    expect(projected.toArray()).toEqual(projected2.toArray());
+    expect(projected.toArray()).not.toEqual(folded.toArray());
+  });
+
+  it('rejects absurd widths loudly', () => {
+    expect(() => SedenionMemoryField.zero({ width: 0 })).toThrow();
+    expect(() => SedenionMemoryField.zero({ width: 4097 })).toThrow();
+  });
+
+  it('q8 compact serialization preserves direction at a fraction of the size', () => {
+    const field = SedenionMemoryField.fromArray(Array.from({ length: 64 }, (_, i) => Math.sin(i * 0.8)));
+    const { q, maxAbs } = SedenionMemoryField.toCompact(field.toArray());
+    expect(q).toHaveLength(64);
+    expect(maxAbs).toBeGreaterThan(0);
+    for (const v of q) {
+      expect(Number.isInteger(v)).toBe(true);
+      expect(Math.abs(v)).toBeLessThanOrEqual(127);
+    }
+
+    const restored = SedenionMemoryField.fromCompact(q, maxAbs);
+    const cosine = (() => {
+      const a = field.toArray();
+      let dot = 0;
+      let na = 0;
+      let nb = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot += a[i] * restored[i];
+        na += a[i] * a[i];
+        nb += restored[i] * restored[i];
+      }
+      return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    })();
+    expect(cosine).toBeGreaterThan(0.99);
+    // A zero field serializes to all zeros with no scale factor.
+    const zero = SedenionMemoryField.toCompact(new Array(16).fill(0));
+    expect(zero.maxAbs).toBe(0);
+    expect(SedenionMemoryField.fromCompact(zero.q, 0).every((v) => v === 0)).toBe(true);
+  });
+});

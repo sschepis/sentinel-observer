@@ -20,6 +20,16 @@ const MAX_RECENT_SIGNALS = 40;
 const MAX_DIARY_SIGNALS = 200;
 
 /**
+ * Diary signals carry no persistent id — the identity of a diary row is the
+ * full signal (kind, timestamp, cause, payload). Two overlapping loadDiary
+ * resolutions merge the SAME persisted rows, so the merge dedups on that
+ * composite key (first occurrence wins: persisted entries precede live ones).
+ */
+function diaryEntryKey(signal: ObserverSignal): string {
+  return `${signal.at}|${signal.kind}|${String(signal.causeId)}|${JSON.stringify(signal.payload)}`;
+}
+
+/**
  * React binding for an ObserverSession.
  *
  * Explicit degradation contract (inherited from the core): the status machine
@@ -38,6 +48,7 @@ export function useObserver(
   diarySignals: ObserverSignal[];
 } {
   const sessionRef = useRef<ObserverSession | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<ObserverSessionState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<SemanticObserverState | null>(null);
@@ -47,6 +58,11 @@ export function useObserver(
 
   const stop = useCallback(() => {
     sessionRef.current?.stop();
+    // A stopped observer can be started again — status must return to idle
+    // or the UI would show the Stop button against a frozen, dead session.
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+    setStatus('idle');
   }, []);
 
   const start = useCallback(async () => {
@@ -68,7 +84,8 @@ export function useObserver(
       setMetrics(initial);
       setStatus(initial.kernel.degraded ? 'degraded' : 'ready');
 
-      session.onSignal((signal) => {
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = session.onSignal((signal) => {
         setSignals((prev) => [...prev.slice(-(MAX_RECENT_SIGNALS - 1)), signal]);
         if (signal.kind !== 'metric') {
           setDiarySignals((prev) => [...prev.slice(-(MAX_DIARY_SIGNALS - 1)), signal]);
@@ -90,7 +107,17 @@ export function useObserver(
           (entries) => {
             if (entries.length > 0) {
               setDiarySignals((prev) => {
-                const merged = [...entries, ...prev];
+                // Dedup by diary-row identity: overlapping loadDiary
+                // resolutions merge the same persisted rows, and duplicated
+                // live signals are skipped — never two rows for one event.
+                const seen = new Set<string>();
+                const merged: ObserverSignal[] = [];
+                for (const signal of [...entries, ...prev]) {
+                  const key = diaryEntryKey(signal);
+                  if (seen.has(key)) continue;
+                  seen.add(key);
+                  merged.push(signal);
+                }
                 return merged.slice(-MAX_DIARY_SIGNALS);
               });
             }
@@ -113,7 +140,6 @@ export function useObserver(
     status,
     error,
     metrics,
-    kernelLoaded: metrics?.kernel.loaded ?? false,
     start,
     stop,
     lastStimulus,

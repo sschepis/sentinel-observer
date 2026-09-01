@@ -14,21 +14,6 @@ export interface DeckWord {
   example: string;
 }
 
-export const STARTER_DECK: readonly DeckWord[] = [
-  { word: 'apple', definition: 'a round red or green fruit', example: 'I eat an apple every morning.' },
-  { word: 'water', definition: 'the clear liquid we drink', example: 'Please give me a glass of water.' },
-  { word: 'friend', definition: 'a person you like and trust', example: 'My friend and I play together.' },
-  { word: 'house', definition: 'a building where people live', example: 'They live in a small house.' },
-  { word: 'morning', definition: 'the early part of the day', example: 'I wake up early in the morning.' },
-  { word: 'book', definition: 'pages with words that you read', example: 'She is reading an interesting book.' },
-  { word: 'travel', definition: 'to go from one place to another', example: 'We travel by train in summer.' },
-  { word: 'music', definition: 'sounds arranged to be pleasant', example: 'He listens to music at night.' },
-  { word: 'learn', definition: 'to get new knowledge or skill', example: 'I want to learn to speak English.' },
-  { word: 'speak', definition: 'to say words out loud', example: 'Can you speak more slowly, please?' },
-  { word: 'work', definition: 'an activity done as a job', example: 'She goes to work by bus.' },
-  { word: 'sleep', definition: 'to rest with your eyes closed', example: 'I sleep eight hours every night.' }
-];
-
 /** The lesson content the teacher presents for a word. */
 export function lessonText(entry: DeckWord): string {
   if (entry.definition.trim().length === 0) {

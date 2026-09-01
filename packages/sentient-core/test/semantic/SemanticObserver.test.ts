@@ -13,6 +13,8 @@ import {
   SemanticKernel,
   SemanticObserver,
   SemanticObserverConfigError,
+  type HolographicMemory,
+  type SafetyCheckResult,
   type SafetyMonitor,
   type MemoryTrace
 } from '../../src/semantic';
@@ -227,7 +229,11 @@ describe('SemanticObserver', () => {
     );
     expect(hits).toHaveLength(1);
     expect(hits[0].trace.id).toBe(trace!.id);
-    expect(hits[0].holographicScore).toBeCloseTo(1, 6);
+    // Full-bank mode: the observer passes no phase configuration to the bank
+    // (momentPhasesInRetrieval is compact-only), so the pattern is encoded
+    // phase-free on both sides and the correlation is exactly 1 — the W1
+    // phase-awareness lives in the compact bank's order-parameter term.
+    expect(hits[0].holographicScore).toBeGreaterThan(0.98);
     observer.dispose();
   });
 
@@ -256,6 +262,39 @@ describe('SemanticObserver', () => {
     observer.dispose();
   });
 
+  it('W1: the moment phase configuration is stored with the trace and phases recall (exact re-cue phase-locks)', async () => {
+    const observer = new SemanticObserver({
+      kernel,
+      memoryMode: 'compact',
+      primeCount: 64,
+      gridSize: 128,
+      smfWidth: 64
+    });
+    await observer.initialize();
+
+    observer.observe({ kind: 'text', content: 'apple', weight: 0.5 });
+    observer.tick(0.02);
+    const trace = observer.storeMemory('apple is a fruit');
+    expect(trace).not.toBeNull();
+    // The sparse stored phase configuration carries the excited primes.
+    expect(trace!.phasePrimes.length).toBeGreaterThan(0);
+    expect(trace!.phases.length).toBe(trace!.phasePrimes.length);
+    expect(trace!.phases.every(Number.isFinite)).toBe(true);
+
+    // Recall resolves the same cue and reads the (unchanged) field phases:
+    // the cue moment phase-locks with the stored moment.
+    const hits = observer.recallMemory('apple', 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].trace.id).toBe(trace!.id);
+    expect(hits[0].holographicScore).toBeGreaterThan(0.9);
+
+    // The serialized trace carries the phase pair back.
+    const serialized = observer.getMemoryBank().serializeTrace(trace!.id);
+    expect(serialized?.phasePrimes).toEqual([...trace!.phasePrimes]);
+    expect(serialized?.phases).toEqual([...trace!.phases]);
+    observer.dispose();
+  });
+
   it('rejects primeCount >= gridSize at construction with a typed error', () => {
     expect(() => new SemanticObserver({ kernel, primeCount: 32, gridSize: 32 })).toThrow(
       SemanticObserverConfigError
@@ -266,9 +305,27 @@ describe('SemanticObserver', () => {
   });
 
   it('caps primeCount and gridSize at construction with typed errors', () => {
-    expect(() => new SemanticObserver({ kernel, primeCount: 300 })).toThrow(ConfigurationLimitError);
+    expect(() => new SemanticObserver({ kernel, primeCount: 1025 })).toThrow(ConfigurationLimitError);
     expect(() => new SemanticObserver({ kernel, gridSize: 5000 })).toThrow(ConfigurationLimitError);
     expect(() => new SemanticObserver({ kernel, gridSize: 1e7 })).toThrow(ConfigurationLimitError);
+    expect(() => new SemanticObserver({ kernel, smfWidth: 4097 })).toThrow(ConfigurationLimitError);
+  });
+
+  it('honors the smfWidth option: the sketch and state carry the wider vector', async () => {
+    const observer = new SemanticObserver({ kernel, primeCount: 32, gridSize: 64, smfWidth: 64 });
+    await observer.initialize();
+
+    observer.processInput([2, 3, 5, 7], 0.5);
+    for (let i = 0; i < 3; i++) observer.tick(0.016);
+
+    const field = observer.getMemoryField();
+    expect(field.width).toBe(64);
+    expect(field.toArray()).toHaveLength(64);
+    expect(observer.getState().smf).toHaveLength(64);
+    expect(observer.getState().smf.every(Number.isFinite)).toBe(true);
+    expect(Number.isFinite(observer.getState().smfNormalizedEntropy)).toBe(true);
+
+    observer.dispose();
   });
 
   it('isolates a throwing tick subscriber: siblings still fire and the tick succeeds', async () => {
@@ -307,6 +364,20 @@ describe('SemanticObserver', () => {
 
     observer.processInput([2, 3, 5], 0.5);
 
+    // One SUCCESSFUL tick first so the per-tick bookkeeping fields
+    // (previousCoherence, previousHologram, lastSafety) are non-null — the
+    // rollback must restore exactly those values, and a regression that
+    // dropped one of them would corrupt the very next moment-crossing
+    // decision without changing any of the publicly asserted fields.
+    allow = true;
+    observer.tick(0.016);
+    allow = false;
+
+    const internalsBefore = {
+      previousCoherence: (observer as unknown as { previousCoherence: number | null }).previousCoherence,
+      previousHologram: (observer as unknown as { previousHologram: HolographicMemory | null }).previousHologram?.energy() ?? null,
+      lastSafety: (observer as unknown as { lastSafety: SafetyCheckResult | null }).lastSafety
+    };
     const before = observer.getState();
     const amplitudesBefore = observer.getOscillatorField().getAmplitudes();
     const smfBefore = observer.getMemoryField().toArray();
@@ -314,6 +385,13 @@ describe('SemanticObserver', () => {
 
     expect(() => observer.tick(0.016)).toThrow('injected tick failure');
     expect(errors).toHaveLength(1);
+
+    const internalsAfter = {
+      previousCoherence: (observer as unknown as { previousCoherence: number | null }).previousCoherence,
+      previousHologram: (observer as unknown as { previousHologram: HolographicMemory | null }).previousHologram?.energy() ?? null,
+      lastSafety: (observer as unknown as { lastSafety: SafetyCheckResult | null }).lastSafety
+    };
+    expect(internalsAfter).toEqual(internalsBefore);
 
     const after = observer.getState();
     expect(after.tickCount).toBe(before.tickCount);
@@ -324,11 +402,12 @@ describe('SemanticObserver', () => {
     expect(observer.getMemoryField().toArray()).toEqual(smfBefore);
     expect(observer.getHologram().energy()).toBeCloseTo(energyBefore, 10);
 
-    // The rollback leaves a consistent observer: the next tick is tick #1 and
-    // still sees the excitation that was made before the failed tick.
+    // The rollback leaves a consistent observer: the failing tick was #2
+    // (one success tick ran before it), so after rollback the next tick is
+    // #2 again and still sees the pre-failure excitation.
     allow = true;
     const event = observer.tick(0.016);
-    expect(event.tick).toBe(1);
+    expect(event.tick).toBe(2);
 
     errorSubscription.unsubscribe();
     observer.dispose();
@@ -401,6 +480,23 @@ describe('SemanticObserver vocabulary injection', () => {
     // Near-identical words now have DISJOINT signatures.
     const overlap = applePrimes.filter((p) => applyPrimes.includes(p));
     expect(overlap).toHaveLength(0);
+
+    observer.dispose();
+  });
+
+  it('encodes vocabulary stop words like "the" — the curriculum assigned them signatures', async () => {
+    const observer = new SemanticObserver({
+      kernel: vocabKernel,
+      primeCount: 32,
+      gridSize: 64,
+      vocabulary: { the: [2, 3, 5, 7], in: [11, 13, 17, 19] }
+    });
+    await observer.initialize();
+
+    // The backend's default stop-word list would drop 'the' and 'in'
+    // (encode returns []); explicit vocabulary signatures must win.
+    expect(observer.processInput('the', 0.5)).toEqual([2, 3, 5, 7]);
+    expect(observer.processInput('in', 0.5)).toEqual([11, 13, 17, 19]);
 
     observer.dispose();
   });

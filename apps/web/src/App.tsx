@@ -1,111 +1,393 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dashboard } from './components/Dashboard';
-import { TeacherPanel } from './components/TeacherPanel';
+import { ChatView } from './components/ChatView';
+import { TrainingView } from './components/TrainingView';
+import { VocabularyView } from './components/VocabularyView';
+import { SettingsView } from './components/SettingsView';
+import { ModelStateBar } from './components/ModelStateBar';
 import { TeacherAgent } from './teacher/TeacherAgent';
 import { ACTIVE_DECK } from './teacher/decks';
-import { PRIME_SPACE, deckVocabulary } from './teacher/primeSignature';
 import { createPersistenceStore } from './persistence/store';
 import { useObserver } from './observer/useObserver';
+import { OBSERVER_OPTIONS } from './observer/options';
+import { useLearningEngine } from './learning/useLearningEngine';
+import { useChat } from './chat/useChat';
+import { VoiceService, spokenAnswer } from './speech/voice';
+import {
+  fetchDeployedBootstrap,
+  importRecord,
+  shouldAutoImportBootstrap
+} from './teacher/bootstrapLoader';
 
 /**
- * Phase-2/3 encoding: a 32-prime field, whole-word prime signatures for the
+ * Phase-2/3 encoding: a 256-prime field, whole-word prime signatures for the
  * deck, and the COMPACT memory bank (lean traces + prefiltered recall — the
- * scale substrate measured at 99% accuracy over 500 words).
+ * scale substrate measured at 99% accuracy over 500 words). The options are
+ * shared with the batch trainer (observer/options.ts) so trained records
+ * always restore against the same prime basis.
  */
-const OBSERVER_OPTIONS = {
-  primeCount: 64,
-  gridSize: 128,
-  memoryMode: 'compact' as const,
-  vocabulary: deckVocabulary(ACTIVE_DECK, PRIME_SPACE)
+
+type View = 'chat' | 'training' | 'vocabulary' | 'mind' | 'settings';
+
+const NAV: ReadonlyArray<{ key: View; label: string; icon: string; hint: string }> = [
+  { key: 'chat', label: 'Chat', icon: '◍', hint: 'Talk to the observer' },
+  { key: 'training', label: 'Training', icon: '⁘', hint: 'Watch it learn, live' },
+  { key: 'vocabulary', label: 'Vocabulary', icon: '≡', hint: 'What it knows' },
+  { key: 'mind', label: 'Mind', icon: '◎', hint: 'Raw observer physics' },
+  { key: 'settings', label: 'Settings', icon: '⚙', hint: 'Teacher model and records' }
+];
+
+const VIEW_TITLE: Record<View, string> = {
+  chat: 'Chat',
+  training: 'Training',
+  vocabulary: 'Vocabulary',
+  mind: "The observer's mind",
+  settings: 'Settings'
 };
+
+/** How often the summary strip is recomputed (each pass is a full deck scan). */
+const SUMMARY_INTERVAL_MS = 3000;
+
+/** Bounded retries for the learning-record restore (exponential backoff). */
+const RESTORE_MAX_ATTEMPTS = 3;
+const RESTORE_RETRY_BASE_MS = 1000;
 
 export default function App() {
   // One store per app lifetime (stable identity — the hook and teacher share it).
   const persistence = useRef(createPersistenceStore());
   const { session, status, error, metrics, start, stop, lastStimulus, signals, diarySignals } =
     useObserver(persistence.current, OBSERVER_OPTIONS);
-  const [tab, setTab] = useState<'mind' | 'school'>('mind');
+  const [view, setView] = useState<View>('chat');
   const [restored, setRestored] = useState(0);
   const [staleCount, setStaleCount] = useState(0);
+  // Bumped whenever the async learning-record restore (traces, word states,
+  // chaperoned definitions) completes, and whenever a record is imported.
+  const [restoreEpoch, setRestoreEpoch] = useState(0);
+  const [summaryTick, setSummaryTick] = useState(0);
+  const [voice] = useState(() => new VoiceService());
+  // W6: a per-session composition seed (P5 determinism). The browser session
+  // gets ONE seed for its lifetime, so the same conversation state reproduces
+  // the same creative sentence within the session — the PRNG is never the
+  // bare Math.random the composition layer used to run on. A fresh session
+  // draws a fresh seed (variety across sessions); the batch/bench CLIs pass
+  // fixed seeds for cross-run reproducibility.
+  const compositionSeed = useRef<number | null>(null);
+  if (compositionSeed.current === null) {
+    compositionSeed.current = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+  }
 
   // The teacher exists only when the observer (the learner) is running.
   const teacher = useMemo(
     () =>
-      session !== null ? new TeacherAgent(session, ACTIVE_DECK, persistence.current) : null,
+      session !== null
+        ? new TeacherAgent(session, ACTIVE_DECK, persistence.current, 1, undefined, compositionSeed.current!)
+        : null,
     [session]
   );
 
-  // Restore the observer's learning record once the learner is awake.
+  const ready = status === 'ready' || status === 'degraded';
+
+  // The learning loop is owned HERE, not by a view — switching pages never
+  // unmounts it, so learning continues while the human chats or browses.
+  const engine = useLearningEngine(teacher, persistence.current, restoreEpoch);
+
+  const chat = useChat(
+    teacher,
+    engine.settings,
+    () => setSummaryTick((n) => n + 1),
+    (text) => {
+      // Speak only the first sentence — a recalled trace is "word: definition.
+      // example", and reading the whole raw content aloud is a wall of words.
+      if (voice.ttsAvailable) voice.speak(spokenAnswer(text));
+    }
+  );
+
+  // Restore the observer's learning record once the learner is awake. A
+  // transient IndexedDB failure must not leave the session unrestored: the
+  // guard is reset and the restore retried with exponential backoff (up to
+  // RESTORE_MAX_ATTEMPTS), then given up with a visible warning.
   const restoreGuard = useRef(false);
   useEffect(() => {
-    if (teacher !== null && (status === 'ready' || status === 'degraded') && !restoreGuard.current) {
-      restoreGuard.current = true;
-      void (async () => {
-        try {
-          const result = await teacher.restoreFromPersistence();
-          setRestored(result.restored);
-          setStaleCount(result.stale);
-          // Chaperoned definitions load AFTER the teacher exists; applying
-          // them upgrades word-only words to full learning.
-          const definitions = await persistence.current.loadDefinitions();
-          if (definitions.length > 0) {
-            teacher.applyDefinitions(definitions);
-          }
-        } catch (reason) {
-          console.warn('learning-record restore failed — starting fresh', reason);
+    if (teacher === null || !ready || restoreGuard.current) return;
+    restoreGuard.current = true;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const attempt = async () => {
+      if (cancelled) return;
+      try {
+        const result = await teacher.restoreFromPersistence();
+        setRestored(result.restored);
+        setStaleCount(result.stale);
+        // Chaperoned definitions load AFTER the teacher exists; applying
+        // them upgrades word-only words to full learning.
+        const definitions = await persistence.current.loadDefinitions();
+        if (definitions.length > 0) teacher.applyDefinitions(definitions);
+        setRestoreEpoch((n) => n + 1);
+      } catch (reason) {
+        if (cancelled) return;
+        attempts += 1;
+        if (attempts < RESTORE_MAX_ATTEMPTS) {
+          console.warn(
+            `learning-record restore failed (attempt ${attempts}/${RESTORE_MAX_ATTEMPTS}) — retrying`,
+            reason
+          );
+          timer = setTimeout(() => {
+            void attempt();
+          }, RESTORE_RETRY_BASE_MS * 2 ** (attempts - 1));
+        } else {
+          // Give up: reset the guard so a later sleep/wake cycle (a changed
+          // teacher or ready) can retry from scratch — the session is never
+          // permanently locked out of restoring.
+          restoreGuard.current = false;
+          console.warn('learning-record restore failed after 3 attempts — starting fresh', reason);
           setRestored(0);
           setStaleCount(0);
         }
-      })();
-    }
-  }, [teacher, status]);
+      }
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+      // A dep change (new teacher, readiness change) restarts the attempt
+      // budget instead of inheriting a stale in-flight guard.
+      restoreGuard.current = false;
+    };
+  }, [teacher, ready]);
+
+  useEffect(() => {
+    if (teacher === null) return;
+    const id = setInterval(() => setSummaryTick((n) => n + 1), SUMMARY_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [teacher]);
+
+  // The record trained headlessly (npm run train) is imported automatically
+  // when this browser has learned nothing yet, or when a newer record has
+  // been deployed since the last import. Gated on the restore so a fresh
+  // page never mistakes "not loaded yet" for "nothing learned".
+  const bootstrapGuard = useRef(false);
+  useEffect(() => {
+    if (teacher === null || restoreEpoch <= 0 || bootstrapGuard.current) return;
+    bootstrapGuard.current = true;
+    void (async () => {
+      try {
+        if (!(await shouldAutoImportBootstrap(teacher))) return;
+        const record = await fetchDeployedBootstrap();
+        await importRecord(teacher, record, { markDeployed: true });
+        setRestoreEpoch((n) => n + 1);
+      } catch (reason) {
+        // No deployed record is a normal state, not a failure.
+        console.info('no bootstrap record imported', reason);
+      }
+    })();
+  }, [teacher, restoreEpoch]);
+
+  // Writes are coalesced, so a page that goes away mid-window would drop the
+  // pending save. 'pagehide' and the hidden visibility state are the two
+  // events that actually fire on mobile Safari and on tab close.
+  useEffect(() => {
+    if (teacher === null) return;
+    const flush = () => {
+      void teacher.flush();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+      flush();
+    };
+  }, [teacher]);
+
+  const sleep = () => {
+    engine.stop();
+    void teacher?.flush();
+    stop();
+  };
+
+  const summary = useMemo(() => {
+    if (teacher === null) return { learned: 0, total: ACTIVE_DECK.length, competency: 0, creativeUnlocked: false };
+    const words = teacher.listWords();
+    const report = teacher.conversationReport();
+    return {
+      learned: words.filter((entry) => entry.traceId !== null).length,
+      total: words.length,
+      competency: report.competency,
+      creativeUnlocked: report.creativeUnlocked
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teacher, restoreEpoch, summaryTick]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <nav className="border-b border-slate-800 bg-slate-950/80">
-        <div className="mx-auto flex max-w-4xl items-center gap-4 px-6 py-3">
-          <span className="font-semibold text-slate-100">Sentinel</span>
-          <button
-            onClick={() => setTab('mind')}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              tab === 'mind' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            The observer's mind
-          </button>
-          <button
-            onClick={() => setTab('school')}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              tab === 'school' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            The schoolroom
-          </button>
+    <div className="flex h-full bg-slate-950 text-slate-100">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-slate-800/80 bg-slate-950">
+        <div className="flex items-center gap-2.5 px-5 py-4">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/15 text-sm text-emerald-300">
+            ◈
+          </span>
+          <span className="text-sm font-semibold tracking-tight text-slate-100">Sentinel</span>
         </div>
-      </nav>
 
-      {tab === 'mind' ? (
-        <Dashboard
-          status={status}
-          error={error}
-          metrics={metrics}
-          lastStimulus={lastStimulus}
-          signals={signals}
-          onStart={() => void start()}
-          onStop={stop}
-        />
-      ) : (
-        <TeacherPanel
-          key={`${restored}-${staleCount}`}
+        <nav className="space-y-0.5 px-3">
+          {NAV.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setView(item.key)}
+              aria-current={view === item.key ? 'page' : undefined}
+              title={item.hint}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+                view === item.key
+                  ? 'bg-slate-800/80 font-medium text-slate-100'
+                  : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+              }`}
+            >
+              <span className="w-4 text-center text-xs opacity-70">{item.icon}</span>
+              {item.label}
+              {item.key === 'training' && engine.running && (
+                <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {view === 'chat' && (
+          <div className="mt-5 flex min-h-0 flex-1 flex-col border-t border-slate-800/60 pt-4">
+            <div className="flex items-center justify-between px-5 pb-2">
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Conversations</span>
+              <button
+                onClick={chat.newConversation}
+                title="New conversation"
+                aria-label="New conversation"
+                className="flex h-5 w-5 items-center justify-center rounded text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+              >
+                +
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+              {chat.conversations.length === 0 ? (
+                <p className="px-2 py-1 text-xs text-slate-600">No conversations yet.</p>
+              ) : (
+                [...chat.conversations].reverse().map((conversation) => (
+                  <div
+                    key={conversation.id}
+                    className={`group flex items-center rounded-lg transition ${
+                      conversation.id === chat.activeId ? 'bg-slate-800/80' : 'hover:bg-slate-900'
+                    }`}
+                  >
+                    <button
+                      onClick={() => chat.selectConversation(conversation.id)}
+                      className={`min-w-0 flex-1 truncate px-3 py-2 text-left text-sm ${
+                        conversation.id === chat.activeId ? 'text-slate-100' : 'text-slate-400'
+                      }`}
+                      title={conversation.title}
+                    >
+                      {conversation.title}
+                    </button>
+                    <button
+                      onClick={() => chat.removeConversation(conversation.id)}
+                      aria-label={`Delete ${conversation.title}`}
+                      className="mr-1.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded text-slate-600 transition hover:bg-slate-700 hover:text-slate-200 group-hover:flex"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className={`${view === 'chat' ? '' : 'mt-auto'} border-t border-slate-800/60 px-5 py-3`}>
+          <button
+            onClick={() => (ready ? sleep() : void start())}
+            disabled={status === 'loading'}
+            className="w-full rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100 disabled:opacity-40"
+          >
+            {status === 'loading' ? 'Waking…' : ready ? 'Put the observer to sleep' : 'Wake the observer'}
+          </button>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
+            {persistence.current.kind === 'indexeddb' ? 'Memory saved in this browser' : 'Session-only memory'}
+            {restored > 0 ? ` · ${restored.toLocaleString()} restored` : ''}
+          </p>
+        </div>
+      </aside>
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <ModelStateBar
           teacher={teacher}
-          diarySignals={diarySignals}
-          persistenceKind={persistence.current.kind}
-          restoredCount={restored}
-          staleCount={staleCount}
-          persistence={persistence.current}
-          onDefinitionsApplied={() => setRestored((n) => n + 1)}
+          status={status}
+          learnedWords={summary.learned}
+          totalWords={summary.total}
+          competency={summary.competency}
+          creativeUnlocked={summary.creativeUnlocked}
+          learning={engine.running}
+          revision={engine.revision}
         />
-      )}
+
+        <div className="flex shrink-0 items-center gap-3 border-b border-slate-800/60 px-6 py-2.5">
+          <h1 className="text-sm font-medium text-slate-200">{VIEW_TITLE[view]}</h1>
+          {view !== 'training' && engine.running && (
+            <button
+              onClick={() => setView('training')}
+              className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] text-emerald-300 transition hover:bg-emerald-500/20"
+            >
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+              learning · {engine.stats.cycles} cycles
+            </button>
+          )}
+        </div>
+
+        {view === 'chat' && (
+          <ChatView
+            chat={chat}
+            ready={ready}
+            creativeUnlocked={summary.creativeUnlocked}
+            voice={voice}
+            onStartObserver={() => void start()}
+          />
+        )}
+
+        {view === 'training' && (
+          <TrainingView
+            engine={engine}
+            diarySignals={diarySignals}
+            ready={ready}
+            onStartObserver={() => void start()}
+            onOpenSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'vocabulary' && <VocabularyView teacher={teacher} revision={summaryTick + engine.revision} />}
+
+        {view === 'mind' && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <Dashboard
+              status={status}
+              error={error}
+              metrics={metrics}
+              lastStimulus={lastStimulus}
+              signals={signals}
+              onStart={() => void start()}
+              onStop={sleep}
+            />
+          </div>
+        )}
+
+        {view === 'settings' && (
+          <SettingsView
+            teacher={teacher}
+            engine={engine}
+            persistenceKind={persistence.current.kind}
+            restoredCount={restored}
+            staleCount={staleCount}
+            onRecordImported={() => setRestoreEpoch((n) => n + 1)}
+          />
+        )}
+      </main>
     </div>
   );
 }

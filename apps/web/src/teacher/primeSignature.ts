@@ -10,13 +10,32 @@
  * over the deck and the recall-accuracy benchmark measures the result.
  */
 
-/** First 64 primes — the field basis the app's observer uses (primeCount 64). */
-export const PRIME_SPACE: readonly number[] = [
-  2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53,
-  59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131,
-  137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223,
-  227, 229, 233, 239, 241, 251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311
-];
+/** First N primes — the field basis the app's observer uses for N=256;
+ *  the scale bench builds larger bases (512/1024) from the same sequence. */
+export function firstPrimes(count: number): number[] {
+  const primes: number[] = [];
+  let candidate = 2;
+  while (primes.length < count) {
+    let isPrime = true;
+    for (const p of primes) {
+      if (p * p > candidate) break;
+      if (candidate % p === 0) {
+        isPrime = false;
+        break;
+      }
+    }
+    if (isPrime) primes.push(candidate);
+    candidate += 1;
+  }
+  return primes;
+}
+
+export const PRIME_SPACE: readonly number[] = firstPrimes(256);
+
+// Guards: the computed space must begin with the canonical first primes.
+if (PRIME_SPACE[0] !== 2 || PRIME_SPACE[63] !== 311 || PRIME_SPACE.length !== 256) {
+  throw new Error('primeSignature: PRIME_SPACE is not the first 256 primes');
+}
 
 /** 4 primes per word (C(64,4) ≈ 635k signatures — collision-free at deck scale). */
 export const SIGNATURE_LENGTH = 4;

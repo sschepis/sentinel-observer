@@ -12,6 +12,15 @@ import type { WordState } from '../teacher/TeacherAgent';
 
 export type PersistenceKind = 'indexeddb' | 'memory';
 
+/**
+ * The diary is a rolling window — the app only ever renders its recent tail,
+ * but a training run emits a memory signal per lesson, so an uncapped table
+ * grows forever and makes every reload slower.
+ */
+const MAX_DIARY_ROWS = 500;
+/** Appends between prune passes. */
+const DIARY_PRUNE_SLACK = 200;
+
 export interface ChaperonedDefinition {
   word: string;
   definition: string;
@@ -26,8 +35,15 @@ export interface PersistenceStore {
   loadTraces(): Promise<SerializedTrace[]>;
   appendDiary(signals: ObserverSignal[]): Promise<void>;
   loadDiary(): Promise<ObserverSignal[]>;
+  /** Upsert by word — callers save incrementally, so this must never drop
+   *  definitions saved by an earlier call. */
   saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void>;
   loadDefinitions(): Promise<ChaperonedDefinition[]>;
+  /** The full higher-order learning state (composition weights, drive
+   *  weights, goal history, fade state, counters) as one JSON-serializable
+   *  record — the deliberative layers must survive reloads too. */
+  saveLearningState(state: Record<string, unknown>): Promise<void>;
+  loadLearningState(): Promise<Record<string, unknown> | null>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -49,29 +65,45 @@ export class MemoryPersistenceStore implements PersistenceStore {
   }
 
   async saveTraces(traces: SerializedTrace[]): Promise<void> {
-    this.traces = traces;
+    this.traces = traces.map((t) => ({ ...t, smf: [...t.smf], amplitudes: [...t.amplitudes] }));
   }
 
   async loadTraces(): Promise<SerializedTrace[]> {
-    return this.traces;
+    // Defensive copy — callers must not mutate the store's internal array.
+    return this.traces.map((t) => ({ ...t, smf: [...t.smf], amplitudes: [...t.amplitudes] }));
   }
 
   async appendDiary(signals: ObserverSignal[]): Promise<void> {
     this.diary.push(...signals);
+    if (this.diary.length > MAX_DIARY_ROWS) {
+      this.diary = this.diary.slice(-MAX_DIARY_ROWS);
+    }
   }
 
   async loadDiary(): Promise<ObserverSignal[]> {
     return [...this.diary];
   }
 
-  private definitions: ChaperonedDefinition[] = [];
+  private definitions = new Map<string, ChaperonedDefinition>();
 
   async saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void> {
-    this.definitions = definitions.map((d) => ({ ...d }));
+    for (const definition of definitions) {
+      this.definitions.set(definition.word, { ...definition });
+    }
   }
 
   async loadDefinitions(): Promise<ChaperonedDefinition[]> {
-    return this.definitions.map((d) => ({ ...d }));
+    return [...this.definitions.values()].map((d) => ({ ...d }));
+  }
+
+  private learningState: Record<string, unknown> | null = null;
+
+  async saveLearningState(state: Record<string, unknown>): Promise<void> {
+    this.learningState = state;
+  }
+
+  async loadLearningState(): Promise<Record<string, unknown> | null> {
+    return this.learningState === null ? null : { ...this.learningState };
   }
 }
 
@@ -88,22 +120,26 @@ class SentinelDB extends Dexie {
   traces!: Table<SerializedTrace, string>;
   diary!: Table<ObserverSignal, number>;
   definitions!: Table<ChaperonedDefinition, string>;
+  learningState!: Table<{ key: string; state: Record<string, unknown> }, string>;
 
   constructor() {
     super('sentinel');
     // v2: the diary table gains an index on 'at' — orderBy('at') requires it
     // (v1 shipped without the index and loadDiary threw SchemaError).
     // v3: the definitions table stores chaperone-generated deck content.
-    this.version(2).stores({
-      wordStates: 'key',
-      traces: 'id',
-      diary: '++, at'
-    });
+    // v4: the learningState table stores the higher-order learning record.
     this.version(3).stores({
       wordStates: 'key',
       traces: 'id',
       diary: '++, at',
       definitions: 'word'
+    });
+    this.version(4).stores({
+      wordStates: 'key',
+      traces: 'id',
+      diary: '++, at',
+      definitions: 'word',
+      learningState: 'key'
     });
   }
 }
@@ -111,6 +147,8 @@ class SentinelDB extends Dexie {
 export class IndexedDBPersistenceStore implements PersistenceStore {
   readonly kind: PersistenceKind = 'indexeddb';
   private readonly db = new SentinelDB();
+  /** Appends since the last prune (pruning every time costs a transaction). */
+  private sinceDiaryPrune = 0;
 
   async saveWordStates(states: WordState[]): Promise<void> {
     await this.db.wordStates.clear();
@@ -134,10 +172,23 @@ export class IndexedDBPersistenceStore implements PersistenceStore {
 
   async appendDiary(signals: ObserverSignal[]): Promise<void> {
     await this.db.diary.bulkAdd(signals);
+    // Counting on every append would cost a transaction per lesson.
+    this.sinceDiaryPrune += signals.length;
+    if (this.sinceDiaryPrune < DIARY_PRUNE_SLACK) return;
+    this.sinceDiaryPrune = 0;
+    const count = await this.db.diary.count();
+    if (count > MAX_DIARY_ROWS) {
+      const stale = await this.db.diary
+        .orderBy('at')
+        .limit(count - MAX_DIARY_ROWS)
+        .primaryKeys();
+      await this.db.diary.bulkDelete(stale);
+    }
   }
 
   async loadDiary(): Promise<ObserverSignal[]> {
-    return this.db.diary.orderBy('at').toArray();
+    const recent = await this.db.diary.orderBy('at').reverse().limit(MAX_DIARY_ROWS).toArray();
+    return recent.reverse();
   }
 
   async saveDefinitions(definitions: ChaperonedDefinition[]): Promise<void> {
@@ -146,6 +197,15 @@ export class IndexedDBPersistenceStore implements PersistenceStore {
 
   async loadDefinitions(): Promise<ChaperonedDefinition[]> {
     return this.db.definitions.toArray();
+  }
+
+  async saveLearningState(state: Record<string, unknown>): Promise<void> {
+    await this.db.learningState.put({ key: 'singleton', state });
+  }
+
+  async loadLearningState(): Promise<Record<string, unknown> | null> {
+    const row = await this.db.learningState.get('singleton');
+    return row === undefined ? null : row.state;
   }
 }
 

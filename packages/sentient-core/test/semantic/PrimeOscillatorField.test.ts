@@ -119,9 +119,9 @@ describe('PrimeOscillatorField', () => {
   });
 
   it('caps primeCount at construction with a typed error', () => {
-    expect(() => new PrimeOscillatorField({ primeCount: 257 })).toThrow(ConfigurationLimitError);
+    expect(() => new PrimeOscillatorField({ primeCount: 1025 })).toThrow(ConfigurationLimitError);
     expect(() => new PrimeOscillatorField({ primeCount: 1e7 })).toThrow(ConfigurationLimitError);
     // At the cap is fine (construction only - initialize is not required).
-    expect(new PrimeOscillatorField({ primeCount: 256 }).size).toBe(256);
+    expect(new PrimeOscillatorField({ primeCount: 1024 }).size).toBe(1024);
   });
 });

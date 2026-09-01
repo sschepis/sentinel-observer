@@ -15,7 +15,7 @@
   "type": "commonjs",
   "files": ["dist", "README.md"],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
+    "build": "tsc && tsc -p tsconfig.esm.json && node tools/fix-esm-exports.js",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "jest"

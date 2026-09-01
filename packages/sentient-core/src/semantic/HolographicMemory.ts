@@ -119,13 +119,17 @@ export interface HolographicMemoryOptions {
   omega?: number;
 }
 
-/** Serialized form. */
+/** Serialized form — includes the dynamics parameters so a round-tripped
+ *  field evolves exactly like the original (not with defaults). */
 export interface HolographicSnapshot {
   version: 1;
   gridSize: number;
   primes: number[];
   re: number[];
   im: number[];
+  lambda: number;
+  intensityDamping: number;
+  omega: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -152,9 +156,28 @@ export class HolographicMemory {
   private readonly re: Float64Array;
   private readonly im: Float64Array;
 
-  /** Precomputed basis: cos/sin of 2*pi*k*n/N for each (slot, cell). */
+  /**
+   * Precomputed basis: cos/sin of 2*pi*k*n/N for each (slot, cell).
+   *
+   * SHARED across instances: the tables depend only on the grid size and the
+   * per-prime wavenumbers, never on field state, so every field with the same
+   * (gridSize, wavenumbers) identity reads the same immutable arrays.
+   * `superpose`/`reconstruct` only ever READ them; all mutable state lives in
+   * `re`/`im`. Without sharing, every `clone()` rebuilt the full trig table
+   * (131k cos + 131k sin at the production 256-prime / 512-grid config) —
+   * ~2.6 ms per tick, twice per tick.
+   */
   private readonly basisCos: Float64Array;
   private readonly basisSin: Float64Array;
+
+  /**
+   * Process-wide cache of immutable basis tables, keyed by
+   * `gridSize|wavenumbers`. Bounded so the prime-space benchmark's large
+   * configs (1024 primes × 2048 grid ≈ 33 MB per table pair) cannot grow it
+   * without limit.
+   */
+  private static readonly basisCache = new Map<string, { cos: Float64Array; sin: Float64Array }>();
+  private static readonly BASIS_CACHE_MAX = 16;
 
   constructor(options: HolographicMemoryOptions = {}) {
     const rawGridSize = options.gridSize ?? DEFAULT_GRID_SIZE;
@@ -217,16 +240,29 @@ export class HolographicMemory {
     this.im = new Float64Array(this.N);
 
     const slots = this.primeList.length;
-    this.basisCos = new Float64Array(slots * this.N);
-    this.basisSin = new Float64Array(slots * this.N);
-    for (let s = 0; s < slots; s++) {
-      const k = this.wavenumbers[s];
-      for (let n = 0; n < this.N; n++) {
-        const theta = (2 * Math.PI * k * n) / this.N;
-        this.basisCos[s * this.N + n] = Math.cos(theta);
-        this.basisSin[s * this.N + n] = Math.sin(theta);
+    const basisKey = `${this.N}|${this.wavenumbers.join(',')}`;
+    let basis = HolographicMemory.basisCache.get(basisKey);
+    if (basis === undefined) {
+      basis = {
+        cos: new Float64Array(slots * this.N),
+        sin: new Float64Array(slots * this.N)
+      };
+      for (let s = 0; s < slots; s++) {
+        const k = this.wavenumbers[s];
+        for (let n = 0; n < this.N; n++) {
+          const theta = (2 * Math.PI * k * n) / this.N;
+          basis.cos[s * this.N + n] = Math.cos(theta);
+          basis.sin[s * this.N + n] = Math.sin(theta);
+        }
+      }
+      HolographicMemory.basisCache.set(basisKey, basis);
+      if (HolographicMemory.basisCache.size > HolographicMemory.BASIS_CACHE_MAX) {
+        const oldest = HolographicMemory.basisCache.keys().next().value;
+        if (oldest !== undefined) HolographicMemory.basisCache.delete(oldest);
       }
     }
+    this.basisCos = basis.cos;
+    this.basisSin = basis.sin;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -576,7 +612,10 @@ export class HolographicMemory {
       gridSize: this.N,
       primes: [...this.primeList],
       re: Array.from(this.re),
-      im: Array.from(this.im)
+      im: Array.from(this.im),
+      lambda: this.lambda,
+      intensityDamping: this.kappa,
+      omega: this.omega
     };
   }
 
@@ -602,7 +641,10 @@ export class HolographicMemory {
     const memory = new HolographicMemory({
       ...options,
       gridSize: snapshot.gridSize,
-      primes: snapshot.primes
+      primes: snapshot.primes,
+      lambda: snapshot.lambda,
+      intensityDamping: snapshot.intensityDamping,
+      omega: snapshot.omega
     });
     memory.re.set(snapshot.re);
     memory.im.set(snapshot.im);

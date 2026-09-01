@@ -346,7 +346,7 @@ describe('HolographicMemory', () => {
   it('caps gridSize and the prime basis with typed errors', () => {
     expect(() => new HolographicMemory({ gridSize: 4097 })).toThrow(ConfigurationLimitError);
     expect(() => new HolographicMemory({ gridSize: 1e7 })).toThrow(ConfigurationLimitError);
-    expect(() => new HolographicMemory({ gridSize: 300, primes: firstPrimes(257) })).toThrow(
+    expect(() => new HolographicMemory({ gridSize: 300, primes: firstPrimes(1025) })).toThrow(
       ConfigurationLimitError
     );
     // At the cap is fine.

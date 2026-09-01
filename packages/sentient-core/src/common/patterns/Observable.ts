@@ -119,6 +119,11 @@ export class Observable<T> {
    */
   take(count: number): Observable<T> {
     return new Observable<T>((observer) => {
+      if (count <= 0) {
+        // Nothing to take: complete immediately, never subscribe.
+        observer.complete?.();
+        return () => undefined;
+      }
       let remaining = count;
       const sub = this.subscribe({
         next: (value) => {
@@ -517,7 +522,8 @@ export class BehaviorSubject<T> extends Subject<T> {
   
   override subscribe(observer: Observer<T> | ((value: T) => void)): Subscription {
     const sub = super.subscribe(observer);
-    // Emit current value immediately
+    // Emit current value immediately — but never after the subject closed.
+    if (this.closed) return sub;
     if (typeof observer === 'function') {
       observer(this.currentValue);
     } else {

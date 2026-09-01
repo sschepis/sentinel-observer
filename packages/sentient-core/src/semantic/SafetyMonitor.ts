@@ -108,6 +108,16 @@ export interface SafetyStats {
   historySize: number;
 }
 
+/** Canonical severity → numeric weight. Single source of truth for both
+ *  ordering and safety scoring (SemanticObserver imports this). */
+export const SEVERITY_WEIGHT: Record<SafetySeverity, number> = {
+  low: 0.25,
+  medium: 0.5,
+  high: 0.75,
+  critical: 1
+};
+
+/** Severity ordering ranks, derived from the canonical severity order. */
 const SEVERITY_ORDER: Record<SafetySeverity, number> = {
   low: 0,
   medium: 1,
