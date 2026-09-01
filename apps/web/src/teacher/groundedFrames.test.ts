@@ -141,7 +141,6 @@ describe('grounded frames (P5)', () => {
   });
 });
 
-<<<<<<< HEAD
 describe('exception-aware grounded generation (negations propagate)', () => {
   const PENGUIN: Relation[] = [
     { subject: 'penguin', predicate: 'is-a', object: 'bird', source: 'def', origin: 'regex' },
