@@ -188,7 +188,47 @@ without changing the plan's shape — it makes those milestones concrete.
 
 ---
 
-## 7. Open questions for you
+## 7. Episodic memory: the selective journal
+
+The working-memory window is deliberately session-scoped — raw conversation
+must not survive restarts. Episodic memory is the deliberate, selective
+exception, and it earns the exception by being **selective and honest**:
+
+| Stored | Source | Example |
+|---|---|---|
+| `user-fact` | explicit first-person statements | "I am learning English for work" |
+| `vocabulary` | demonstrated grades (the observer's own measurements) | "you have been struggling with water" |
+| `topic` | content words recurring across turns **and sessions** | "you have talked about apple in 2 sessions" |
+| `time` | session boundaries, gaps between sessions | "a new session began after a gap of 2 days" |
+
+What it never stores: transcripts, observer replies, transient states
+("I am tired" is weather, not a fact), anything not measured or stated.
+
+**Salience policy (bounded, episode discipline).** One fact per episode, not
+a log: repeated observations *merge* into the existing fact. Each fact
+carries a persistent score — kind base (facts about the human outrank
+mechanics) × recency (freshness halves weekly) × frequency (saturates at ~4
+sightings) — with a boost for repeated demonstrated failure (task-relevant).
+Pruning keeps the store bounded (64 facts by default): below-floor facts are
+forgotten, session-gap facts fall off a 30-day TTL, and beyond the cap the
+lowest-salience facts are evicted — the same one-signal-per-episode
+discipline as the drift detector, applied to memory instead of coherence.
+
+**Retrieval contract (honesty gate).** A fact is retrieved only when the
+current turn touches one of its topics — no overlap, no injection. Every
+retrieved entry is tagged as remembered, and the observer may *speak* a
+memory only above a spoken-relevance floor ("I remember you found water hard
+last time" quotes a measured grade, never a guess). The hybrid voice is
+conditioned on the remembered facts with an explicit "never invent facts"
+instruction; the semantic grader still arbitrates what enters memory.
+
+**Persistence.** The journal rides the existing persistence contract
+(IndexedDB v5 `episodicMemory` table, in-memory store in degraded
+environments, reported honestly), restored on the same path as traces and
+word states. Near-threshold topic counters persist too, so recurrence that
+spans a restart still forms a fact — with both sessions on record.
+
+## 8. Open questions for you
 
 1. **Concept registry**: should concepts (human-readable labels for primes)
    be user-defined per session ("this article is about X") or auto-derived

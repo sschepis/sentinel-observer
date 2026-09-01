@@ -14,6 +14,7 @@ function engineStub(overrides: Partial<LearningEngine> = {}): LearningEngine {
     saveModel: () => {},
     events: [],
     clearEvents: () => {},
+    pushEvent: () => {},
     running: false,
     stats: {
       cycles: 0,

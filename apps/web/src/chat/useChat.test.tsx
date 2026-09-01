@@ -38,6 +38,7 @@ function fakeTeacher(kind: 'creative' | 'ask'): TeacherAgent {
     creativeGradeFeedback: () => true,
     gradeCreativeWithReliability: () => ({ stored: true, weight: 1, disagreement: false, regradeId: null }),
     recallMemories: () => [{ content: 'the sky remembers the rain', id: 'trace-1', score: 0.9 }],
+    episodicRecall: () => [],
     recordGap: () => {}
   } as unknown as TeacherAgent;
 }

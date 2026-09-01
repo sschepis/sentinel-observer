@@ -57,6 +57,11 @@ deck stays above a measured baseline (see §4).
 - Load: restore traces + states on start; save on teach/grade/decay events.
 - The observer's learning record becomes **cumulative across days** — which
   is what turns spaced repetition from a demo into a tool.
+- **Episodic memory**: salient facts about the human (user facts, vocabulary
+  mastery/failure, recurring topics, session gaps) persist across restarts —
+  bounded by a salience policy, tagged as remembered at retrieval, never raw
+  transcripts (the working window stays session-scoped by design). See
+  `docs/OBSERVER_INTERFACES.md` §7.
 
 ## 3. Content pipeline (real curriculum)
 
@@ -94,6 +99,7 @@ These become CI/benchmark runs, not feelings.
 | 3 | `CompactMemoryBank` (lean traces + prefilter) + benchmark suite | 5,000 |
 | 4 | Decay-driven SRS intervals + progress reports (retention curves, weekly review counts) | 5,000 |
 | 5 | Voice: STT/TTS conversation with the observer | 5,000 |
+| 6 | Episodic memory: salient facts, vocabulary mastery/failure, recurring topics, and session-gap context persist across restarts (bounded, salience-ranked) | all |
 
 Phases 1–3 are each independently shippable; every phase lands with its
 acceptance metric in CI.

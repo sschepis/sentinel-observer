@@ -18,6 +18,7 @@ function engineStub(overrides: Partial<LearningEngine> = {}): LearningEngine {
       makeEvent({ kind: 'question', label: 'asks', text: 'what does ripe mean?', at: 3000 })
     ],
     clearEvents: () => {},
+    pushEvent: () => {},
     running: false,
     stats: {
       cycles: 4,

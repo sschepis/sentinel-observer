@@ -740,20 +740,29 @@ export class Chaperone {
   async generateHybridAnswer(
     utterance: string,
     memories: readonly string[],
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; rememberedFacts?: readonly string[] } = {}
   ): Promise<string | null> {
     if (typeof this.provider.completeRaw !== 'function') return null;
     const context = memories.length > 0 ? `\nThe learner remembers these phrases:\n${memories.map((m) => `- ${m}`).join('\n')}` : '';
+    // EPISODIC FACTS: the learner's selective long-term memory about the
+    // human. Tagged as remembered so the draft may reference them, but the
+    // instruction forbids inventing new facts — the prompt is honest about
+    // what the observer actually knows.
+    const facts =
+      options.rememberedFacts !== undefined && options.rememberedFacts.length > 0
+        ? `\nThe learner remembers these facts about the human:\n${options.rememberedFacts.map((f) => `- ${f}`).join('\n')}`
+        : '';
     const systemPrompt =
       'You are the voice of a learner who only remembers the phrases listed below. ' +
       'Answer the utterance with EXACTLY ONE short, natural English sentence built only from the remembered ' +
       'words and patterns — never copy a remembered phrase verbatim, never use words the learner does not know. ' +
+      'You may mention a remembered fact about the human only when the utterance relates to it; never invent facts. ' +
       'Output only the sentence.';
     try {
       // The system prompt is sent once via the `system` role; the user
       // message carries only the memory context and the utterance.
       const raw = await this.provider.completeRaw(
-        `${context}\nThe learner was asked: "${utterance}"\nThe learner says:`,
+        `${context}${facts}\nThe learner was asked: "${utterance}"\nThe learner says:`,
         { signal: options.signal, systemPrompt, temperature: 0.6, maxTokens: 128 }
       );
       const sentence = raw.trim().replace(/^["']|["']$/g, '');

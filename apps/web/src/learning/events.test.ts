@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { classifyAutonomousEvent, fromObserverSignal, EVENT_FILTERS, EVENT_STYLES } from './events';
+import { classifyAutonomousEvent, fromObserverSignal, fromEpisodicFact, EVENT_FILTERS, EVENT_STYLES } from './events';
 import type { ObserverSignal } from '@sschepis/sentient-core';
 
 describe('learning events', () => {
@@ -44,5 +44,27 @@ describe('learning events', () => {
     for (const kind of Object.keys(EVENT_STYLES)) {
       expect(everything?.kinds).toContain(kind);
     }
+  });
+
+  it('folds a new episodic fact into the stream as a "remembers" event', () => {
+    const event = fromEpisodicFact(
+      {
+        id: 'user-fact:english|work',
+        kind: 'user-fact',
+        content: 'I am learning English for work.',
+        topics: ['english', 'work'],
+        probe: 'I am learning English for work.',
+        firstSeenAt: 1,
+        lastSeenAt: 2,
+        timesSeen: 1,
+        sessions: ['session-1'],
+        sessionCount: 1
+      },
+      1234
+    );
+    expect(event.kind).toBe('episodic');
+    expect(event.label).toBe('remembers');
+    expect(event.text).toContain('learning English for work');
+    expect(event.at).toBe(1234);
   });
 });

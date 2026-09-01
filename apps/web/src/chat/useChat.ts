@@ -7,6 +7,7 @@ import {
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { hybridAnswer } from '../teacher/hybrid';
+import type { EpisodicFact } from '../teacher/episodic';
 import {
   loadConversations,
   loadActiveConversationId,
@@ -43,7 +44,10 @@ export function useChat(
   teacher: TeacherAgent | null,
   settings: ChaperoneSettings,
   onTeacherChanged: () => void,
-  speak?: (text: string) => void
+  speak?: (text: string) => void,
+  /** New episodic facts this turn committed to long-term memory (surfaced
+   *  to the learning stream by the shell). */
+  onEpisodicStored?: (facts: EpisodicFact[]) => void
 ): ChatController {
   const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations());
   const [activeId, setActiveId] = useState<string | null>(() => {
@@ -191,6 +195,11 @@ export function useChat(
       // would strand the exchange in the wrong thread.
       const conversationId = ensureConversation();
       const answer = teacher.chatAnswer(utterance);
+      // New episodic facts (user facts, topics, session gaps) flow to the
+      // learning stream as "remembers" events.
+      if (answer.stored !== undefined && answer.stored.length > 0) {
+        onEpisodicStored?.(answer.stored);
+      }
 
       if (answer.mode === 'creative') {
         void gradeCreative(utterance, {

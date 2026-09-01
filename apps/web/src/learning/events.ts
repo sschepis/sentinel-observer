@@ -1,5 +1,6 @@
 import type { ObserverSignal } from '@sschepis/sentient-core';
 import type { AutonomousEvent } from '../teacher/autonomous';
+import type { EpisodicFact } from '../teacher/episodic';
 
 /**
  * One integrated stream of everything the observer is doing while it learns.
@@ -21,6 +22,7 @@ export type LearningEventKind =
   | 'drill'
   | 'drive'
   | 'memory'
+  | 'episodic'
   | 'system'
   | 'error';
 
@@ -56,6 +58,7 @@ export const EVENT_STYLES: Record<LearningEventKind, EventKindStyle> = {
   drill: { label: 'drill', tone: 'text-orange-300', dot: 'bg-orange-400' },
   drive: { label: 'drives', tone: 'text-violet-300', dot: 'bg-violet-400' },
   memory: { label: 'memory', tone: 'text-indigo-300', dot: 'bg-indigo-400' },
+  episodic: { label: 'remembers', tone: 'text-pink-300', dot: 'bg-pink-400' },
   system: { label: 'system', tone: 'text-slate-400', dot: 'bg-slate-500' },
   error: { label: 'error', tone: 'text-rose-300', dot: 'bg-rose-500' }
 };
@@ -83,6 +86,7 @@ export const EVENT_FILTERS: readonly EventFilter[] = [
       'drill',
       'drive',
       'memory',
+      'episodic',
       'system',
       'error'
     ]
@@ -92,7 +96,7 @@ export const EVENT_FILTERS: readonly EventFilter[] = [
   { key: 'dialogue', label: 'Dialogue', kinds: ['llm', 'observer', 'phrase'] },
   { key: 'questions', label: 'Questions', kinds: ['question'] },
   { key: 'grades', label: 'Grades', kinds: ['grade'] },
-  { key: 'signals', label: 'Inner state', kinds: ['drive', 'memory'] },
+  { key: 'signals', label: 'Inner state', kinds: ['drive', 'memory', 'episodic'] },
   { key: 'problems', label: 'Problems', kinds: ['error'] }
 ];
 
@@ -156,4 +160,14 @@ export function fromObserverSignal(signal: ObserverSignal): LearningEvent | null
         ? `forgetting "${content}" — needs practice`
         : `"${content}" is consolidated`;
   return makeEvent({ kind: 'memory', label: `memory · ${event}`, text, at: signal.at });
+}
+
+/**
+ * A NEW episodic fact — the observer committed something salient to its
+ * long-term memory ("remembered \"the user is learning English for work\"").
+ * Folded into the stream next to the memory signals, so the human sees what
+ * the observer chose to remember about them, not just what it was taught.
+ */
+export function fromEpisodicFact(fact: EpisodicFact, at = Date.now()): LearningEvent {
+  return makeEvent({ kind: 'episodic', label: 'remembers', text: `remembered "${fact.content}"`, at });
 }
