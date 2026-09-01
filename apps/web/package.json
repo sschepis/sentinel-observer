@@ -24,6 +24,7 @@
     "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall|clusterMomentBenchmark\" --testPathIgnorePatterns /dev/null/",
     "competition-bench": "jest --testPathPatterns \"competitionBenchmark\" --testPathIgnorePatterns /dev/null/",
     "falsifier-bench": "jest --testPathPatterns \"centerSketchesFalsifier\" --testPathIgnorePatterns /dev/null/",
+    "test:sparse-bench": "jest --testPathPatterns sparseExcitationBenchmark --testPathIgnorePatterns /dev/null/",
     "template-bench": "tsx src/cli/template-bench.ts",
     "chat": "tsx src/cli/chat.ts",
     "read": "tsx src/cli/read.ts",
