@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { ObserverSignal, SerializedTrace } from '@sschepis/sentient-core';
 import type { WordState } from '../teacher/TeacherAgent';
+import type { EpisodicMemorySnapshot } from '../teacher/episodic';
 
 /**
  * Persistence for the observer's learning record.
@@ -44,6 +45,12 @@ export interface PersistenceStore {
    *  record — the deliberative layers must survive reloads too. */
   saveLearningState(state: Record<string, unknown>): Promise<void>;
   loadLearningState(): Promise<Record<string, unknown> | null>;
+  /** The episodic memory (salient facts about the human, vocabulary
+   *  mastery/failure, recurring topics, session-gap context) — persisted so
+   *  the observer remembers the learner across sessions, bounded by the
+   *  salience policy inside the episodic module. */
+  saveEpisodicMemory(snapshot: EpisodicMemorySnapshot): Promise<void>;
+  loadEpisodicMemory(): Promise<EpisodicMemorySnapshot | null>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -105,6 +112,16 @@ export class MemoryPersistenceStore implements PersistenceStore {
   async loadLearningState(): Promise<Record<string, unknown> | null> {
     return this.learningState === null ? null : { ...this.learningState };
   }
+
+  private episodicMemory: EpisodicMemorySnapshot | null = null;
+
+  async saveEpisodicMemory(snapshot: EpisodicMemorySnapshot): Promise<void> {
+    this.episodicMemory = JSON.parse(JSON.stringify(snapshot)) as EpisodicMemorySnapshot;
+  }
+
+  async loadEpisodicMemory(): Promise<EpisodicMemorySnapshot | null> {
+    return this.episodicMemory === null ? null : (JSON.parse(JSON.stringify(this.episodicMemory)) as EpisodicMemorySnapshot);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -121,6 +138,7 @@ class SentinelDB extends Dexie {
   diary!: Table<ObserverSignal, number>;
   definitions!: Table<ChaperonedDefinition, string>;
   learningState!: Table<{ key: string; state: Record<string, unknown> }, string>;
+  episodicMemory!: Table<{ key: string; snapshot: EpisodicMemorySnapshot }, string>;
 
   constructor() {
     super('sentinel');
@@ -128,6 +146,8 @@ class SentinelDB extends Dexie {
     // (v1 shipped without the index and loadDiary threw SchemaError).
     // v3: the definitions table stores chaperone-generated deck content.
     // v4: the learningState table stores the higher-order learning record.
+    // v5: the episodicMemory table stores the salient-facts journal (user
+    //     facts, vocabulary mastery/failure, recurring topics, session gaps).
     this.version(3).stores({
       wordStates: 'key',
       traces: 'id',
@@ -140,6 +160,14 @@ class SentinelDB extends Dexie {
       diary: '++, at',
       definitions: 'word',
       learningState: 'key'
+    });
+    this.version(5).stores({
+      wordStates: 'key',
+      traces: 'id',
+      diary: '++, at',
+      definitions: 'word',
+      learningState: 'key',
+      episodicMemory: 'key'
     });
   }
 }
@@ -206,6 +234,15 @@ export class IndexedDBPersistenceStore implements PersistenceStore {
   async loadLearningState(): Promise<Record<string, unknown> | null> {
     const row = await this.db.learningState.get('singleton');
     return row === undefined ? null : row.state;
+  }
+
+  async saveEpisodicMemory(snapshot: EpisodicMemorySnapshot): Promise<void> {
+    await this.db.episodicMemory.put({ key: 'singleton', snapshot });
+  }
+
+  async loadEpisodicMemory(): Promise<EpisodicMemorySnapshot | null> {
+    const row = await this.db.episodicMemory.get('singleton');
+    return row === undefined ? null : row.snapshot;
   }
 }
 

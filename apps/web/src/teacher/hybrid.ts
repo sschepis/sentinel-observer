@@ -37,7 +37,19 @@ export async function hybridAnswer(
   signal?: AbortSignal
 ): Promise<HybridResult | null> {
   const memories = teacher.recallMemories(utterance, 5);
-  const draft = await chaperone.generateHybridAnswer(utterance, memories.map((m) => m.content), { signal });
+  // EPISODIC CONTEXT: the facts the observer remembers about the human,
+  // tagged as remembered — the LLM drafts conditioned on the observer's
+  // long-term memory, not just its phrase memory. The grader arbitrates
+  // what the observer actually stores.
+  const remembered = teacher.episodicRecall(utterance, 3);
+  const draft = await chaperone.generateHybridAnswer(
+    utterance,
+    memories.map((m) => m.content),
+    {
+      signal,
+      ...(remembered.length > 0 ? { rememberedFacts: remembered.map((r) => r.fact.content) } : {})
+    }
+  );
   if (draft === null) return null;
 
   let score: number | null = null;

@@ -17,7 +17,11 @@ export interface WorkingTurn {
 }
 
 /** Ring buffer of recent turns (session-scoped by design — conversation
- *  context must not persist across restarts). */
+ *  context must not persist across restarts). EPISODIC memory (episodic.ts)
+ *  is the deliberate, selective exception: only SALIENT facts survive — user
+ *  facts, vocabulary mastery/failure, recurring topics, session gaps — and
+ *  every retrieved entry is tagged as remembered. Raw transcripts never
+ *  persist; episodes do. */
 export class WorkingMemory {
   private readonly turns: WorkingTurn[] = [];
 

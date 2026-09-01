@@ -63,6 +63,9 @@ export interface LearningEngine {
   /** Every learning event, oldest first. */
   events: LearningEvent[];
   clearEvents: () => void;
+  /** Push one external event into the stream (the shell forwards chat-side
+   *  events — episodic memories — that the loop itself never sees). */
+  pushEvent: (event: LearningEvent) => void;
   running: boolean;
   stats: LearningStats;
   error: string | null;
@@ -140,6 +143,11 @@ export function useLearningEngine(
   }, []);
 
   const clearEvents = useCallback(() => setEvents([]), []);
+
+  /** Forward an external event (episodic memories from the chat path). */
+  const pushEvent = useCallback((event: LearningEvent) => {
+    setEvents((prev) => [...prev, event].slice(-MAX_EVENTS));
+  }, []);
 
   const saveModel = useCallback((next: ModelSettings) => {
     setModel(saveModelSettings(next));
@@ -440,6 +448,7 @@ export function useLearningEngine(
       saveModel,
       events,
       clearEvents,
+      pushEvent,
       running,
       stats,
       error,
@@ -459,6 +468,7 @@ export function useLearningEngine(
       saveModel,
       events,
       clearEvents,
+      pushEvent,
       running,
       stats,
       error,

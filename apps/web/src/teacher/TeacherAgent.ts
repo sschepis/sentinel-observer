@@ -47,6 +47,7 @@ import { TokenCostModel } from './mdl';
 import { ACTIVE_DECK } from './decks';
 import { computeDrives, chooseBehavior, updateDriveWeight, ARCHETYPAL_BEHAVIORS, type DriveSignals, type DriveState, type BehaviorOption, type BehaviorWeights } from './drives';
 import { WorkingMemory, resolveReferences, extractUnknownSubject, tokenizeText, singularize, isContentWord, cosineSimilarity, type WorkingTurn } from './context';
+import { EpisodicMemory, EPISODIC_SPOKEN_RELEVANCE_FLOOR, type EpisodicFact, type RememberedFact } from './episodic';
 import { clampRange } from '@sschepis/sentient-core';
 import {
   BOOTSTRAP_VERSION,
@@ -197,6 +198,16 @@ export type ChatAnswer =
   | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; provenance: AnswerProvenance }
   | { mode: 'ask'; response: string; provenance: AnswerProvenance }
   | { mode: 'decline'; provenance: AnswerProvenance };
+
+/**
+ * A chat answer with the episodic-memory envelope attached: `remembered`
+ * names the persistent facts clearly relevant to this turn (each tagged as
+ * remembered — never an inference), and `stored` names the facts this turn
+ * CREATED (new memories, surfaced to the learning stream). The working-memory
+ * window itself stays session-scoped; this is the selective, honest channel
+ * across sessions.
+ */
+export type ChatAnswerWithMemory = ChatAnswer & { remembered?: RememberedFact[]; stored?: EpisodicFact[] };
 
 export interface CreativeReply extends CreativeComposition {
   /** Recall confidence of the seed memories (null when nothing recalled). */
@@ -590,6 +601,14 @@ export class TeacherAgent {
 
   /** Recent conversation turns (session-scoped context for references). */
   private readonly workingMemory = new WorkingMemory();
+  /**
+   * EPISODIC MEMORY: the selective journal that DOES survive restarts —
+   * salient facts about the human, vocabulary mastery/failure, recurring
+   * topics, and session gaps, bounded by its salience policy and tagged as
+   * remembered at retrieval. Deliberately separate from the working window:
+   * raw transcripts never persist; episodes do.
+   */
+  private readonly episodic: EpisodicMemory;
   /** Discovered language patterns (operators learned from strong answers). */
   private operatorLearner: OperatorLearner;
   /** Deck words the observer can know — immutable, cached once. */
@@ -689,11 +708,18 @@ export class TeacherAgent {
      * chain questions recover through the graded layer — the held-out
      * relational-reasoning measurement.
      */
-    hiddenRelationKeys?: ReadonlySet<string>
+    hiddenRelationKeys?: ReadonlySet<string>,
+    /**
+     * The session-gap threshold for the episodic memory (default 30 min).
+     * Exposed so tests can cross session boundaries deterministically;
+     * the app never needs it.
+     */
+    episodicSessionGapMs?: number
   ) {
     this.persistEvery = Math.max(1, Math.floor(persistEvery));
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
+    this.episodic = new EpisodicMemory(episodicSessionGapMs);
     this.compositionRng = compositionSeed !== undefined ? mulberry32(compositionSeed) : Math.random;
     // The operator learner's MDL prior is the FULL frequency deck — token
     // costs are a fixed linguistic prior, not a property of the slice being
@@ -855,6 +881,16 @@ export class TeacherAgent {
     // states bind, so each trace decays on ITS stability — time passed while
     // the observer was away decays exactly what the model predicts.
     this.applyRetention(Date.now());
+
+    // EPISODIC MEMORY: the salient-facts journal survives restarts. A store
+    // failure degrades to a fresh memory (the chat degrades to session-only
+    // context, reported honestly — the same contract as the other layers).
+    try {
+      const episodicSnapshot = await this.persistence.loadEpisodicMemory();
+      if (episodicSnapshot !== null) this.episodic.deserialize(episodicSnapshot);
+    } catch (error) {
+      console.warn('episodic-memory restore failed — starting fresh', error);
+    }
 
     // THE FULL LEARNING STATE: the deliberative layers must survive a
     // reload — composition weights (its tiny language model, so fluency
@@ -1234,7 +1270,9 @@ export class TeacherAgent {
         // keep up with the learning loop.
         this.persistence.saveWordStates([...this.states.values()].filter(isTouchedWordState)),
         this.persistence.saveTraces(traces),
-        this.persistence.saveLearningState(learningState)
+        this.persistence.saveLearningState(learningState),
+        // The episodic journal (salient facts, bounded by its own policy).
+        this.persistence.saveEpisodicMemory(this.episodic.serialize())
       ]);
     } catch (error) {
       console.warn('persistence save failed', error);
@@ -1685,6 +1723,10 @@ export class TeacherAgent {
       verdict === 'correct' ? 'success' : 'failure',
       detail
     );
+    // EPISODIC MEMORY: the verdict is a MEASURED fact about the human's
+    // demonstrated mastery or failure of this word — recorded as a memory
+    // the observer can reference in later sessions ("you found X hard").
+    this.episodic.noteGrade(state.word.word, verdict);
 
     state.lastAskedAt = Date.now();
     state.lastGrade = verdict;
@@ -2664,7 +2706,7 @@ export class TeacherAgent {
    * References ("it", "that") resolve against the recent working-memory
    * window first; the observer never guesses a referent.
    */
-  chatAnswer(utterance: string): ChatAnswer {
+  chatAnswer(utterance: string): ChatAnswerWithMemory {
     // Resolve references against the window BEFORE noting the current turn —
     // otherwise the utterance would be its own referent source ("is it always
     // like that?" -> "alway"). Known words are preferred referents. Clock and
@@ -2674,6 +2716,19 @@ export class TeacherAgent {
       ? utterance.trim()
       : resolveReferences(utterance, this.workingMemory.all(), (word) => known.has(word));
     this.workingMemory.note('user', utterance);
+    // EPISODIC MEMORY: this turn is observed (user facts, topic recurrence,
+    // session boundaries) and the facts clearly relevant to it are retrieved
+    // — tagged as remembered, gated by topic overlap. The 8-turn working
+    // window above is untouched: this is the selective long-term channel.
+    const episodicTurn = this.episodic.observeTurn('user', utterance);
+    const remembered = this.episodic.recall(utterance, {
+      sessionStarted: episodicTurn.sessionStarted
+    });
+    const finish = <T extends ChatAnswer>(answer: T): ChatAnswerWithMemory => ({
+      ...answer,
+      remembered: remembered.length > 0 ? remembered : undefined,
+      stored: episodicTurn.stored.length > 0 ? episodicTurn.stored : undefined
+    });
     // Encounter tracking: deck words the observer HEARS but has no
     // definition for become curiosity fuel.
     for (const token of tokenizeText(utterance)) {
@@ -2687,7 +2742,7 @@ export class TeacherAgent {
     }
     if (resolved.trim().length === 0) {
       this.noteAnswerMode('decline');
-      return { mode: 'decline', provenance: EMPTY_PROVENANCE };
+      return finish({ mode: 'decline', provenance: EMPTY_PROVENANCE });
     }
 
     // 0. Clock/date are DETERMINISTIC TRUTH — they must beat any memorized
@@ -2698,7 +2753,7 @@ export class TeacherAgent {
       if (clock !== null) {
         this.workingMemory.note('observer', clock.answer);
         this.noteAnswerMode('operator');
-        return { mode: 'operator', response: clock.answer, operator: clock, provenance: EMPTY_PROVENANCE };
+        return finish({ mode: 'operator', response: clock.answer, operator: clock, provenance: EMPTY_PROVENANCE });
       }
     }
 
@@ -2719,7 +2774,7 @@ export class TeacherAgent {
     if (memorized.response !== null && memorized.confidence !== null && memorized.confidence >= CONVERSATION_HIGH_CONFIDENCE && cueMatches) {
       this.workingMemory.note('observer', memorized.response);
       this.noteAnswerMode('memorized');
-      return {
+      return finish({
         mode: 'memorized',
         response: memorized.response,
         confidence: memorized.confidence,
@@ -2728,7 +2783,7 @@ export class TeacherAgent {
           traceIds: memorized.traceId !== null ? [memorized.traceId] : [],
           edges: []
         }
-      };
+      });
     }
 
     // 1.5 NEGATION STATEMENTS (P8): "golf is not a bird" TEACHES a
@@ -2743,12 +2798,12 @@ export class TeacherAgent {
       this.teachResponse({ cue: resolved, response });
       this.workingMemory.note('observer', response);
       this.noteAnswerMode('operator');
-      return {
+      return finish({
         mode: 'operator',
         response,
         operator: { kind: 'compiled-rule', concept: subject, drill: 'negation', answer: response },
         provenance: { traceIds: [], edges: [{ subject, predicate, object }], operatorId: 'negation' }
-      };
+      });
     }
 
     // 2. Operators: answer novel questions from memory deterministically.
@@ -2790,7 +2845,7 @@ export class TeacherAgent {
     if (operator !== null) {
       this.workingMemory.note('observer', operator.answer);
       this.noteAnswerMode('operator');
-      return {
+      return finish({
         mode: 'operator',
         response: operator.answer,
         operator,
@@ -2799,7 +2854,7 @@ export class TeacherAgent {
           edges: operatorEdges(operator),
           operatorId: operator.kind
         }
-      };
+      });
     }
 
     // 2.5 LEARNED OPERATORS: patterns the observer discovered from its own
@@ -2809,12 +2864,12 @@ export class TeacherAgent {
     if (learned !== null) {
       this.workingMemory.note('observer', learned.answer);
       this.noteAnswerMode('operator');
-      return {
+      return finish({
         mode: 'operator',
         response: learned.answer,
         operator: learned,
         provenance: { traceIds: [], edges: [], operatorId: learned.patternId }
-      };
+      });
     }
 
     // 2.6 COMPILED RULES: executable programs induced from drills (P2). A
@@ -2825,12 +2880,12 @@ export class TeacherAgent {
     if (compiled !== null) {
       this.workingMemory.note('observer', compiled.answer);
       this.noteAnswerMode('operator');
-      return {
+      return finish({
         mode: 'operator',
         response: compiled.answer,
         operator: compiled,
         provenance: { traceIds: [], edges: [], operatorId: compiled.ruleId }
-      };
+      });
     }
 
     // 3. Creative composition once unlocked — recent turns join the seed
@@ -2882,7 +2937,7 @@ export class TeacherAgent {
           .filter((trace) => reply.seedTraceIds.includes(trace.id))
           .map((trace) => trace.content);
         this.noteGrounding(groundingScore(reply.sentence, seedContents).grounding);
-        return {
+        return finish({
           mode: 'creative',
           response: reply.sentence,
           confidence: reply.confidence,
@@ -2890,7 +2945,7 @@ export class TeacherAgent {
           seedCount: reply.seedCount,
           grounded: reply.grounded,
           provenance: { traceIds: reply.seedTraceIds, edges: reply.edges }
-        };
+        });
       }
     }
 
@@ -2916,8 +2971,22 @@ export class TeacherAgent {
       this.noteBehaviorOutcome('ask', false);
     }
     const unknown = unknownInUtterance;
+    // EPISODIC REFERENCE: when the turn mentions a word the human has
+    // DEMONSTRATED failure on (a measured vocabulary fact, retrieved above
+    // the spoken-relevance floor), the observer names that memory in its
+    // question — "last time you struggled with X" is a stored fact, not a
+    // guess. Anything below the floor is never spoken as a memory.
+    const spokenStruggle = remembered.find(
+      (entry) =>
+        entry.fact.kind === 'vocabulary' &&
+        entry.fact.lastVerdict === 'wrong' &&
+        entry.relevance >= EPISODIC_SPOKEN_RELEVANCE_FLOOR
+    );
     let question: string;
-    if (unknown !== null) {
+    if (spokenStruggle !== undefined) {
+      const subject = spokenStruggle.fact.topics[0];
+      question = `I remember you found "${subject}" hard last time — could you teach me about it?`;
+    } else if (unknown !== null) {
       question = `I do not know what "${unknown}" means. Could you teach me?`;
     } else if (questionForm !== null && questionForm.object !== undefined) {
       // Honest unknown for an unsupported relational question — no relation
@@ -2934,12 +3003,15 @@ export class TeacherAgent {
     }
     this.workingMemory.note('observer', question);
     this.noteAnswerMode('ask');
-    return { mode: 'ask', response: question, provenance: EMPTY_PROVENANCE };
+    return finish({ mode: 'ask', response: question, provenance: EMPTY_PROVENANCE });
   }
 
-  /** Record a turn in the working-memory window (used by external drivers). */
+  /** Record a turn in the working-memory window (used by external drivers).
+   *  User turns are also observed by the episodic memory — a driver that
+   *  bypasses chatAnswer must still feed the selective journal. */
   noteTurn(role: 'user' | 'observer', text: string): void {
     this.workingMemory.note(role, text);
+    this.episodic.observeTurn(role, text);
   }
 
   /**
@@ -2957,6 +3029,18 @@ export class TeacherAgent {
   /** The recent conversation window (for the UI context line). */
   getWorkingMemory(): WorkingTurn[] {
     return this.workingMemory.all();
+  }
+
+  /** Every stored episodic fact (read-only — the selective journal). */
+  episodicFacts(): readonly EpisodicFact[] {
+    return this.episodic.all();
+  }
+
+  /** The episodic facts clearly relevant to an utterance, tagged as
+   *  remembered (topic-gated, salience-ranked). Consumed by the hybrid
+   *  voice and any caller that needs the long-term context. */
+  episodicRecall(utterance: string, topK = 3): RememberedFact[] {
+    return this.episodic.recall(utterance, { topK });
   }
 
   /** The learned composition transition weights (read-only — the observer's

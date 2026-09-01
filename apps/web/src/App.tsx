@@ -13,6 +13,7 @@ import { OBSERVER_OPTIONS } from './observer/options';
 import { useLearningEngine } from './learning/useLearningEngine';
 import { useChat } from './chat/useChat';
 import { VoiceService, spokenAnswer } from './speech/voice';
+import { fromEpisodicFact } from './learning/events';
 import {
   fetchDeployedBootstrap,
   importRecord,
@@ -99,6 +100,11 @@ export default function App() {
       // Speak only the first sentence — a recalled trace is "word: definition.
       // example", and reading the whole raw content aloud is a wall of words.
       if (voice.ttsAvailable) voice.speak(spokenAnswer(text));
+    },
+    // The observer's new long-term memories land in the training stream as
+    // "remembers" events — the human sees what it chose to remember.
+    (facts) => {
+      for (const fact of facts) engine.pushEvent(fromEpisodicFact(fact));
     }
   );
 
