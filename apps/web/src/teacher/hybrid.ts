@@ -1,9 +1,31 @@
 import { CREATIVE_REINFORCE_SCORE, CREATIVE_WEAKEN_SCORE, type TeacherAgent } from './TeacherAgent';
 import type { Chaperone, SemanticGrader } from './chaperone';
+import type { RememberedFact } from './episodic';
 
 // The store/gap policy is shared with creative practice — one threshold
 // pair, no drift. Re-exported for callers that need the numbers.
 export { CREATIVE_REINFORCE_SCORE as HYBRID_STORE_SCORE, CREATIVE_WEAKEN_SCORE as HYBRID_GAP_SCORE } from './TeacherAgent';
+
+/**
+ * The structural subset of the teacher the hybrid voice needs. The real
+ * TeacherAgent satisfies it; a remote teacher (observer server) does not —
+ * the hybrid draft is conditioned on the teacher's own memory internals, so
+ * it runs only where those internals exist.
+ */
+export interface HybridCapableTeacher {
+  recallMemories(utterance: string, topK?: number): Array<{ content: string; id: string; score: number }>;
+  episodicRecall(utterance: string, topK?: number): RememberedFact[];
+  recordGap(utterance: string): void;
+  gradeCreativeWithReliability(
+    provenance: Parameters<TeacherAgent['gradeCreativeWithReliability']>[0],
+    score: number | null,
+    utterance: string,
+    answer: string,
+    provider: string
+  ):
+    | ReturnType<TeacherAgent['gradeCreativeWithReliability']>
+    | Promise<ReturnType<TeacherAgent['gradeCreativeWithReliability']>>;
+}
 
 /**
  * The HYBRID voice — the ceiling layer of the conversation stack.
@@ -34,7 +56,7 @@ export interface HybridResult {
 
 
 export async function hybridAnswer(
-  teacher: TeacherAgent,
+  teacher: HybridCapableTeacher,
   chaperone: Chaperone,
   grader: SemanticGrader | null,
   utterance: string,
@@ -73,12 +95,14 @@ export async function hybridAnswer(
   let stored = false;
   let regradeId: string | null = null;
   if (score !== null && score >= CREATIVE_REINFORCE_SCORE) {
-    const graded = teacher.gradeCreativeWithReliability(
-      { traceIds: memories.map((m) => m.id), edges: [] },
-      score,
-      utterance,
-      draft,
-      grader !== null ? grader.name : ''
+    const graded = await Promise.resolve(
+      teacher.gradeCreativeWithReliability(
+        { traceIds: memories.map((m) => m.id), edges: [] },
+        score,
+        utterance,
+        draft,
+        grader !== null ? grader.name : ''
+      )
     );
     stored = graded.stored;
     regradeId = graded.regradeId;

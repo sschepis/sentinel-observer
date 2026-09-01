@@ -1326,3 +1326,56 @@ cosine needs" is exactly the EMA trajectory.
 new) · web **818/818** · word-recognition gates 2/2 · competency 99.0%
 (control) / 100.0% (combined). Default-off, so the shipped engine is
 bit-identical.
+## 21. The observer server — learning survives the page
+
+**The problem.** The observer ran inside the browser: the model lived in the
+tab, and IndexedDB was the only thing standing between a reload and a wipe.
+A server process owns the observer instead — it keeps ticking while no page
+is connected, saves its learning record to disk on a timer and on shutdown,
+and restores the trained model on boot. Reloading the page (or restarting
+the server) reloads the model that has been training, never a fresh one.
+
+**The pieces.**
+- `apps/web/src/server/FilePersistenceStore.ts` — the `PersistenceStore`
+  interface over JSON files in a data directory; every write is atomic
+  (temp + rename), writes are chained, failures never break the loop.
+- `apps/web/src/server/ServerSession.ts` — ObserverSession + TeacherAgent,
+  boot order: on-disk record → bootstrap record → fresh core (words +
+  conversation deck); continuous tick loop; autosave interval; save-on-
+  shutdown; wake/sleep.
+- `apps/web/src/server/http.ts` — zero-dependency HTTP + SSE API:
+  `POST /api/chat|compose|grade|teach|observe|wake|sleep|save`,
+  `GET /api/state|words|snapshot`, `GET /api/events` (SSE metrics/signals).
+- `apps/web/src/server/client.ts` + `useRemoteObserver` + `ServerPanel` —
+  the browser becomes a thin client: it probes the server once, and when the
+  server answers, chat, dashboard, vocabulary, training and settings all read
+  the server's observer; when it does not, the app honestly degrades to the
+  in-browser observer. The hybrid escalation reads teacher memory internals,
+  so it runs only against a teacher that has them (`HybridCapableTeacher`).
+
+**The gate: restore fidelity** (`serverParity.test.ts`, runs as part of
+`npm run test:bench`). Reloading restores the PERSISTED record but not the
+observer's transient live SMF trajectory — the §19/§20 EMA state — so the
+correct control is reload-vs-reload: a fresh in-process reload of a disk
+record and a server boot of the same record must reproduce the same
+retrieval distribution row for row. Measured (40 words + 728 pairs, 50
+cues):
+
+| | before reload | after reload (server) |
+|---|---|---|
+| top-1 rank | 100.0% | 100.0% |
+| mean true-trace score | 0.8037 | 0.7963 |
+| mean distractor score | 0.6647 | 0.6593 |
+| **mean margin** | **+0.1390** | **+0.1370** |
+
+The in-process reload and the server reload agree bit-for-bit on every row;
+the −0.002 margin delta is the measured cost of losing the live cue-side
+trajectory, identical to what a browser reload already costs.
+
+**Controls after the change:** typecheck clean · core **271/271** · web
+**818/818** · the margin bench on the in-browser path unchanged (the engine
+is untouched — this is infrastructure, and the gate proves the server path
+loses nothing the browser path keeps). End-to-end browser check: remote
+mode drives the server (chat answers with server confidence, vocabulary
+reads the server's 750/20,250), a page reload reconnects to the same model,
+and a server restart restores it mid-session.

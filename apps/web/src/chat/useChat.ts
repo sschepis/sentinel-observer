@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { EdgeRef, TeacherAgent } from '../teacher/TeacherAgent';
+import type { EdgeRef } from '../teacher/TeacherAgent';
 import {
   Chaperone,
   OpenAICompatProvider,
@@ -8,6 +8,7 @@ import {
 } from '../teacher/chaperone';
 import { hybridAnswer } from '../teacher/hybrid';
 import type { EpisodicFact } from '../teacher/episodic';
+import { awaitable, isHybridCapable, type ChatTeacher } from '../server/client';
 import {
   loadConversations,
   loadActiveConversationId,
@@ -39,9 +40,12 @@ export interface ChatController {
  *
  * Owned by the app shell rather than the chat view, so an in-flight LLM
  * escalation survives navigating to the training stream and back.
+ *
+ * `teacher` may be the real in-browser TeacherAgent or a remote teacher
+ * backed by the observer server (server/client.ts) — the hook awaits either.
  */
 export function useChat(
-  teacher: TeacherAgent | null,
+  teacher: ChatTeacher | null,
   settings: ChaperoneSettings,
   onTeacherChanged: () => void,
   speak?: (text: string) => void,
@@ -153,12 +157,14 @@ export function useChat(
       // edges ride along so the world-feedback class is credited on them;
       // the template ids ride along so the learned-frame induction credits
       // the structures the accepted answer demonstrated.
-      const graded = teacher.gradeCreativeWithReliability(
-        { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds },
-        score,
-        utterance,
-        reply.sentence,
-        settings.model || settings.endpoint
+      const graded = await awaitable(
+        teacher.gradeCreativeWithReliability(
+          { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds },
+          score,
+          utterance,
+          reply.sentence,
+          settings.model || settings.endpoint
+        )
       );
       if (graded.regradeId !== null) {
         feedback = `${feedback !== null && feedback.length > 0 ? feedback : `graded ${score?.toFixed(2)}`} — the internal check disagrees (re-grade pending)`;
@@ -188,7 +194,7 @@ export function useChat(
   );
 
   const send = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const utterance = raw.trim();
       if (teacher === null || utterance.length === 0) return;
       // The exchange's home is fixed at SEND time — the grade/hybrid paths
@@ -196,7 +202,7 @@ export function useChat(
       // switch conversations. Routing by the push-time active conversation
       // would strand the exchange in the wrong thread.
       const conversationId = ensureConversation();
-      const answer = teacher.chatAnswer(utterance);
+      const answer = await awaitable(teacher.chatAnswer(utterance));
       // New episodic facts (user facts, topics, session gaps) flow to the
       // learning stream as "remembers" events.
       if (answer.stored !== undefined && answer.stored.length > 0) {
@@ -226,8 +232,12 @@ export function useChat(
 
       // HYBRID ESCALATION: when the observer had to ask, the LLM drafts an
       // answer conditioned on the observer's OWN memories; a strong draft
-      // becomes a memory so no LLM is needed next time.
-      if (answer.mode === 'ask' && settings.endpoint.trim().length > 0) {
+      // becomes a memory so no LLM is needed next time. This path reads the
+      // teacher's memory internals (recallMemories / episodicRecall /
+      // recordGap), so it runs only against a teacher that has them — the
+      // remote teacher answers exactly what the server's observer knows and
+      // escalates to an honest ask.
+      if (answer.mode === 'ask' && settings.endpoint.trim().length > 0 && isHybridCapable(teacher)) {
         setPending(true);
         setStatus('the observer is asking its teacher…');
         void (async () => {
@@ -266,11 +276,11 @@ export function useChat(
 
   /** Force a composed (creative) answer regardless of what recall would do. */
   const compose = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       if (teacher === null) return;
       const utterance = raw.trim().length > 0 ? raw.trim() : 'tell me something new';
       const conversationId = ensureConversation();
-      const reply = teacher.creativeReply(utterance);
+      const reply = await awaitable(teacher.creativeReply(utterance));
       if (reply.sentence.trim().length === 0) {
         setStatus('the observer has no words to compose with yet');
         return;

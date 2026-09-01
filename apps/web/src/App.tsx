@@ -5,6 +5,7 @@ import { TrainingView } from './components/TrainingView';
 import { VocabularyView } from './components/VocabularyView';
 import { SettingsView } from './components/SettingsView';
 import { ModelStateBar } from './components/ModelStateBar';
+import ServerPanel, { RemoteVocabulary, RemoteSettings } from './components/ServerPanel';
 import { TeacherAgent } from './teacher/TeacherAgent';
 import { ACTIVE_DECK } from './teacher/decks';
 import { createPersistenceStore } from './persistence/store';
@@ -14,6 +15,8 @@ import { useLearningEngine } from './learning/useLearningEngine';
 import { useChat } from './chat/useChat';
 import { VoiceService, spokenAnswer } from './speech/voice';
 import { fromEpisodicFact } from './learning/events';
+import { RemoteClient, remoteChatTeacher } from './server/client';
+import { useRemoteObserver } from './server/useRemoteObserver';
 import {
   fetchDeployedBootstrap,
   importRecord,
@@ -53,11 +56,68 @@ const SUMMARY_INTERVAL_MS = 3000;
 const RESTORE_MAX_ATTEMPTS = 3;
 const RESTORE_RETRY_BASE_MS = 1000;
 
+/** Where the observer server lives (editable in Settings). When the server
+ *  is unreachable the app honestly degrades to the in-browser observer. */
+const SERVER_URL_KEY = 'sentinel-server-url';
+const DEFAULT_SERVER_URL = 'http://localhost:8787';
+
 export default function App() {
   // One store per app lifetime (stable identity — the hook and teacher share it).
   const persistence = useRef(createPersistenceStore());
   const { session, status, error, metrics, start, stop, lastStimulus, signals, diarySignals } =
     useObserver(persistence.current, OBSERVER_OPTIONS);
+
+  // ── The observer server (remote mode) ────────────────────────────────────
+  // The observer may run as a server process instead of in this browser.
+  // The app probes the configured URL once; when reachable, the server IS
+  // the observer (chat, dashboard, vocabulary, training all read it), and
+  // the in-browser observer above is never started.
+  const [serverUrl, setServerUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem(SERVER_URL_KEY) ?? DEFAULT_SERVER_URL;
+    } catch {
+      return DEFAULT_SERVER_URL;
+    }
+  });
+  const saveServerUrl = (next: string) => {
+    setServerUrl(next);
+    try {
+      localStorage.setItem(SERVER_URL_KEY, next);
+    } catch {
+      // A convenience; a quota failure must not break the app.
+    }
+  };
+  const remote = useRemoteObserver(serverUrl);
+  const [remoteAvailable, setRemoteAvailable] = useState<boolean | null>(null);
+  const [probeEpoch, setProbeEpoch] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setRemoteAvailable(null);
+    RemoteClient.probe(serverUrl).then(
+      () => {
+        if (!cancelled) setRemoteAvailable(true);
+      },
+      () => {
+        if (!cancelled) setRemoteAvailable(false);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [serverUrl, probeEpoch]);
+
+  useEffect(() => {
+    if (remoteAvailable === true) {
+      remote.connect();
+    } else if (remoteAvailable === false) {
+      remote.disconnect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteAvailable]);
+  const serverMode = remoteAvailable === true && remote.status === 'ready';
+  const remoteClient = remote.client;
+  const remoteTeacher = useMemo(() => remoteChatTeacher(remoteClient), [remoteClient]);
+
   const [view, setView] = useState<View>('chat');
   const [restored, setRestored] = useState(0);
   const [staleCount, setStaleCount] = useState(0);
@@ -86,14 +146,16 @@ export default function App() {
     [session]
   );
 
-  const ready = status === 'ready' || status === 'degraded';
+  const ready = serverMode ? true : status === 'ready' || status === 'degraded';
 
   // The learning loop is owned HERE, not by a view — switching pages never
   // unmounts it, so learning continues while the human chats or browses.
+  // In remote mode the observer learns ON THE SERVER (its own continuous
+  // process); this loop stays idle because the local teacher is null.
   const engine = useLearningEngine(teacher, persistence.current, restoreEpoch);
 
   const chat = useChat(
-    teacher,
+    serverMode ? remoteTeacher : teacher,
     engine.settings,
     () => setSummaryTick((n) => n + 1),
     (text) => {
@@ -216,6 +278,14 @@ export default function App() {
   };
 
   const summary = useMemo(() => {
+    if (serverMode && remote.server !== null) {
+      return {
+        learned: remote.server.learned,
+        total: remote.server.total,
+        competency: remote.server.competency,
+        creativeUnlocked: remote.server.creativeUnlocked
+      };
+    }
     if (teacher === null) return { learned: 0, total: ACTIVE_DECK.length, competency: 0, creativeUnlocked: false };
     const words = teacher.listWords();
     const report = teacher.conversationReport();
@@ -226,7 +296,7 @@ export default function App() {
       creativeUnlocked: report.creativeUnlocked
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teacher, restoreEpoch, summaryTick]);
+  }, [teacher, restoreEpoch, summaryTick, serverMode, remote.server]);
 
   return (
     <div className="flex h-full bg-slate-950 text-slate-100">
@@ -308,35 +378,57 @@ export default function App() {
         )}
 
         <div className={`${view === 'chat' ? '' : 'mt-auto'} border-t border-slate-800/60 px-5 py-3`}>
-          <button
-            onClick={() => (ready ? sleep() : void start())}
-            disabled={status === 'loading'}
-            className="w-full rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100 disabled:opacity-40"
-          >
-            {status === 'loading' ? 'Waking…' : ready ? 'Put the observer to sleep' : 'Wake the observer'}
-          </button>
+          {serverMode ? (
+            <button
+              onClick={() => {
+                if (remote.server?.running === true) void remoteClient.sleep().then(() => remote.refresh());
+                else void remoteClient.wake().then(() => remote.refresh());
+              }}
+              className="w-full rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
+            >
+              {remote.server?.running === true ? 'Pause the server observer' : 'Resume the server observer'}
+            </button>
+          ) : (
+            <button
+              onClick={() => (ready ? sleep() : void start())}
+              disabled={status === 'loading'}
+              className="w-full rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100 disabled:opacity-40"
+            >
+              {status === 'loading' ? 'Waking…' : ready ? 'Put the observer to sleep' : 'Wake the observer'}
+            </button>
+          )}
           <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
-            {persistence.current.kind === 'indexeddb' ? 'Memory saved in this browser' : 'Session-only memory'}
-            {restored > 0 ? ` · ${restored.toLocaleString()} restored` : ''}
+            {serverMode
+              ? `Learning on the observer server${remote.server?.savedAt !== null ? ` · saved ${new Date(remote.server!.savedAt!).toLocaleTimeString()}` : ''}`
+              : persistence.current.kind === 'indexeddb'
+                ? 'Memory saved in this browser'
+                : 'Session-only memory'}
+            {!serverMode && restored > 0 ? ` · ${restored.toLocaleString()} restored` : ''}
           </p>
         </div>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
         <ModelStateBar
-          teacher={teacher}
-          status={status}
+          teacher={serverMode ? null : teacher}
+          status={serverMode ? remote.status : status}
           learnedWords={summary.learned}
           totalWords={summary.total}
           competency={summary.competency}
           creativeUnlocked={summary.creativeUnlocked}
-          learning={engine.running}
+          learning={serverMode ? (remote.server?.running ?? false) : engine.running}
           revision={engine.revision}
         />
 
         <div className="flex shrink-0 items-center gap-3 border-b border-slate-800/60 px-6 py-2.5">
           <h1 className="text-sm font-medium text-slate-200">{VIEW_TITLE[view]}</h1>
-          {view !== 'training' && engine.running && (
+          {serverMode && (
+            <span className="flex items-center gap-1.5 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] text-sky-300">
+              <span className={`h-1.5 w-1.5 rounded-full ${remote.server?.running === true ? 'animate-pulse bg-sky-400' : 'bg-slate-500'}`} />
+              observer server · {remote.server?.running === true ? 'learning' : 'paused'}
+            </span>
+          )}
+          {!serverMode && view !== 'training' && engine.running && (
             <button
               onClick={() => setView('training')}
               className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] text-emerald-300 transition hover:bg-emerald-500/20"
@@ -353,46 +445,70 @@ export default function App() {
             ready={ready}
             creativeUnlocked={summary.creativeUnlocked}
             voice={voice}
-            onStartObserver={() => void start()}
+            onStartObserver={() => (serverMode ? void remoteClient.wake().then(() => remote.refresh()) : void start())}
           />
         )}
 
-        {view === 'training' && (
-          <TrainingView
-            engine={engine}
-            diarySignals={diarySignals}
-            ready={ready}
-            onStartObserver={() => void start()}
-            onOpenSettings={() => setView('settings')}
-          />
-        )}
+        {view === 'training' &&
+          (serverMode ? (
+            <ServerPanel
+              client={remoteClient}
+              status={remote.status}
+              error={remote.error}
+              signals={remote.signals}
+              refresh={remote.refresh}
+            />
+          ) : (
+            <TrainingView
+              engine={engine}
+              diarySignals={diarySignals}
+              ready={ready}
+              onStartObserver={() => void start()}
+              onOpenSettings={() => setView('settings')}
+            />
+          ))}
 
-        {view === 'vocabulary' && <VocabularyView teacher={teacher} revision={summaryTick + engine.revision} />}
+        {view === 'vocabulary' &&
+          (serverMode ? (
+            <RemoteVocabulary client={remoteClient} revision={summaryTick} />
+          ) : (
+            <VocabularyView teacher={teacher} revision={summaryTick + engine.revision} />
+          ))}
 
         {view === 'mind' && (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <Dashboard
-              status={status}
-              error={error}
-              metrics={metrics}
-              lastStimulus={lastStimulus}
-              signals={signals}
-              onStart={() => void start()}
-              onStop={sleep}
+              status={serverMode ? remote.status : status}
+              error={serverMode ? remote.error : error}
+              metrics={serverMode ? remote.metrics : metrics}
+              lastStimulus={serverMode ? null : lastStimulus}
+              signals={serverMode ? remote.signals : signals}
+              onStart={() => (serverMode ? void remoteClient.wake().then(() => remote.refresh()) : void start())}
+              onStop={() => (serverMode ? void remoteClient.sleep().then(() => remote.refresh()) : sleep())}
             />
           </div>
         )}
 
-        {view === 'settings' && (
-          <SettingsView
-            teacher={teacher}
-            engine={engine}
-            persistenceKind={persistence.current.kind}
-            restoredCount={restored}
-            staleCount={staleCount}
-            onRecordImported={() => setRestoreEpoch((n) => n + 1)}
-          />
-        )}
+        {view === 'settings' &&
+          (serverMode ? (
+            <RemoteSettings
+              url={serverUrl}
+              saveUrl={saveServerUrl}
+              client={remoteClient}
+              status={remote.status}
+              error={remote.error}
+              refresh={remote.refresh}
+            />
+          ) : (
+            <SettingsView
+              teacher={teacher}
+              engine={engine}
+              persistenceKind={persistence.current.kind}
+              restoredCount={restored}
+              staleCount={staleCount}
+              onRecordImported={() => setRestoreEpoch((n) => n + 1)}
+            />
+          ))}
       </main>
     </div>
   );
