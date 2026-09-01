@@ -7,6 +7,32 @@ export const BOOTSTRAP_VERSION = 2 as const;
 export const BOOTSTRAP_VOCABULARY_SCHEME = SEMANTIC_VOCABULARY_SCHEME;
 
 /**
+ * Fingerprint of a vocabulary table: FNV-1a over the sorted word:signature
+ * lines. Under the semantic scheme, signatures derive from DEFINITIONS
+ * (is-a mining + global category-prime ranking), so ANY deck-content change
+ * — an override, a layered sense, an appended word — can silently shift
+ * signatures for words whose stored traces were trained under the old
+ * table. The scheme/version/deck checks cannot see that; this fingerprint
+ * can, so a stale deployed record is rejected loudly instead of decoding
+ * traces against a mismatched basis.
+ */
+export function computeVocabularyFingerprint(vocabulary: Record<string, readonly number[]>): string {
+  const lines = Object.keys(vocabulary)
+    .sort()
+    .map((word) => `${word}:${vocabulary[word].join(',')}`);
+  let hash = 0x811c9dc5;
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i += 1) {
+      hash ^= line.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    hash ^= 0x0a; // line separator, so ["ab","c"] never collides with ["a","bc"]
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
  * The bootstrap learning record: a complete, serializable snapshot of the
  * observer's learned state, produced headlessly by the batch trainer CLI and
  * imported by the app (`TeacherAgent.importBootstrap`). The record uses the
@@ -38,6 +64,10 @@ export interface BootstrapDefinition {
 export interface BootstrapRecord {
   version: typeof BOOTSTRAP_VERSION;
   vocabularyScheme: typeof BOOTSTRAP_VOCABULARY_SCHEME;
+  /** Fingerprint of the vocabulary table the record was trained under (see
+   *  computeVocabularyFingerprint). Absent on legacy records; when present,
+   *  the deployed-record loader rejects a mismatch loudly. */
+  vocabularyFingerprint?: string;
   /** Record encoding marker. 'q16' = amplitudes quantized to uint16
    *  fixed-point (dequantized on import); absent = legacy float amplitudes. */
   encoding?: 'q16';

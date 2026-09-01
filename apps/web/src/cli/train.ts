@@ -63,6 +63,7 @@ import { hybridAnswer } from '../teacher/hybrid';
 import { selfSufficiencyClass } from '../teacher/autonomous';
 import { MemoryPersistenceStore } from '../persistence/store';
 import type { BootstrapRecord } from '../teacher/bootstrap';
+import { computeVocabularyFingerprint } from '../teacher/bootstrap';
 import type { DeckWord } from '../teacher/deck';
 
 const COLOR_RE = new RegExp(COLOR_WORDS.join('|'));
@@ -1458,6 +1459,11 @@ async function main(): Promise<void> {
   // instead of silently dropping the bindings for words it never taught.
   await teacher.persistAll();
   const record = teacher.exportBootstrap(args.deckFile !== null ? 'classroom' : 'en-20000');
+  // Stamp the vocabulary the record was trained under: this run's sessions
+  // were built from OBSERVER_OPTIONS, and the loader rejects a deployed
+  // record whose fingerprint no longer matches the app's deck (deck-content
+  // drift shifts semantic signatures silently — see bootstrap.ts).
+  record.vocabularyFingerprint = computeVocabularyFingerprint(OBSERVER_OPTIONS.vocabulary);
 
   mkdirSync(dirname(args.out), { recursive: true });
   writeFileSync(args.out, JSON.stringify(record), 'utf8');

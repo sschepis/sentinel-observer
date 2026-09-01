@@ -1,6 +1,6 @@
 import { isContentWord, tokenizeText } from '../context';
 import type { TokenCostModel } from '../mdl';
-import { inheritsEdge, edgeObjects } from '../chain';
+import { inheritsEdge, edgeObjects, type DeniedClaim } from '../chain';
 import type { Relation } from '../relations';
 
 /**
@@ -101,14 +101,22 @@ const HOLE_PREDICATES = [
   'opposite-of'
 ] as const;
 
+const NEVER_DENIED: DeniedClaim = () => false;
+
 /** The predicate under which `word` is derivable from `slot`, or null.
  *  Direct edges count (inheritsEdge returns null for those by convention). */
-function findHolePredicate(relations: readonly Relation[], slot: string, word: string): string | null {
+function findHolePredicate(
+  relations: readonly Relation[],
+  slot: string,
+  word: string,
+  denied: DeniedClaim
+): string | null {
   for (const predicate of HOLE_PREDICATES) {
+    if (denied(slot, predicate, word)) continue;
     const direct = relations.some(
       (r) => r.subject === slot && r.predicate === predicate && r.object === word
     );
-    if (direct || inheritsEdge(relations, slot, predicate, word) !== null) return predicate;
+    if (direct || inheritsEdge(relations, slot, predicate, word, denied) !== null) return predicate;
   }
   return null;
 }
@@ -118,10 +126,15 @@ function findHolePredicate(relations: readonly Relation[], slot: string, word: s
  * cannot be filled (the edge vanished, or a repeated hole ran past the
  * object list) — the operator declines rather than echo a stale object.
  */
-function resolveHoles(template: string, slot: string, relations: () => readonly Relation[]): string | null {
+function resolveHoles(
+  template: string,
+  slot: string,
+  relations: () => readonly Relation[],
+  denied: DeniedClaim
+): string | null {
   const objects = relations();
   const resolved = template.replace(HOLE_RE, (marker, predicate: string, index?: string) => {
-    const candidates = edgeObjects(objects, slot, predicate);
+    const candidates = edgeObjects(objects, slot, predicate, denied);
     const i = index === undefined ? 0 : Number(index);
     if (i >= candidates.length) return marker; // unresolved — decline below
     return candidates[i];
@@ -143,7 +156,9 @@ export class OperatorLearner {
    */
   constructor(
     private readonly cost: TokenCostModel | null = null,
-    private readonly relations?: () => readonly Relation[]
+    private readonly relations?: () => readonly Relation[],
+    /** The confirmed-false store as a veto (fire-time exception check). */
+    private readonly denied: () => DeniedClaim = () => NEVER_DENIED
   ) {}
 
   private tokenCost(token: string): number {
@@ -196,10 +211,11 @@ export class OperatorLearner {
     const holeWords: Array<{ word: string; predicate: string }> = [];
     if (this.relations !== undefined) {
       const relations = this.relations();
+      const denied = this.denied();
       for (const word of answerTokens) {
         if (word === slot) continue;
         if (!isContentWord(word)) continue;
-        const predicate = findHolePredicate(relations, slot, word);
+        const predicate = findHolePredicate(relations, slot, word, denied);
         if (predicate === null) return null;
         holeWords.push({ word, predicate });
       }
@@ -299,7 +315,7 @@ export class OperatorLearner {
       // P6: relation holes are filled at FIRE time from the graph. An edge
       // that vanished since learning declines the operator — grounding is a
       // fire-time invariant, never a learn-time promise.
-      const resolved = this.relations !== undefined ? resolveHoles(template, slot, this.relations) : template;
+      const resolved = this.relations !== undefined ? resolveHoles(template, slot, this.relations, this.denied()) : template;
       if (resolved === null) continue;
       const answer = resolved.replace(/\{slot\}/g, slot);
       if (answer === template) continue;

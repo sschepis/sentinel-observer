@@ -12,7 +12,7 @@
  * as a LABELED fallback (the caller marks the answer `grounded: false`).
  */
 
-import { edgeObjects, inheritsEdge } from './chain';
+import { edgeObjects, inheritsEdge, deniedFromNegations, type DeniedClaim } from './chain';
 import { isContentWord, tokenizeText } from './context';
 import type { Relation, RelationPredicate } from './relations';
 import type { Negation } from './relations';
@@ -42,18 +42,22 @@ function listPhrase(words: readonly string[]): string {
 }
 
 /**
- * The typed frames a subject can fill, each built ONLY from stored edges
+ * The typed frames a subject can fill, built ONLY from stored edges
  * (direct or inherited). The FIRST frame always names the subject (so the
  * critic can resolve it); later frames use "It".
  */
-export function framesFor(subject: string, relations: readonly Relation[]): string[] {
+export function framesFor(
+  subject: string,
+  relations: readonly Relation[],
+  denied: DeniedClaim = () => false
+): string[] {
   const frames: string[] = [];
-  const parents = edgeObjects(relations, subject, 'is-a');
-  const parts = edgeObjects(relations, subject, 'has-part').slice(0, 3);
-  const props = edgeObjects(relations, subject, 'has-property').slice(0, 3);
-  const actions = edgeObjects(relations, subject, 'capable-of').slice(0, 3);
-  const purposes = edgeObjects(relations, subject, 'used-for').slice(0, 3);
-  const materials = edgeObjects(relations, subject, 'made-of').slice(0, 3);
+  const parents = edgeObjects(relations, subject, 'is-a', denied);
+  const parts = edgeObjects(relations, subject, 'has-part', denied).slice(0, 3);
+  const props = edgeObjects(relations, subject, 'has-property', denied).slice(0, 3);
+  const actions = edgeObjects(relations, subject, 'capable-of', denied).slice(0, 3);
+  const purposes = edgeObjects(relations, subject, 'used-for', denied).slice(0, 3);
+  const materials = edgeObjects(relations, subject, 'made-of', denied).slice(0, 3);
 
   if (parents.length > 0) frames.push(`A ${subject} is ${article(parents[0])} ${parents[0]}.`);
   else if (parts.length > 0) frames.push(`A ${subject} has ${listPhrase(parts)}.`);
@@ -72,8 +76,12 @@ export function framesFor(subject: string, relations: readonly Relation[]): stri
 }
 
 /** Subjects (from the recall seeds) that have at least one fillable frame. */
-export function groundedSubjects(words: readonly string[], relations: readonly Relation[]): string[] {
-  return [...new Set(words)].filter((word) => isContentWord(word) && framesFor(word, relations).length > 0);
+export function groundedSubjects(
+  words: readonly string[],
+  relations: readonly Relation[],
+  denied: DeniedClaim = () => false
+): string[] {
+  return [...new Set(words)].filter((word) => isContentWord(word) && framesFor(word, relations, denied).length > 0);
 }
 
 /**
@@ -85,16 +93,18 @@ export function composeGrounded(
   seedWords: readonly string[],
   relations: readonly Relation[],
   rng: () => number,
-  maxSentences = 3
+  maxSentences = 3,
+  negations: readonly Negation[] = []
 ): GroundedComposition | null {
-  const candidates = groundedSubjects(seedWords, relations);
+  const denied = deniedFromNegations(negations);
+  const candidates = groundedSubjects(seedWords, relations, denied);
   if (candidates.length === 0) return null;
   // Prefer the utterance's own topic: seedWords are ordered [utterance words,
   // ...memory words], so the first candidate is the first utterance content
   // word with edges. It wins most draws; the pool keeps variety.
   const subject =
     rng() < 0.75 ? candidates[0] : candidates[Math.floor(rng() * candidates.length)];
-  const frames = framesFor(subject, relations);
+  const frames = framesFor(subject, relations, denied);
   // The FIRST frame always names the subject (the critic's resolution anchor);
   // the rest are drawn deterministically from the remaining pool.
   const picked: string[] = [frames[0]];
@@ -104,7 +114,7 @@ export function composeGrounded(
     picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   }
   const sentence = picked.join(' ').replace(/\s+([.!?])/g, '$1');
-  const verdict = criticize(sentence, relations, []);
+  const verdict = criticize(sentence, relations, negations);
   return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked };
 }
 
@@ -126,6 +136,7 @@ export function criticize(
 
   const edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> = [];
   const unbacked: string[] = [];
+  const denied = deniedFromNegations(negations);
   for (const claim of claims) {
     if (claim.negated) {
       if (negations.some((n) => n.subject === claim.subject && n.predicate === claim.predicate && n.object === claim.object)) {
@@ -135,10 +146,16 @@ export function criticize(
       }
       continue;
     }
+    // A taught falsehood outranks extraction: a positive claim the
+    // confirmed-false store contradicts is refused even with a stored edge.
+    if (denied(claim.subject, claim.predicate, claim.object)) {
+      unbacked.push(`${claim.subject} ${claim.predicate} ${claim.object}`);
+      continue;
+    }
     const direct = relations.some(
       (r) => r.subject === claim.subject && r.predicate === claim.predicate && r.object === claim.object
     );
-    const via = direct ? null : inheritsEdge(relations, claim.subject, claim.predicate, claim.object);
+    const via = direct ? null : inheritsEdge(relations, claim.subject, claim.predicate, claim.object, denied);
     if (direct || via !== null) {
       edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
     } else {

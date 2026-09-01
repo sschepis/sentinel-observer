@@ -8,8 +8,9 @@ import { DECK_100 } from './decks/en-100';
 import { PRIME_SPACE } from './primeSignature';
 import { semanticVocabulary } from './semanticSignature';
 import { TeacherAgent } from './TeacherAgent';
-import { BOOTSTRAP_VERSION, BOOTSTRAP_VOCABULARY_SCHEME, type BootstrapRecord } from './bootstrap';
-import { assertImportable, importRecord } from './bootstrapLoader';
+import { BOOTSTRAP_VERSION, BOOTSTRAP_VOCABULARY_SCHEME, computeVocabularyFingerprint, type BootstrapRecord } from './bootstrap';
+import { assertImportable, assertVocabularyCompatible, importRecord } from './bootstrapLoader';
+import { OBSERVER_OPTIONS } from '../observer/options';
 
 const OPTIONS = {
   primeCount: 64,
@@ -70,6 +71,33 @@ describe('bootstrap vocabulary compatibility', () => {
 
     expect(() => target.importBootstrap(legacy)).toThrow(/incompatible/);
     await expect(importRecord(target, legacy)).rejects.toThrow(/regenerate/);
+  });
+
+  it('the deployed-record guard rejects a vocabulary-fingerprint mismatch loudly', async () => {
+    const source = await teacher();
+    source.teach('apple');
+    const record = source.exportBootstrap('en-20000');
+
+    // Legacy record without a fingerprint: accepted (regeneration stamps one).
+    expect(assertVocabularyCompatible(record)).toBeUndefined();
+
+    // A record stamped under the CURRENT app vocabulary: accepted.
+    const fresh = { ...record, vocabularyFingerprint: computeVocabularyFingerprint(OBSERVER_OPTIONS.vocabulary) };
+    expect(assertVocabularyCompatible(fresh)).toBeUndefined();
+
+    // Any deck-content drift changes the fingerprint: rejected with the
+    // regenerate instruction instead of decoding traces silently against a
+    // mismatched basis (the modelSettings.ts hazard).
+    const stale = { ...record, vocabularyFingerprint: 'deadbeef' };
+    expect(() => assertVocabularyCompatible(stale)).toThrow(/deck content changed|regenerate/);
+  });
+
+  it('the fingerprint is deterministic and sensitive to any signature change', () => {
+    const table = { apple: [2, 3, 5, 7], bird: [11, 13, 17, 19] };
+    const same = { bird: [11, 13, 17, 19], apple: [2, 3, 5, 7] };
+    expect(computeVocabularyFingerprint(table)).toBe(computeVocabularyFingerprint(same));
+    const shifted = { ...table, apple: [2, 3, 5, 11] };
+    expect(computeVocabularyFingerprint(shifted)).not.toBe(computeVocabularyFingerprint(table));
   });
 
   it('ADOPTS persisted traces when the learning state (scheme marker) is missing — H6', async () => {

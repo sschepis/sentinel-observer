@@ -5,7 +5,7 @@ import type { Relation, RelationPredicate } from '../relations';
  * GROUNDED FACTS — stable real-world scaffolding the frequency deck teaches
  * badly or not at all: the days of the week, the months and their ordinal
  * facts, the seasons, the cardinal directions, basic geography words, and
- * the sun/moon/star/earth basics of the deck's astronomy strand.
+ * the sun/earth/sky basics.
  *
  * WordNet's first synsets for these words are frequently wrong-domain
  * ("may" the modal, "march" the walk), so this layer is applied LAST in
@@ -15,7 +15,13 @@ import type { Relation, RelationPredicate } from '../relations';
  * fact is calendar- or astronomy-stable (season phrasing says "in the
  * north" so nothing asserted is hemisphere-false). The 'planet' entry of
  * definitionOverrides is deliberately NOT repeated here — "earth is the
- * third planet from the sun" is stated in full agreement with it.
+ * third planet from the sun" is stated in full agreement with it. Words the
+ * technical curriculum claims ('moon', 'star', 'rock', 'sound', ...) are
+ * deliberately ABSENT: this layer wins over the astronomy strand, so an
+ * entry here would silently replace the strand's general sense with an
+ * Earth-specific one while technicalRelations() still cites the general
+ * sense. ('sun' is safe: the strand declares no bare 'sun' concept, and the
+ * definition here agrees with its 'star' concept.)
  */
 
 const fact = (word: string, definition: string, example: string): DeckWord => ({
@@ -75,10 +81,9 @@ export const GROUNDED_FACTS_DECK: readonly DeckWord[] = [
   fact('globe', 'a round model of the earth that shows the continents and oceans', 'She spun the globe and pointed at a country.'),
   fact('compass', 'a tool that shows which direction is north', 'The hiker checked the compass.'),
   fact('horizon', 'a line in the distance where the earth and the sky seem to meet', 'The ship appeared on the horizon.'),
-  // ── Astronomy basics (consistent with the curated 'planet' override) ──
+  // ── Astronomy basics (consistent with the curated 'planet' override; the
+  //    astronomy strand owns 'moon' and 'star', so they are not stated here) ──
   fact('sun', 'a star at the center of the solar system that gives the earth light and heat', 'The sun rises every morning.'),
-  fact('moon', 'a large round object in space that moves around the earth and shines at night', 'The moon was full last night.'),
-  fact('star', 'a very large ball of burning gas in space that shines in the night sky', 'The first star appeared at dusk.'),
   fact('earth', 'the planet where people live, the third planet from the sun', 'The earth goes around the sun once a year.'),
   fact('sky', 'the space that you see above the earth, where the sun and clouds appear', 'The sky is blue today.')
 ];
@@ -196,12 +201,18 @@ export const GROUNDED_FACTS_RELATIONS: readonly Relation[] = [
  * Layer the grounded facts onto an existing deck, mirroring
  * layerTechnicalDeck exactly: words already in the base deck are REPLACED IN
  * PLACE and only genuinely new words are appended. In-place replacement
- * matters for the same reason it does in technical/index.ts —
- * `deckVocabulary` assigns prime signatures by iterating the deck and
- * salting on collision, so a duplicated word would be re-salted and
- * overwrite its own signature; keeping the word set and its order identical
- * leaves every existing signature (and every trained bootstrap record)
- * untouched.
+ * keeps the WORD SET and its order identical, which is what the legacy
+ * hash-based `deckVocabulary` needs to leave every signature untouched
+ * (a duplicated word would be re-salted and overwrite its own signature).
+ *
+ * HONEST LIMIT: under the production `semantic-is-a-v4` scheme
+ * (`semanticVocabulary`), signatures are derived from DEFINITION-mined is-a
+ * edges, so replacing a definition in place CAN shift that word's category
+ * primes — and appended words perturb the global category-prime ranking.
+ * Any deck-content change therefore requires regenerating the trained
+ * bootstrap artifact; `assertImportable` checks the exported vocabulary
+ * fingerprint so a stale artifact is rejected loudly instead of decoding
+ * traces against a mismatched basis.
  */
 export function layerGroundedFacts(base: readonly DeckWord[]): DeckWord[] {
   const byWord = new Map(GROUNDED_FACTS_DECK.map((entry) => [entry.word, entry]));

@@ -15,6 +15,7 @@ import { matchLocationClause, type Relation } from './relations';
 
 export type OperatorResult =
   | { kind: 'definition'; word: string; answer: string }
+  | { kind: 'semantic-recall'; word: string; answer: string; score: number }
   | { kind: 'yesno'; word: string; known: boolean; answer: string }
   | { kind: 'count'; what: string; count: number; answer: string }
   | { kind: 'echo'; word: string; answer: string }
@@ -280,14 +281,17 @@ function holographicDirect(
   return score >= HOLO_YES_WEAK ? score : null;
 }
 
-/** The graded open-form fallback: top candidates above the noise floor. */
+/** The graded open-form fallback: top candidates above the noise floor.
+ *  Confirmed-false objects are vetoed — a negation outranks a cosine. */
 function holographicOpen(
   ctx: OperatorContext,
   subject: string,
   predicate: string
 ): { objects: string[]; topScore: number } | null {
   if (ctx.relationalRecall === undefined) return null;
-  const candidates = ctx.relationalRecall(subject, predicate, 3).filter((c) => c.score >= HOLO_OPEN_FLOOR);
+  const candidates = ctx.relationalRecall(subject, predicate, 3).filter(
+    (c) => c.score >= HOLO_OPEN_FLOOR && (ctx.negationOf?.(subject, predicate, c.object) ?? null) === null
+  );
   if (candidates.length === 0) return null;
   return {
     objects: candidates.map((c) => c.object),
@@ -413,6 +417,9 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const text = clean(utterance);
   if (text.length === 0) return null;
 
+  // The confirmed-false store as a walk veto (P8 exception propagation).
+  const denied = (s: string, p: string, o: string): boolean => (ctx.negationOf?.(s, p, o) ?? null) !== null;
+
   // Clock and date are deterministic and must beat any taught definition of
   // "time"/"day" — the answer changes with the moment.
   const clock = clockAnswer(text);
@@ -520,7 +527,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
         answer: negated
       };
     }
-    if (relations.length > 0 && isATypeOf(relations, isALead[1], isALead[2])) {
+    if (relations.length > 0 && isATypeOf(relations, isALead[1], isALead[2], denied)) {
       // P8: a weakened edge (wrong grades) answers hedged, never "Yes".
       const strength = ctx.edgeStrength?.(isALead[1], 'is-a', isALead[2]) ?? 1;
       return {
@@ -557,7 +564,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     }
     if (relations.length > 0) {
       const direct = relations.some((r) => r.subject === hasPartLead[1] && r.predicate === 'has-part' && r.object === hasPartLead[2]);
-      const via = direct ? null : inheritsPart(relations, hasPartLead[1], hasPartLead[2]);
+      const via = direct ? null : inheritsPart(relations, hasPartLead[1], hasPartLead[2], denied);
       if (direct || via !== null) {
         const strength = ctx.edgeStrength?.(via?.via ?? hasPartLead[1], 'has-part', hasPartLead[2]) ?? 1;
         return {
@@ -641,7 +648,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     const direct = relations.some(
       (r) => r.subject === usedForLead[2] && r.predicate === 'used-for' && r.object === usedForLead[3]
     );
-    const via = direct ? null : inheritsEdge(relations, usedForLead[2], 'used-for', usedForLead[3]);
+    const via = direct ? null : inheritsEdge(relations, usedForLead[2], 'used-for', usedForLead[3], denied);
     if (direct || via !== null) {
       const strength = ctx.edgeStrength?.(via?.via ?? usedForLead[2], 'used-for', usedForLead[3]) ?? 1;
       return {
@@ -665,7 +672,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const causesLead = text.match(LEAD_CAUSES);
   if (causesLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
-    const effects = edgeObjects(relations, causesLead[2], 'causes');
+    const effects = edgeObjects(relations, causesLead[2], 'causes', denied);
     if (effects.length > 0) {
       return {
         kind: 'causes',
@@ -723,7 +730,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const requiresLead = text.match(LEAD_REQUIRES);
   if (requiresLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
-    const requirements = edgeObjects(relations, requiresLead[2], 'requires');
+    const requirements = edgeObjects(relations, requiresLead[2], 'requires', denied);
     if (requirements.length > 0) {
       return {
         kind: 'requires',
@@ -761,7 +768,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     const direct = relations.some(
       (r) => r.subject === doesRequireLead[2] && r.predicate === 'requires' && r.object === doesRequireLead[3]
     );
-    const via = direct ? null : inheritsEdge(relations, doesRequireLead[2], 'requires', doesRequireLead[3]);
+    const via = direct ? null : inheritsEdge(relations, doesRequireLead[2], 'requires', doesRequireLead[3], denied);
     if (direct || via !== null) {
       const strength = ctx.edgeStrength?.(via?.via ?? doesRequireLead[2], 'requires', doesRequireLead[3]) ?? 1;
       return {
@@ -804,7 +811,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     const direct = relations.some(
       (r) => r.subject === capableLead[2] && r.predicate === 'capable-of' && r.object === capableLead[3]
     );
-    const via = direct ? null : inheritsEdge(relations, capableLead[2], 'capable-of', capableLead[3]);
+    const via = direct ? null : inheritsEdge(relations, capableLead[2], 'capable-of', capableLead[3], denied);
     if (direct || via !== null) {
       const strength = ctx.edgeStrength?.(via?.via ?? capableLead[2], 'capable-of', capableLead[3]) ?? 1;
       return {
@@ -847,7 +854,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
     const direct = relations.some(
       (r) => r.subject === hasPropertyLead[2] && r.predicate === 'has-property' && r.object === hasPropertyLead[3]
     );
-    const via = direct ? null : inheritsEdge(relations, hasPropertyLead[2], 'has-property', hasPropertyLead[3]);
+    const via = direct ? null : inheritsEdge(relations, hasPropertyLead[2], 'has-property', hasPropertyLead[3], denied);
     if (direct || via !== null) {
       const strength = ctx.edgeStrength?.(via?.via ?? hasPropertyLead[2], 'has-property', hasPropertyLead[3]) ?? 1;
       return {
@@ -877,7 +884,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const whatDoLead = text.match(LEAD_WHAT_DO);
   if (whatDoLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
-    const actions = edgeObjects(relations, whatDoLead[2], 'capable-of');
+    const actions = edgeObjects(relations, whatDoLead[2], 'capable-of', denied);
     if (actions.length > 0) {
       return {
         kind: 'capable-of',
@@ -902,7 +909,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const whatLikeLead = text.match(LEAD_WHAT_LIKE);
   if (whatLikeLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
-    const properties = edgeObjects(relations, whatLikeLead[2], 'has-property');
+    const properties = edgeObjects(relations, whatLikeLead[2], 'has-property', denied);
     if (properties.length > 0) {
       return {
         kind: 'has-property',
@@ -955,7 +962,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
   const whatForLead = text.match(LEAD_WHAT_FOR);
   if (whatForLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
-    const purposes = edgeObjects(relations, whatForLead[2], 'used-for');
+    const purposes = edgeObjects(relations, whatForLead[2], 'used-for', denied);
     if (purposes.length > 0) {
       return {
         kind: 'used-for',

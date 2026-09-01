@@ -76,6 +76,24 @@ describe('the evasion rule + curiosity feed + deviation meter', () => {
     session.dispose();
   });
 
+  it('ambiguous meaning prompts route to ASK, not creative', async () => {
+    const { session, teacher } = await unlockedTeacher();
+    const answer = teacher.chatAnswer('what word means something used outside');
+    expect(answer.mode).toBe('ask');
+    if (answer.mode === 'ask') expect(answer.response).toContain('which word matches');
+    session.dispose();
+  });
+
+  it('natural inflections still retrieve a learned meaning before ASK', async () => {
+    const { session, teacher } = await unlockedTeacher();
+    const answer = teacher.chatAnswer('what word means a flying animal covered in feathers');
+    expect(answer.mode).toBe('operator');
+    if (answer.mode === 'operator' && answer.operator?.kind === 'semantic-recall') {
+      expect(answer.operator.word).toBe('bird');
+    }
+    session.dispose();
+  });
+
   it('H4: OPEN factual forms about KNOWN words route to ASK, never creative (evasion gap)', async () => {
     const { session, teacher } = await unlockedTeacher();
     // No causes/requires/capable-of/used-for/property/location knowledge for

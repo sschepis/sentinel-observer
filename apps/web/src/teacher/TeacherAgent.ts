@@ -13,6 +13,7 @@ import {
 } from './conversation';
 import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
 import { composeGrounded, criticize, groundedSubjects } from './groundedFrames';
+import { deniedFromNegations } from './chain';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
 import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classifyUtterance, blendReward, FADE_FLOOR, type FadeState, type GradeClass } from './fade';
 import { compositeScore } from './composite';
@@ -268,6 +269,38 @@ const QUIZ_WEAKEN_FLOOR = 0.3;
  * answers production when it covers ≥ this fraction of the cue's tokens.
  */
 const CONTENT_RECALL_FLOOR = 0.4;
+const CONTENT_RECALL_MARGIN = 0.1;
+
+function meaningCueOf(text: string): string | null {
+  const cleaned = text
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const patterns = [
+    /^(?:what|which) (?:word|term) (?:means|describes|matches) (.+)$/,
+    /^(?:what|which) (?:word|term) is described by (.+)$/,
+    /^what is the (?:word|term) for (.+)$/,
+    /^what do you call (.+)$/
+  ];
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match !== null && match[1].trim().length > 0) return match[1].trim();
+  }
+  return null;
+}
+
+function normalizedContentTokens(text: string): Set<string> {
+  return new Set(
+    tokenizeText(text.toLowerCase())
+      .filter(isContentWord)
+      .map((token) => {
+        if (token.endsWith('ing') && token.length > 4) return token.slice(0, -3);
+        if (token.endsWith('ed') && token.length > 3) return token.slice(0, -2);
+        return singularize(token);
+      })
+  );
+}
 
 // ── P9 FSRS SCHEDULING ──────────────────────────────────────────────────────
 // Per-item difficulty/stability learned from the observer's own review
@@ -703,7 +736,8 @@ export class TeacherAgent {
     // templates ("{slot} is a {p:is-a}") stay grounded by construction.
     this.operatorLearner = new OperatorLearner(
       new TokenCostModel(ACTIVE_DECK.map((entry) => entry.word)),
-      () => this.relations()
+      () => this.relations(),
+      () => deniedFromNegations(this.negations)
     );
     this.knownWords = new Set(deck.map((entry) => entry.word));
     for (const entry of deck) {
@@ -1632,21 +1666,28 @@ export class TeacherAgent {
    * the cue's tokens, coverage = |cue ∩ lesson| / |cue|. Null below the
    * floor (the observer does not know what the definition describes).
    */
-  private contentRecall(cue: string): RecallResult | null {
-    const cueTokens = new Set(tokenizeText(cue.toLowerCase()));
+  private contentRecall(cue: string, ambiguityMargin = 0): RecallResult | null {
+    const cueTokens = normalizedContentTokens(cue);
     if (cueTokens.size === 0) return null;
     const bank = this.session.observer.getMemoryBank();
     let best: { trace: RecallResult['trace']; score: number } | null = null;
+    let secondScore = 0;
     for (const trace of bank.all()) {
       if (trace.metadata?.kind !== undefined) continue; // word traces only
-      const lessonTokens = tokenizeText(trace.content.toLowerCase());
-      if (lessonTokens.length === 0) continue;
+      const lessonTokens = normalizedContentTokens(trace.content);
+      if (lessonTokens.size === 0) continue;
       let covered = 0;
       for (const token of lessonTokens) if (cueTokens.has(token)) covered += 1;
       const score = covered / cueTokens.size;
-      if (best === null || score > best.score) best = { trace, score };
+      if (best === null || score > best.score) {
+        secondScore = best?.score ?? 0;
+        best = { trace, score };
+      } else if (score > secondScore) {
+        secondScore = score;
+      }
     }
     if (best === null || best.score < CONTENT_RECALL_FLOOR) return null;
+    if (best.score - secondScore < ambiguityMargin) return null;
     return {
       trace: best.trace,
       score: best.score,
@@ -1655,6 +1696,15 @@ export class TeacherAgent {
       holographicScore: 0,
       consolidated: best.trace.consolidated
     };
+  }
+
+  private identifyMeaning(cue: string): { word: string; recall: RecallResult } | null {
+    const recall = this.contentRecall(cue, CONTENT_RECALL_MARGIN);
+    if (recall === null) return null;
+    for (const state of this.states.values()) {
+      if (state.traceId === recall.trace.id) return { word: state.word.word, recall };
+    }
+    return null;
   }
 
   /**
@@ -2240,8 +2290,46 @@ export class TeacherAgent {
       );
     }
 
-    this.invalidateRelations();
+    // Seed the cache from the work just done instead of discarding it: the
+    // reconcile above already paid for the full-deck extraction and the
+    // authored pool, and the next relations() read would otherwise repeat
+    // both at 20k-deck scale for an identical result.
+    this.buildRelationsCache(extracted, authored);
     return { accepted, conflicts: conflicts.length };
+  }
+
+  /**
+   * Build the merged relation graph and seed the cache from already-computed
+   * ingredients. The confidence overlay and hidden-edge gate are applied
+   * here so every caller (fresh read or post-ingest reseed) derives the
+   * graph identically.
+   */
+  private buildRelationsCache(extracted: readonly Relation[], authored: readonly Relation[]): Relation[] {
+    // Provenance priority on ties: regex > authored > chaperone. Chaperone
+    // edges that CONFLICTED with a regex edge were already diverted to
+    // beliefs in applyRelations, so what lands here is agreed or new.
+    this.relationsCache = mergeRelations(extracted, authored, this.chaperoneRelations)
+      // P8: the confidence overlay rides on the derived graph — every edge
+      // carries its effective strength (base 1 per stated source + grade/
+      // agreement deltas), floored so weakened edges still answer hedged.
+      .map((relation) => ({
+        ...relation,
+        strength: Math.max(
+          0.1,
+          (relation.strength ?? 1) +
+            (this.edgeConfidence.get(edgeKey(relation.subject, relation.predicate, relation.object)) ?? 0)
+        )
+      }));
+    // P12 held-out gate: hidden edges leave the SYMBOLIC graph only — the
+    // loose hologram below still binds them, so graded recovery works.
+    if (this.hiddenRelationKeys !== null && this.hiddenRelationKeys.size > 0) {
+      this.relationsCache = this.relationsCache.filter(
+        (relation) =>
+          !this.hiddenRelationKeys!.has(edgeKey(relation.subject, relation.predicate, relation.object))
+      );
+    }
+    this.rebuildRelationalHologram();
+    return this.relationsCache;
   }
 
   /** Typed edges decomposed from the deck definitions (is-a, has-part, ...). */
@@ -2250,31 +2338,7 @@ export class TeacherAgent {
       const extracted = extractRelations(
         [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
       );
-      const authored = this.authoredRelationPool();
-      // Provenance priority on ties: regex > authored > chaperone. Chaperone
-      // edges that CONFLICTED with a regex edge were already diverted to
-      // beliefs in applyRelations, so what lands here is agreed or new.
-      this.relationsCache = mergeRelations(extracted, authored, this.chaperoneRelations)
-        // P8: the confidence overlay rides on the derived graph — every edge
-        // carries its effective strength (base 1 per stated source + grade/
-        // agreement deltas), floored so weakened edges still answer hedged.
-        .map((relation) => ({
-          ...relation,
-          strength: Math.max(
-            0.1,
-            (relation.strength ?? 1) +
-              (this.edgeConfidence.get(edgeKey(relation.subject, relation.predicate, relation.object)) ?? 0)
-          )
-        }));
-      // P12 held-out gate: hidden edges leave the SYMBOLIC graph only — the
-      // loose hologram below still binds them, so graded recovery works.
-      if (this.hiddenRelationKeys !== null && this.hiddenRelationKeys.size > 0) {
-        this.relationsCache = this.relationsCache.filter(
-          (relation) =>
-            !this.hiddenRelationKeys!.has(edgeKey(relation.subject, relation.predicate, relation.object))
-        );
-      }
-      this.rebuildRelationalHologram();
+      return this.buildRelationsCache(extracted, this.authoredRelationPool());
     }
     return this.relationsCache;
   }
@@ -2833,6 +2897,32 @@ export class TeacherAgent {
       };
     }
 
+    const meaningCue = meaningCueOf(resolved);
+    if (meaningCue !== null) {
+      const semantic = this.identifyMeaning(meaningCue);
+      if (semantic !== null) {
+        const response = `The word is ${semantic.word}.`;
+        const result: NonNullable<OperatorResult> = {
+          kind: 'semantic-recall',
+          word: semantic.word,
+          answer: response,
+          score: semantic.recall.score
+        };
+        this.workingMemory.note('observer', response);
+        this.noteAnswerMode('operator');
+        return {
+          mode: 'operator',
+          response,
+          operator: result,
+          provenance: {
+            traceIds: [semantic.recall.trace.id],
+            edges: [],
+            operatorId: 'semantic-recall'
+          }
+        };
+      }
+    }
+
     // 3. Creative composition once unlocked — recent turns join the seed
     //    pool so the observer can continue the topic it was just on. The
     //    CURIOSITY drive can veto composition: when the observer is
@@ -2851,7 +2941,7 @@ export class TeacherAgent {
     // no memory, operator, or relation path supports it — so composing over
     // it would be confident nonsense. Those route to ASK.
     const questionForm = questionFormOf(resolved);
-    const groundedQuestion = questionForm !== null;
+    const groundedQuestion = questionForm !== null || meaningCue !== null;
     // Creative also needs something KNOWN to seed from — a known content
     // word, or a recall whose CUE is the utterance itself (phatic phrases
     // like "how are you" carry no content words yet are taught exchanges
@@ -2917,7 +3007,9 @@ export class TeacherAgent {
     }
     const unknown = unknownInUtterance;
     let question: string;
-    if (unknown !== null) {
+    if (meaningCue !== null) {
+      question = `I do not know which word matches "${meaningCue}". Could you teach me?`;
+    } else if (unknown !== null) {
       question = `I do not know what "${unknown}" means. Could you teach me?`;
     } else if (questionForm !== null && questionForm.object !== undefined) {
       // Honest unknown for an unsupported relational question — no relation
@@ -3136,12 +3228,13 @@ export class TeacherAgent {
     // be non-responsive), while a content-free utterance ("tell me more")
     // lets the recent memory supply the topic.
     const relations = this.relations();
+    const denied = deniedFromNegations(this.negations);
     const utteranceContent = tokenizeText(cue).filter(isContentWord);
-    const utteranceSubjects = groundedSubjects(utteranceContent, relations);
-    const memorySubjects = groundedSubjects(tokenizeText(contents.join(' ')), relations);
+    const utteranceSubjects = groundedSubjects(utteranceContent, relations, denied);
+    const memorySubjects = groundedSubjects(tokenizeText(contents.join(' ')), relations, denied);
     const useGrounded = utteranceSubjects.length > 0 || utteranceContent.length === 0;
     const grounded = useGrounded
-      ? composeGrounded([...utteranceSubjects, ...memorySubjects], relations, this.compositionRng)
+      ? composeGrounded([...utteranceSubjects, ...memorySubjects], relations, this.compositionRng, 3, this.negations)
       : null;
     if (grounded !== null && grounded.edges.length > 0) {
       // The critic already verified the composition in composeGrounded;

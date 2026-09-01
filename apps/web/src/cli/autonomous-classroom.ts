@@ -37,6 +37,7 @@ const FADE_AGREEMENT_WINDOW = 12;
 import { isContentWord, tokenizeText } from '../teacher/context';
 import { learnWordGoal, fillGapGoal, executeGoalStep, chooseGoal, discoverDeficitGoals } from '../teacher/plan';
 import type { BootstrapRecord } from '../teacher/bootstrap';
+import { computeVocabularyFingerprint } from '../teacher/bootstrap';
 import type { DeckWord } from '../teacher/deck';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -121,6 +122,9 @@ async function quickBenches(teacher: TeacherAgent): Promise<Record<string, strin
 async function writeRecord(teacher: TeacherAgent, path: string, deckName: string): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
   const record = teacher.exportBootstrap(deckName);
+  // Stamp the vocabulary the record was trained under (see train.ts) so the
+  // app's loader rejects it loudly after any deck-content drift.
+  record.vocabularyFingerprint = computeVocabularyFingerprint(OBSERVER_OPTIONS.vocabulary);
   writeFileSync(path, JSON.stringify(record), 'utf8');
 }
 

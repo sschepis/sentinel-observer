@@ -30,13 +30,24 @@ const OPTIONS = {
   vocabulary: deckVocabulary([...ALL_DECK, ...CONVERSATION_CUE_TOKENS.map((w) => ({ word: w }))], PRIME_SPACE)
 };
 
+/**
+ * The council members teach a fixed, deterministic slice of the conversation
+ * curriculum rather than the full pool: ALL_CONVERSATION_PAIRS grew to ~490
+ * pairs (packs + eloquence), and nothing this suite asserts depends on
+ * full-pool competency — while `council()` is rebuilt inside every test, so
+ * full-pool teaching multiplied setup cost ~2.5x for no assertion value.
+ * The one pool-sensitive test (trust differentiation) already pins its own
+ * agreement threshold explicitly.
+ */
+const COUNCIL_PAIRS = ALL_CONVERSATION_PAIRS.slice(0, 150);
+
 async function member(deck: readonly DeckWord[]): Promise<{ teacher: TeacherAgent; session: ObserverSession }> {
   const session = new ObserverSession(OPTIONS, 100);
   await session.initialize();
   const teacher = new TeacherAgent(session, deck);
   for (const entry of deck) teacher.teach(entry.word);
-  teacher.teachConversationDeck(ALL_CONVERSATION_PAIRS);
-  for (const pair of ALL_CONVERSATION_PAIRS) teacher.respond(pair.cue);
+  teacher.teachConversationDeck(COUNCIL_PAIRS);
+  for (const pair of COUNCIL_PAIRS) teacher.respond(pair.cue);
   return { teacher, session };
 }
 

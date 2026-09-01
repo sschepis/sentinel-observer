@@ -148,4 +148,38 @@ describe('P13 paraphrase corpus — session recall', () => {
     console.log(`PARAPHRASE-CORPUS: paraphrase->word top-1 ${((correct / total) * 100).toFixed(0)}% (${correct}/${total})`);
     expect(correct / total).toBeGreaterThanOrEqual(0.6);
   });
+
+  it('retrieves paraphrased meanings before ASK with high precision', () => {
+    let correct = 0;
+    let answered = 0;
+    const wrong: string[] = [];
+    for (const entry of SAMPLE) {
+      for (const cue of entry.paraphrases) {
+        const answer = teacher.chatAnswer(`what word means ${cue}`);
+        if (answer.mode !== 'operator' || answer.operator?.kind !== 'semantic-recall') continue;
+        answered += 1;
+        if (answer.operator.word === entry.word) correct += 1;
+        else wrong.push(`${entry.word} -> ${answer.operator.word}: ${cue}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    expect(correct / (SAMPLE.length * 3)).toBeGreaterThanOrEqual(0.6);
+    expect(answered).toBe(correct);
+  });
+
+  it('semantic recall cites the producing word trace', () => {
+    const entry = SAMPLE[0];
+    const answer = teacher.chatAnswer(`what do you call ${entry.paraphrases[0]}`);
+    expect(answer.mode).toBe('operator');
+    if (answer.mode === 'operator') {
+      expect(answer.operator?.kind).toBe('semantic-recall');
+      expect(answer.provenance.traceIds).toEqual([teacher.tryState(entry.word)?.traceId]);
+      expect(answer.provenance.operatorId).toBe('semantic-recall');
+    }
+  });
+
+  it('declines ambiguous or unsupported meaning cues instead of guessing', () => {
+    expect(teacher.chatAnswer('what word means something people use').mode).toBe('ask');
+    expect(teacher.chatAnswer('what word means ultraviolet quantum turbulence').mode).toBe('ask');
+  });
 });

@@ -251,10 +251,10 @@ export const CREATIVE_GOLD: readonly GoldGrade[] = [
   },
   // ── Honest ask / uncertainty (0.7–0.9) ───────────────────────────────────
   {
-    prompt: 'what time is it',
-    response: 'I do not know the time — can you tell me what time it is?',
+    prompt: 'what did i have for breakfast',
+    response: 'You have not told me — what did you have for breakfast?',
     score: 0.8,
-    rationale: 'The observer cannot know the time; saying so and asking is the correct move.'
+    rationale: 'A fact only the human holds; saying so and asking is the correct move. (Time questions are excluded here: the clock operator answers those deterministically, so "I do not know the time" would be graded against the wrong layer.)'
   },
   {
     prompt: 'is it raining where you are',

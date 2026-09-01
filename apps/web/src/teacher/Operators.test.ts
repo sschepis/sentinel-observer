@@ -499,3 +499,60 @@ describe('P1 graded holographic fallback (below the symbolic graph)', () => {
     if (whatLike?.kind === 'has-property') expect(whatLike.answer).toBe('I believe snow is cold.');
   });
 });
+
+describe('exception-aware inheritance (P8 negations propagate into operators)', () => {
+  const relations = (): readonly Relation[] => [
+    { subject: 'penguin', predicate: 'is-a', object: 'bird', source: 'def', origin: 'regex' },
+    { subject: 'bird', predicate: 'is-a', object: 'animal', source: 'def', origin: 'regex' },
+    { subject: 'bird', predicate: 'capable-of', object: 'fly', source: 'def', origin: 'chaperone' },
+    { subject: 'bird', predicate: 'capable-of', object: 'sing', source: 'def', origin: 'chaperone' },
+    { subject: 'bird', predicate: 'has-part', object: 'wings', source: 'def', origin: 'regex' }
+  ];
+  const ctx: OperatorContext = {
+    isTaught: () => true,
+    definitionOf: () => '',
+    wordCount: () => 5,
+    phraseCount: () => 0,
+    relations,
+    negationOf: (subject, predicate, object) =>
+      subject === 'penguin' && predicate === 'capable-of' && object === 'fly'
+        ? { evidence: 'a penguin cannot fly' }
+        : null
+  };
+
+  it('the closed form answers the evidence-backed No before inheritance', () => {
+    const closed = applyOperator('can a penguin fly', ctx);
+    expect(closed?.kind).toBe('capable-of');
+    if (closed?.kind === 'capable-of') expect(closed.answer).toBe('No, penguin cannot fly — I was taught that.');
+  });
+
+  it('the open form never lists the negated inherited object', () => {
+    const open = applyOperator('what does a penguin do', ctx);
+    expect(open?.kind).toBe('capable-of');
+    if (open?.kind === 'capable-of') expect(open.answer).toBe('a penguin can sing.');
+  });
+
+  it('unaffected inheritance still answers (the exception is surgical)', () => {
+    const wings = applyOperator('does a penguin have wings', ctx);
+    expect(wings?.kind).toBe('has-part');
+    if (wings?.kind === 'has-part') expect(wings.via).toBe('bird');
+
+    const isA = applyOperator('is a penguin an animal', ctx);
+    expect(isA?.kind).toBe('is-a');
+    if (isA?.kind === 'is-a') expect(isA.answer).toBe('Yes, penguin is an animal.');
+  });
+
+  it('a negated is-a edge blocks the transitive walk end to end', () => {
+    const notABird: OperatorContext = {
+      ...ctx,
+      negationOf: (subject, predicate, object) =>
+        subject === 'penguin' && predicate === 'is-a' && object === 'bird'
+          ? { evidence: 'a penguin is not a bird' }
+          : null
+    };
+    const isA = applyOperator('is a penguin an animal', notABird);
+    expect(isA).toBeNull(); // the only path ran through the negated edge
+    const wings = applyOperator('does a penguin have wings', notABird);
+    expect(wings).toBeNull();
+  });
+});

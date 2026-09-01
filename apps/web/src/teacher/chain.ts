@@ -9,15 +9,37 @@ import type { Relation } from './relations';
  * stored relation — no ungrounded intermediate is ever assumed, and when no
  * path exists the observer honestly declines (absence of evidence is never
  * answered as evidence of absence).
+ *
+ * EXCEPTIONS (P8 propagation): every walk takes an optional `denied` veto —
+ * the confirmed-false store as a predicate. A negation on the subject's own
+ * claim overrides any inherited positive (penguin is-a bird, bird capable-of
+ * fly, but "a penguin cannot fly" wins), and a negated is-a edge is never
+ * walked. Taught falsehoods outrank extraction at every hop, not just on
+ * the exact question form.
  */
 
 const MAX_DEPTH = 4;
 
+/** A claim veto: true when (subject, predicate, object) is confirmed false. */
+export type DeniedClaim = (subject: string, predicate: string, object: string) => boolean;
+
+const NEVER_DENIED: DeniedClaim = () => false;
+
+/** Build a `DeniedClaim` veto from the confirmed-false store. */
+export function deniedFromNegations(
+  negations: readonly { subject: string; predicate: string; object: string }[]
+): DeniedClaim {
+  if (negations.length === 0) return NEVER_DENIED;
+  const keys = new Set(negations.map((n) => `${n.subject}\u0000${n.predicate}\u0000${n.object}`));
+  return (subject, predicate, object) => keys.has(`${subject}\u0000${predicate}\u0000${object}`);
+}
+
 /** The is-a ancestry map shared by every walk (built once per call). */
-function isAAncestors(relations: readonly Relation[]): Map<string, string[]> {
+function isAAncestors(relations: readonly Relation[], denied: DeniedClaim): Map<string, string[]> {
   const bySubject = new Map<string, string[]>();
   for (const relation of relations) {
     if (relation.predicate !== 'is-a') continue;
+    if (denied(relation.subject, 'is-a', relation.object)) continue;
     const list = bySubject.get(relation.subject) ?? [];
     list.push(relation.object);
     bySubject.set(relation.subject, list);
@@ -26,8 +48,8 @@ function isAAncestors(relations: readonly Relation[]): Map<string, string[]> {
 }
 
 /** All is-a ancestors of `subject` (up to MAX_DEPTH), including itself. */
-function ancestors(relations: readonly Relation[], subject: string): string[] {
-  const bySubject = isAAncestors(relations);
+function ancestors(relations: readonly Relation[], subject: string, denied: DeniedClaim): string[] {
+  const bySubject = isAAncestors(relations, denied);
   const reached = [subject];
   const seen = new Set<string>([subject]);
   for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
@@ -45,9 +67,15 @@ function ancestors(relations: readonly Relation[], subject: string): string[] {
 }
 
 /** Is `subject` (transitively, up to MAX_DEPTH is-a edges) a `target`? */
-export function isATypeOf(relations: readonly Relation[], subject: string, target: string): boolean {
+export function isATypeOf(
+  relations: readonly Relation[],
+  subject: string,
+  target: string,
+  denied: DeniedClaim = NEVER_DENIED
+): boolean {
+  if (denied(subject, 'is-a', target)) return false;
   if (subject === target) return true;
-  const bySubject = isAAncestors(relations);
+  const bySubject = isAAncestors(relations, denied);
   const frontier = [subject];
   const seen = new Set<string>([subject]);
   for (let depth = 0; depth < MAX_DEPTH && frontier.length > 0; depth += 1) {
@@ -71,18 +99,28 @@ export function isATypeOf(relations: readonly Relation[], subject: string, targe
  * Does `subject` have `part` — directly or inherited through its is-a
  * ancestors? Returns the chain via which the part was inherited, or null.
  */
-export function inheritsPart(relations: readonly Relation[], subject: string, part: string): { via: string } | null {
+export function inheritsPart(
+  relations: readonly Relation[],
+  subject: string,
+  part: string,
+  denied: DeniedClaim = NEVER_DENIED
+): { via: string } | null {
+  // A subject-level exception overrides any inherited positive.
+  if (denied(subject, 'has-part', part)) return null;
   if (relations.some((r) => r.subject === subject && r.predicate === 'has-part' && r.object === part)) {
     return null; // direct — no chain needed
   }
-  const bySubject = isAAncestors(relations);
+  const bySubject = isAAncestors(relations, denied);
   const frontier = [subject];
   const seen = new Set<string>([subject]);
   for (let depth = 0; depth < MAX_DEPTH && frontier.length > 0; depth += 1) {
     const next: string[] = [];
     for (const word of frontier) {
       for (const parent of bySubject.get(word) ?? []) {
-        if (relations.some((r) => r.subject === parent && r.predicate === 'has-part' && r.object === part)) {
+        if (
+          !denied(parent, 'has-part', part) &&
+          relations.some((r) => r.subject === parent && r.predicate === 'has-part' && r.object === part)
+        ) {
           return { via: parent };
         }
         if (!seen.has(parent)) {
@@ -106,13 +144,17 @@ export function inheritsEdge(
   relations: readonly Relation[],
   subject: string,
   predicate: string,
-  object: string
+  object: string,
+  denied: DeniedClaim = NEVER_DENIED
 ): { via: string } | null {
+  // A subject-level exception overrides any inherited positive.
+  if (denied(subject, predicate, object)) return null;
   if (relations.some((r) => r.subject === subject && r.predicate === predicate && r.object === object)) {
     return null; // direct — no chain needed
   }
-  for (const ancestor of ancestors(relations, subject)) {
+  for (const ancestor of ancestors(relations, subject, denied)) {
     if (ancestor === subject) continue;
+    if (denied(ancestor, predicate, object)) continue;
     if (relations.some((r) => r.subject === ancestor && r.predicate === predicate && r.object === object)) {
       return { via: ancestor };
     }
@@ -124,15 +166,22 @@ export function inheritsEdge(
  * All objects `subject` holds under `predicate`, direct and inherited
  * (deduplicated). Used by open questions ("what does a bird do?").
  */
-export function edgeObjects(relations: readonly Relation[], subject: string, predicate: string): string[] {
+export function edgeObjects(
+  relations: readonly Relation[],
+  subject: string,
+  predicate: string,
+  denied: DeniedClaim = NEVER_DENIED
+): string[] {
   const seen = new Set<string>();
   const objects: string[] = [];
-  for (const ancestor of ancestors(relations, subject)) {
+  for (const ancestor of ancestors(relations, subject, denied)) {
     for (const relation of relations) {
-      if (relation.subject === ancestor && relation.predicate === predicate && !seen.has(relation.object)) {
-        seen.add(relation.object);
-        objects.push(relation.object);
-      }
+      if (relation.subject !== ancestor || relation.predicate !== predicate || seen.has(relation.object)) continue;
+      // Vetoed at the subject (the exception) or at the ancestor holding the edge.
+      if (denied(subject, predicate, relation.object)) continue;
+      if (denied(ancestor, predicate, relation.object)) continue;
+      seen.add(relation.object);
+      objects.push(relation.object);
     }
   }
   return objects;

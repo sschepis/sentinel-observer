@@ -95,6 +95,14 @@ const METRIC_LENGTH: ReadonlyArray<[string, number]> = [
  * Small everyday facts with a KNOWN truth value — the raw material for the
  * truth-functional logic drills. Each is decidable by arithmetic the earlier
  * strands already teach, so the truth value is a fact and not trivia.
+ *
+ * SIZE CONTRACT: every fixed table below must keep its drill's distinct-
+ * prompt space at or above 44 — `runDrill` requests (TRAIN_SIZE + TEST_SIZE)
+ * * 2 = 44 distinct exercises, and a smaller space silently degrades the
+ * train/held-out split (measured: at 12 facts, logic-not trained on only 4
+ * exercises). logic-not asks each fact under two phrasings, so 24 facts
+ * give it 48 prompts; logic-and/or draw fact PAIRS and are far above the
+ * floor.
  */
 const LOGIC_FACTS: ReadonlyArray<[string, boolean]> = [
   ['two plus two is four', true],
@@ -108,7 +116,19 @@ const LOGIC_FACTS: ReadonlyArray<[string, boolean]> = [
   ['seven plus one is eight', true],
   ['eight minus five is two', false],
   ['three times three is nine', true],
-  ['ten minus four is five', false]
+  ['ten minus four is five', false],
+  ['ten plus ten is twenty', true],
+  ['six plus five is twelve', false],
+  ['twelve is greater than nine', true],
+  ['two is greater than eight', false],
+  ['eight divided by four is two', true],
+  ['nine minus three is five', false],
+  ['five times two is ten', true],
+  ['seven times two is fifteen', false],
+  ['four plus four is eight', true],
+  ['ten divided by five is three', false],
+  ['six is less than seven', true],
+  ['ten minus seven is four', false]
 ];
 
 /**
@@ -133,7 +153,21 @@ const CONDITIONAL_SCENARIOS: ReadonlyArray<{
   { condition: 'it snows', consequence: 'the roof turns white', affirm: 'It snows.', askConsequence: 'Does the roof turn white?', denyConsequence: 'The roof does not turn white.', askCondition: 'Did it snow?' },
   { condition: 'the kettle boils', consequence: 'steam rises', affirm: 'The kettle boils.', askConsequence: 'Does steam rise?', denyConsequence: 'Steam does not rise.', askCondition: 'Did the kettle boil?' },
   { condition: 'the wind blows', consequence: 'the flag moves', affirm: 'The wind blows.', askConsequence: 'Does the flag move?', denyConsequence: 'The flag does not move.', askCondition: 'Did the wind blow?' },
-  { condition: 'the alarm sounds', consequence: 'everyone leaves the building', affirm: 'The alarm sounds.', askConsequence: 'Does everyone leave the building?', denyConsequence: 'Not everyone leaves the building.', askCondition: 'Did the alarm sound?' }
+  { condition: 'the alarm sounds', consequence: 'everyone leaves the building', affirm: 'The alarm sounds.', askConsequence: 'Does everyone leave the building?', denyConsequence: 'Not everyone leaves the building.', askCondition: 'Did the alarm sound?' },
+  { condition: 'water freezes', consequence: 'it turns to ice', affirm: 'The water freezes.', askConsequence: 'Does it turn to ice?', denyConsequence: 'It does not turn to ice.', askCondition: 'Did the water freeze?' },
+  { condition: 'the light turns green', consequence: 'the cars move', affirm: 'The light turns green.', askConsequence: 'Do the cars move?', denyConsequence: 'The cars do not move.', askCondition: 'Did the light turn green?' },
+  { condition: 'the phone rings', consequence: 'she answers it', affirm: 'The phone rings.', askConsequence: 'Does she answer it?', denyConsequence: 'She does not answer it.', askCondition: 'Did the phone ring?' },
+  { condition: 'the seed is planted', consequence: 'a sprout grows', affirm: 'The seed is planted.', askConsequence: 'Does a sprout grow?', denyConsequence: 'No sprout grows.', askCondition: 'Was the seed planted?' },
+  { condition: 'the oven is hot', consequence: 'the bread bakes', affirm: 'The oven is hot.', askConsequence: 'Does the bread bake?', denyConsequence: 'The bread does not bake.', askCondition: 'Is the oven hot?' },
+  { condition: 'the tide rises', consequence: 'the sand disappears', affirm: 'The tide rises.', askConsequence: 'Does the sand disappear?', denyConsequence: 'The sand does not disappear.', askCondition: 'Did the tide rise?' },
+  { condition: 'the music plays', consequence: 'the children dance', affirm: 'The music plays.', askConsequence: 'Do the children dance?', denyConsequence: 'The children do not dance.', askCondition: 'Did the music play?' },
+  { condition: 'the gate is open', consequence: 'the sheep wander out', affirm: 'The gate is open.', askConsequence: 'Do the sheep wander out?', denyConsequence: 'The sheep do not wander out.', askCondition: 'Is the gate open?' },
+  { condition: 'the battery dies', consequence: 'the toy stops', affirm: 'The battery dies.', askConsequence: 'Does the toy stop?', denyConsequence: 'The toy does not stop.', askCondition: 'Did the battery die?' },
+  { condition: 'the rope is cut', consequence: 'the swing falls', affirm: 'The rope is cut.', askConsequence: 'Does the swing fall?', denyConsequence: 'The swing does not fall.', askCondition: 'Was the rope cut?' },
+  { condition: 'the milk spills', consequence: 'the floor gets wet', affirm: 'The milk spills.', askConsequence: 'Does the floor get wet?', denyConsequence: 'The floor does not get wet.', askCondition: 'Did the milk spill?' },
+  { condition: 'the candle burns', consequence: 'the wax melts', affirm: 'The candle burns.', askConsequence: 'Does the wax melt?', denyConsequence: 'The wax does not melt.', askCondition: 'Did the candle burn?' },
+  { condition: 'the train arrives', consequence: 'the doors open', affirm: 'The train arrives.', askConsequence: 'Do the doors open?', denyConsequence: 'The doors do not open.', askCondition: 'Did the train arrive?' },
+  { condition: 'the rain stops', consequence: 'the puddles dry', affirm: 'The rain stops.', askConsequence: 'Do the puddles dry?', denyConsequence: 'The puddles do not dry.', askCondition: 'Did the rain stop?' }
 ];
 
 /**
@@ -155,10 +189,25 @@ const SYLLOGISM_TRIPLES: ReadonlyArray<{
   { members: 'lions', member: 'a lion', category: 'animals', categoryMember: 'an animal', name: 'Leo' },
   { members: 'ladybugs', member: 'a ladybug', category: 'insects', categoryMember: 'an insect', name: 'Dot' },
   { members: 'salmon', member: 'a salmon', category: 'fish', categoryMember: 'a fish', name: 'Finn' },
-  { members: 'elephants', member: 'an elephant', category: 'mammals', categoryMember: 'a mammal', name: 'Ella' }
+  { members: 'elephants', member: 'an elephant', category: 'mammals', categoryMember: 'a mammal', name: 'Ella' },
+  { members: 'horses', member: 'a horse', category: 'mammals', categoryMember: 'a mammal', name: 'Duke' },
+  { members: 'frogs', member: 'a frog', category: 'animals', categoryMember: 'an animal', name: 'Hop' },
+  { members: 'eagles', member: 'an eagle', category: 'birds', categoryMember: 'a bird', name: 'Sky' },
+  { members: 'bees', member: 'a bee', category: 'insects', categoryMember: 'an insect', name: 'Buzz' },
+  { members: 'sharks', member: 'a shark', category: 'fish', categoryMember: 'a fish', name: 'Snap' },
+  { members: 'rabbits', member: 'a rabbit', category: 'mammals', categoryMember: 'a mammal', name: 'Thumper' },
+  { members: 'penguins', member: 'a penguin', category: 'birds', categoryMember: 'a bird', name: 'Waddle' },
+  { members: 'ants', member: 'an ant', category: 'insects', categoryMember: 'an insect', name: 'Andy' },
+  { members: 'snakes', member: 'a snake', category: 'reptiles', categoryMember: 'a reptile', name: 'Slink' },
+  { members: 'turtles', member: 'a turtle', category: 'reptiles', categoryMember: 'a reptile', name: 'Shelly' },
+  { members: 'goats', member: 'a goat', category: 'mammals', categoryMember: 'a mammal', name: 'Billy' },
+  { members: 'crows', member: 'a crow', category: 'birds', categoryMember: 'a bird', name: 'Coal' },
+  { members: 'trout', member: 'a trout', category: 'fish', categoryMember: 'a fish', name: 'Speck' },
+  { members: 'beetles', member: 'a beetle', category: 'insects', categoryMember: 'an insect', name: 'Bo' }
 ];
 
-/** Regular plurals plus the irregular table English refuses to regularize. */
+/** Regular plurals plus the irregular table English refuses to regularize.
+ *  (≥ 44 entries — see the size contract on LOGIC_FACTS.) */
 const PLURAL_TABLE: ReadonlyArray<[string, string]> = [
   ['child', 'children'],
   ['mouse', 'mice'],
@@ -177,10 +226,39 @@ const PLURAL_TABLE: ReadonlyArray<[string, string]> = [
   ['bench', 'benches'],
   ['brush', 'brushes'],
   ['story', 'stories'],
-  ['car', 'cars']
+  ['car', 'cars'],
+  ['goose', 'geese'],
+  ['ox', 'oxen'],
+  ['sheep', 'sheep'],
+  ['deer', 'deer'],
+  ['wolf', 'wolves'],
+  ['knife', 'knives'],
+  ['wife', 'wives'],
+  ['life', 'lives'],
+  ['shelf', 'shelves'],
+  ['half', 'halves'],
+  ['loaf', 'loaves'],
+  ['thief', 'thieves'],
+  ['baby', 'babies'],
+  ['lady', 'ladies'],
+  ['party', 'parties'],
+  ['penny', 'pennies'],
+  ['army', 'armies'],
+  ['fox', 'foxes'],
+  ['bus', 'buses'],
+  ['glass', 'glasses'],
+  ['dish', 'dishes'],
+  ['watch', 'watches'],
+  ['church', 'churches'],
+  ['potato', 'potatoes'],
+  ['tomato', 'tomatoes'],
+  ['hero', 'heroes'],
+  ['piano', 'pianos'],
+  ['photo', 'photos']
 ];
 
-/** Regular past tenses plus the common irregular verbs. */
+/** Regular past tenses plus the common irregular verbs.
+ *  (≥ 44 entries — see the size contract on LOGIC_FACTS.) */
 const PAST_TENSE_TABLE: ReadonlyArray<[string, string]> = [
   ['walk', 'walked'],
   ['play', 'played'],
@@ -197,10 +275,39 @@ const PAST_TENSE_TABLE: ReadonlyArray<[string, string]> = [
   ['take', 'took'],
   ['give', 'gave'],
   ['come', 'came'],
-  ['make', 'made']
+  ['make', 'made'],
+  ['help', 'helped'],
+  ['open', 'opened'],
+  ['close', 'closed'],
+  ['laugh', 'laughed'],
+  ['learn', 'learned'],
+  ['listen', 'listened'],
+  ['look', 'looked'],
+  ['move', 'moved'],
+  ['plant', 'planted'],
+  ['rain', 'rained'],
+  ['shout', 'shouted'],
+  ['smile', 'smiled'],
+  ['stay', 'stayed'],
+  ['turn', 'turned'],
+  ['say', 'said'],
+  ['tell', 'told'],
+  ['find', 'found'],
+  ['think', 'thought'],
+  ['bring', 'brought'],
+  ['buy', 'bought'],
+  ['catch', 'caught'],
+  ['teach', 'taught'],
+  ['write', 'wrote'],
+  ['ride', 'rode'],
+  ['sing', 'sang'],
+  ['drink', 'drank'],
+  ['swim', 'swam'],
+  ['fly', 'flew']
 ];
 
-/** Words for the vowel-count drill; the count is computed, never hand-typed. */
+/** Words for the vowel-count drill; the count is computed, never hand-typed.
+ *  (≥ 44 entries — see the size contract on LOGIC_FACTS.) */
 const VOWEL_WORDS: readonly string[] = [
   'apple',
   'banana',
@@ -217,7 +324,37 @@ const VOWEL_WORDS: readonly string[] = [
   'book',
   'tree',
   'cloud',
-  'stone'
+  'stone',
+  'table',
+  'chair',
+  'house',
+  'water',
+  'paper',
+  'music',
+  'animal',
+  'island',
+  'summer',
+  'winter',
+  'morning',
+  'evening',
+  'family',
+  'letter',
+  'number',
+  'circle',
+  'flower',
+  'candle',
+  'basket',
+  'bridge',
+  'castle',
+  'dragon',
+  'forest',
+  'guitar',
+  'hammer',
+  'jacket',
+  'kitten',
+  'ladder',
+  'magnet',
+  'rocket'
 ];
 
 const ADD_STORY_TEMPLATES: ReadonlyArray<(a: number, b: number) => string> = [
@@ -528,12 +665,12 @@ export const GENERATORS: Record<string, Generator> = {
   },
   'logic-not': (rng, c) => {
     const [fact, truth] = pick(rng, LOGIC_FACTS);
-    return textual(
-      c,
-      'logic-not',
-      `Consider the statement: ${fact}. Is the negation of this statement true or false?`,
-      truth ? 'false' : 'true'
-    );
+    // Two phrasings double the distinct-prompt space (24 facts -> 48
+    // prompts), keeping the drill above the 44-exercise split floor.
+    const phrasing = rng() < 0.5
+      ? `Consider the statement: ${fact}. Is the negation of this statement true or false?`
+      : `Take the statement: ${fact}. Is the opposite of this statement true or false?`;
+    return textual(c, 'logic-not', phrasing, truth ? 'false' : 'true');
   },
 
   // ── Grammar ─────────────────────────────────────────────────────────────
@@ -706,12 +843,21 @@ export function generateExercises(
   const seen = new Set<string>();
   const exercises: Exercise[] = [];
   // Bounded: some drills have a small question space and cannot fill a
-  // large request. Returning fewer is honest; looping forever is not.
+  // large request. Returning fewer is honest; looping forever is not — and
+  // once a full request-window of attempts yields nothing new, the space is
+  // treated as exhausted rather than burning the remaining attempts.
+  let sinceNew = 0;
+  const exhaustionWindow = Math.max(100, options.count * 5);
   for (let attempt = 0; attempt < options.count * 50 && exercises.length < options.count; attempt += 1) {
     const exercise = generator(rng, concept);
-    if (seen.has(exercise.prompt)) continue;
+    if (seen.has(exercise.prompt)) {
+      sinceNew += 1;
+      if (sinceNew >= exhaustionWindow) break;
+      continue;
+    }
     seen.add(exercise.prompt);
     exercises.push(exercise);
+    sinceNew = 0;
   }
   return exercises;
 }

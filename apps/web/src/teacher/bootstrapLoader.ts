@@ -2,12 +2,41 @@ import type { TeacherAgent } from './TeacherAgent';
 import {
   BOOTSTRAP_VERSION,
   BOOTSTRAP_VOCABULARY_SCHEME,
+  computeVocabularyFingerprint,
   type BootstrapRecord
 } from './bootstrap';
+import { OBSERVER_OPTIONS } from '../observer/options';
 
 /** A JSON.parse of this size freezes the main thread and can OOM mobile.
  *  Shared by the deployed-record fetch and the Settings file import. */
 export const MAX_RECORD_BYTES = 256 * 1024 * 1024;
+
+/** The fingerprint of the vocabulary THIS app decodes traces against.
+ *  Memoized: the table is ~20k entries and never changes within a session. */
+let appFingerprint: string | null = null;
+function appVocabularyFingerprint(): string {
+  if (appFingerprint === null) {
+    appFingerprint = computeVocabularyFingerprint(OBSERVER_OPTIONS.vocabulary);
+  }
+  return appFingerprint;
+}
+
+/**
+ * Reject a record trained under a DIFFERENT vocabulary table than the one
+ * this app decodes against. Version/scheme/deck checks cannot catch this:
+ * under the semantic scheme a deck-content change (an override, a layered
+ * sense, an appended word) shifts signatures silently while every coarse
+ * marker still matches. Legacy records without a fingerprint are accepted
+ * — regenerating with npm run train stamps one.
+ */
+export function assertVocabularyCompatible(record: BootstrapRecord): void {
+  if (record.vocabularyFingerprint === undefined) return;
+  if (record.vocabularyFingerprint !== appVocabularyFingerprint()) {
+    throw new Error(
+      `bootstrap record was trained under vocabulary ${record.vocabularyFingerprint}, but this app's deck builds ${appVocabularyFingerprint()} — the deck content changed since training; regenerate the record with npm run train`
+    );
+  }
+}
 
 export interface BootstrapImportSummary {
   restored: number;
@@ -55,6 +84,7 @@ export async function fetchDeployedBootstrap(): Promise<BootstrapRecord> {
   }
   const record = (await response.json()) as BootstrapRecord;
   assertImportable(record);
+  assertVocabularyCompatible(record);
   return record;
 }
 

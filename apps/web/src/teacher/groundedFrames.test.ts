@@ -139,3 +139,32 @@ describe('grounded frames (P5)', () => {
     expect(contentWordsOf('A robin is a bird. It can fly.')).toEqual(['robin', 'bird', 'fly']);
   });
 });
+
+describe('exception-aware grounded generation (negations propagate)', () => {
+  const PENGUIN: Relation[] = [
+    { subject: 'penguin', predicate: 'is-a', object: 'bird', source: 'def', origin: 'regex' },
+    { subject: 'bird', predicate: 'capable-of', object: 'fly', source: 'def', origin: 'regex' },
+    { subject: 'bird', predicate: 'has-part', object: 'wings', source: 'def', origin: 'regex' }
+  ];
+  const NEGATIONS: Negation[] = [
+    { subject: 'penguin', predicate: 'capable-of', object: 'fly', evidence: 'a penguin cannot fly', origin: 'taught' }
+  ];
+
+  it('the critic refuses a positive claim the confirmed-false store contradicts', () => {
+    // Inherited via bird — grounded without the negation…
+    expect(criticize('A penguin is a bird. It can fly.', PENGUIN, []).grounded).toBe(true);
+    // …refused with it: a taught falsehood outranks extraction.
+    const verdict = criticize('A penguin is a bird. It can fly.', PENGUIN, NEGATIONS);
+    expect(verdict.grounded).toBe(false);
+    expect(verdict.unbacked.some((u) => u.includes('fly'))).toBe(true);
+  });
+
+  it('composeGrounded never fills a frame with negated content', () => {
+    for (let seed = 0; seed < 20; seed += 1) {
+      const grounded = composeGrounded(['penguin'], PENGUIN, mulberry32(seed), 3, NEGATIONS);
+      expect(grounded).not.toBeNull();
+      expect(grounded!.sentence).not.toMatch(/fly/);
+      expect(grounded!.edges.length).toBeGreaterThan(0);
+    }
+  });
+});

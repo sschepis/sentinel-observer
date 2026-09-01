@@ -78,8 +78,8 @@ Order: P9 (scheduler) → P11 (pruning/capacity) → P12 (CI gates) → P13 (sem
 - [x] Wired into test:bench (5 suites, 8 tests all pass)
 
 ## Phase 14 — P13: Semantic recall benchmark (2–3d)
-- [ ] 14.1 Definition→word + paraphrase→word cues; content-path fix for the production quiz
-- [ ] 14.2 Gates: paraphrase→word ≥ 0.6; recognition unchanged
+- [x] 14.1 Definition→word + paraphrase→word cues; content-path fix for the production quiz; precision-gated semantic retrieval before ASK
+- [x] 14.2 Gates: corpus paraphrase→word 85% (51/60) ≥ 0.6; chat retrieval ≥ 0.6 with zero wrong answers; recognition unchanged
 
 ## Phase 15 — P10: Replay/consolidation pass (3–4d)
 - [ ] 15.1 Relation re-mining over conversation traces (origin: 'consolidated')

@@ -8,6 +8,7 @@
  *   clock                deterministic clock/date
  *   memorized            taught exchange replayed
  *   operator-definition  "what is X"
+ *   operator-semantic    paraphrased meaning -> learned word
  *   operator-graph       confident relational answers (no score)
  *   operator-graded      P1 holographic answers (carry a score)
  *   operator-compiled    P2 executable drill rules
@@ -58,6 +59,7 @@ function layerOf(answer: ChatAnswer): string {
     if (kind === 'compiled-rule') return 'operator-compiled';
     if (kind === 'learned') return 'operator-learned';
     if (kind === 'definition') return 'operator-definition';
+    if (kind === 'semantic-recall') return 'operator-semantic';
     if (RELATIONAL_KINDS.has(kind)) {
       return 'score' in answer.operator! ? 'operator-graded' : 'operator-graph';
     }
@@ -99,6 +101,7 @@ async function main(): Promise<void> {
   const corpus: Array<{ prompt: string; expect?: string | string[] }> = [
     { prompt: 'how are you', expect: 'memorized' },
     { prompt: 'what is apple', expect: 'operator-definition' },
+    { prompt: 'what word means a flying animal covered in feathers', expect: 'operator-semantic' },
     { prompt: 'is a robin a bird', expect: 'operator-graph' },
     { prompt: 'does a bird have feathers', expect: 'operator-graded' },
     { prompt: 'is a bird a creature', expect: 'operator-graded' },
@@ -137,7 +140,7 @@ async function main(): Promise<void> {
   for (const [layer, count] of ordered) {
     console.log(`  ${layer.padEnd(22)} ${count}/${total}  (${((count / total) * 100).toFixed(0)}%)`);
   }
-  const strict = ['clock', 'memorized', 'operator-definition', 'operator-graph', 'operator-graded', 'operator-compiled', 'operator-learned', 'operator-other']
+  const strict = ['clock', 'memorized', 'operator-definition', 'operator-semantic', 'operator-graph', 'operator-graded', 'operator-compiled', 'operator-learned', 'operator-other']
     .reduce((sum, layer) => sum + (counts.get(layer) ?? 0), 0);
   console.log('─'.repeat(44));
   console.log(`ASK RATE: ${((ask / total) * 100).toFixed(0)}% (${ask}/${total})`);
