@@ -474,3 +474,58 @@ overlay's −0.9 floor caps a single step — after which the ledger carries
 the resolution. Extraction artifacts like `planet is-a star` are real
 finds, but the durable fix is in the definitions (the sweep is the alarm,
 not the repair).
+## 14. Auto-sharding memory: reorganization by reduced entropy
+
+**The measurement.** Retrieval interference is an entropy: for every
+trace-as-cue, the candidates it competes with are the other traces in its
+retrieval NEIGHBORHOOD, and the reading is the mean `log2(1 + candidates)` —
+a cue that sees 2^k siblings carries k bits of candidate competition
+diluting its recall score. The neighborhood is defined by the SMF sketch
+cosine (>= 0.7), NOT by prime sharing: every moment the observer stores
+carries the full active basis, so prime sets are a clique and cannot
+discriminate — the compact bank's own contract already says sibling
+discrimination rides on the SMF term alone. The 0.7 threshold sits above
+the sketch projection's ~0.5 similarity floor between distinct axes.
+
+**The mechanism** (`packages/sentient-core/src/semantic/ShardedMemoryBank.ts`,
+`memoryMode: 'autoshard'`):
+
+- every shard is an ordinary `CompactMemoryBank` — recall semantics are
+  untouched, only the candidate set narrows;
+- a trace's HOME shard is the one whose prime vocabulary it overlaps most
+  (deterministic, and identical on bootstrap restore);
+- recall ROUTES by the shard's SMF prototype (the normalized mean sketch),
+  falling through to the runner-up when the top route is empty and merging
+  both when they are within 0.1 cosine — the same discriminator recall
+  ranks by, since prime-vocabulary routing degenerates on the clique;
+- AUTO-SPLIT (amortized, every 48 stores) proposes a deterministic
+  2-way k-medoid partition refined by an entropy-guided local search that
+  moves a trace only when the move strictly lowers total interference;
+- the HONEST GATE: a split is adopted only when it beats BOTH the current
+  interference AND the **random-split baseline** of the same shard sizes.
+  A homogeneous shard always halves its candidates when bisected — that
+  "reduction" is chance, not organization, and the baseline rejects it.
+  Without this gate the sharder bisected clones and recall collapsed to 7%
+  competency (measured), because half the cues routed to a shard that did
+  not hold their trace;
+- MERGE folds a starved shard (< 24 traces) into its nearest neighbor when
+  the result stays within the entropy budget; `reorganize()` re-partitions
+  everything across k−1 / k / k+1 and keeps the lowest-entropy option that
+  respects the budget.
+
+**Measured** (`conversationShardBenchmark.test.ts`, 150 words + the 728-pair
+conversation curriculum, single compact bank as the control):
+
+| | single bank | auto-shard |
+|---|---|---|
+| conversation competency | 66.2% | 66.1% |
+| retrieval interference | 4893.7 bits | **3890.9 bits (−20.5%)** |
+| shards | 1 | 2 (439t/4.69b, 439t/4.18b) |
+| training wall-clock | 56.7s | 57.5s |
+
+The organization is real (−20.5% interference at parity competency and
+parity cost). What it does NOT do: the paraphrase probes ("good morning",
+"how is it going") fail identically in both arms (0/10) — sharding narrows
+the candidate set but does not lift a cue over the 0.8 identity gate when
+the sketch space itself does not separate the paraphrase family. That
+limit belongs to the signature scheme, not the partition.

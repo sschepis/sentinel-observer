@@ -55,6 +55,7 @@ import {
   type MemoryBank,
   type TraceLike
 } from './CompactMemoryBank';
+import { ShardedMemoryBank, type ShardedMemoryBankOptions } from './ShardedMemoryBank';
 import { SEVERITY_WEIGHT,
   SafetyMonitor,
   type SafetyCheckResult,
@@ -111,13 +112,18 @@ export interface SemanticObserverOptions {
    *
    * 'compact' stores lean traces (~400 bytes, no per-trace holograms) with
    * candidate prefiltering — the scale substrate for thousands of words.
+   * 'autoshard' wraps the compact bank in the entropy-driven shard manager
+   * (ShardedMemoryBank): traces partition across shards by prime-vocabulary
+   * overlap so retrieval interference entropy H(T|P) is minimized — the
+   * fix for paraphrase-colliding cues ("good morning" / "good evening").
+   * Same recall semantics per shard; only the candidate set narrows.
    */
-  memoryMode?: 'full' | 'compact';
+  memoryMode?: 'full' | 'compact' | 'autoshard';
   /**
    * Optional tuning for the memory bank (weights, thresholds, capacity).
    * Passed through to whichever bank `memoryMode` selects.
    */
-  memoryBankOptions?: Partial<CompactMemoryBankOptions & SemanticMemoryBankOptions>;
+  memoryBankOptions?: Partial<CompactMemoryBankOptions & ShardedMemoryBankOptions & SemanticMemoryBankOptions>;
   /**
    * SMF sketch width (default 16 = the named SMF_AXES). Wider sketches spread
    * the orientation's discrimination across more dimensions; the first 16
@@ -340,13 +346,15 @@ export class SemanticObserver implements Initializable {
     this.memory =
       options.memoryMode === 'compact'
         ? new CompactMemoryBank({ capacity: this.options.memoryCapacity, ...options.memoryBankOptions })
-        : new SemanticMemoryBank({
-            capacity: this.options.memoryCapacity,
-            gridSize: this.options.gridSize,
-            primes: undefined, // basis is chosen per encode call from the field primes
-            ...options.memoryBankOptions
-          });
-    this.momentPhasesInRetrieval = options.memoryMode === 'compact';
+        : options.memoryMode === 'autoshard'
+          ? new ShardedMemoryBank({ capacity: this.options.memoryCapacity, ...options.memoryBankOptions })
+          : new SemanticMemoryBank({
+              capacity: this.options.memoryCapacity,
+              gridSize: this.options.gridSize,
+              primes: undefined, // basis is chosen per encode call from the field primes
+              ...options.memoryBankOptions
+            });
+    this.momentPhasesInRetrieval = options.memoryMode === 'compact' || options.memoryMode === 'autoshard';
 
     this.hologram = new HolographicMemory({ gridSize: this.options.gridSize });
     this.safety = options.safety ?? SafetyMonitor.forObserver();

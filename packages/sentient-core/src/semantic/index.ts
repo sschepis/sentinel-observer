@@ -128,6 +128,13 @@ export {
   type RecallResultLike,
   type SerializedTraceData
 } from './CompactMemoryBank';
+export {
+  ShardedMemoryBank,
+  type ShardedMemoryBankOptions,
+  retrievalInterferenceEntropy,
+  jaccardPrimeSimilarity,
+  partitionByPrimeJaccard
+} from './ShardedMemoryBank';
 export type {
   MemoryTrace,
   StoreOptions,
