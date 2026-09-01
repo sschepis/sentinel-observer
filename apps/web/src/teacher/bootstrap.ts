@@ -1,6 +1,7 @@
 import type { SerializedTrace } from '@sschepis/sentient-core';
 import type { WordState, CompiledRule, AnswerGradeEntry } from './TeacherAgent';
 import type { Relation, Negation, SourceClass } from './relations';
+import type { ReliabilitySnapshot } from './reliability';
 import { SEMANTIC_VOCABULARY_SCHEME } from './semanticSignature';
 
 export const BOOTSTRAP_VERSION = 2 as const;
@@ -98,7 +99,7 @@ export interface BootstrapRecord {
   /** The bounded per-answer grade ledger (P7), restored on import. */
   answerGrades?: AnswerGradeEntry[];
   /** The world-feedback credit map (P7), restored on import. */
-  authoredAnswers?: Array<{ utterance: string; traceIds: string[]; at: number }>;
+  authoredAnswers?: Array<{ utterance: string; traceIds: string[]; at: number; score?: number; provider?: string; template?: string }>;
   /** The per-edge confidence overlay (P8), restored on import. */
   edgeConfidence?: Record<string, number>;
   /** P14 per-edge corroboration source classes (independent evidence:
@@ -130,6 +131,11 @@ export interface BootstrapRecord {
     producedCues?: string[];
     /** Last recall confidence per produced cue. */
     cueConfidence?: Record<string, number>;
+    /** The per-bucket grader reliability model (per-criteria agreement
+     *  between the LLM teacher's grades and the rule-based checks / world
+     *  verdicts, with the pending re-grade queue). Restored on import so
+     *  distrust learned in one session survives into the next. */
+    graderReliability?: ReliabilitySnapshot;
     bootstrapImportedMeta?: { generatedAt: string; words: number } | null;
   };
 }

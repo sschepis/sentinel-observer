@@ -313,3 +313,73 @@ verdicts as the word's own trace — the field's recognition noise is not
 the variable under test. The queue ordering, FSRS updates, reinforcement
 and ledger all run the real production path.
 
+## 12. The grader reliability model — where the LLM teacher is trusted
+
+The teacher grades two ways: rule-based checks (quiz trace identity, the
+deterministic drill verifier, the composition grounding check) that are exact
+but narrow, and LLM semantic grades (0..1 quality scores on creative/hybrid
+answers) that are broad but fallible. The reliability model learns WHERE the
+LLM grade is unreliable and weights feedback accordingly
+(`apps/web/src/teacher/reliability.ts`).
+
+**Bucketing.** Every grade is keyed by four criteria: answer type
+(definition / spelling / creative / drill …), the FSRS difficulty band of the
+graded material (from the scheduler's [1, 10] difficulty), the question
+template (fade classification), and the LLM provider. Evidence is recorded
+per full tuple and per dimension, and a bucket's reliability is a
+Bayesian-smoothed blend over the fallback chain (full tuple → dimensions →
+prior 0.65) — a sparse bucket leans on its dimensions, a cold bucket returns
+the prior.
+
+**Evidence channels.**
+- *LLM vs rule check* (weight 1): the LLM grade's band (≥0.7 strong, ≤0.3
+  weak) against the grounding check's band (fabrication → weak, echo → mid,
+  grounded composition → strong — the creative gold set's own banding).
+- *World feedback* (weight 0.25, the world confirms slowly): a re-ask
+  contradicting a strong grade, a retention confirming it.
+- *Re-grade resolutions*: the outcome of every scheduled disagreement.
+
+**Weight application.** `feedbackWeight(bucket)` = 1 while measured
+reliability ≥ prior (evidence never earned distrust), then falls linearly to
+a 0.1 floor. The weight scales feedback DELTAS only — P8 edge confidence
+bumps (±0.2), trace reinforcement, composition-weight gradients, and the
+FSRS stability/difficulty updates in `TeacherAgent.grade` — never the
+grade's BAND, so a damped grade can never silently change class (a strong
+0.9 × 0.5 = 0.45 would look mid and unlearn the answer). At the prior the
+weight is exactly 1: **no behavior change without evidence — the SRS
+retention curve is untouched by default** (verified: SrsRetention and fsrs
+suites pass unchanged).
+
+**Re-grade loop.** A rule-check disagreement schedules a pending re-grade
+(bounded queue, persisted) instead of silently overruling the teacher:
+`teacher.graderReliability().pendingRegrades()` is the confirmation UI's
+queue, `resolveRegrade(id, agreed)` records the outcome into the same stats.
+The classroom loop reports the disagreement as a `regrade` event with the
+applied weight; the chat UI appends "the internal check disagrees (re-grade
+pending)" to the grade feedback.
+
+**Exposure.** `teacher.graderReliability()` and
+`teacher.reliabilityOf(utterance, answerType, difficulty, provider)` give the
+corroboration and curriculum modules the bucket's evidence (samples,
+agreement rate, reliability, weight) before they act on grade-sourced
+evidence. The model persists with the learning state (export/import and
+IndexedDB), so distrust learned in one session survives into the next.
+
+**Measured** (`graderReliabilityBenchmark.test.ts`, seeded, weighted vs
+unweighted arms over 400 simulated grades with a reliable bucket at 0.9
+truth-agreement and a flaky one at 0.35):
+
+| Metric | Unweighted baseline | Reliability-weighted | Δ |
+|---|---|---|---|
+| Feedback accuracy (mean \|edge delta − truth\|) | 1.800 | 1.652 | **−8.2%** |
+| Retention of true-strong reinforcement (kept/truth) | 0.202 | 0.250 | +0.048 |
+| Retention of true-weak weakening (kept/truth) | 0.259 | 0.296 | +0.037 |
+| Learned reliability — reliable bucket / flaky bucket | — | 0.649 (weight 1.00) / 0.376 (weight 0.62) | — |
+
+The model learns the buckets (the flaky provider's grades earn weight 0.62
+while the reliable one keeps full weight), and the weighted arm lands closer
+to the truth on both the graph and the memory. Caveats: the rule check
+(grounding) is a proxy for correctness, not correctness itself — a
+well-grounded fabrication is still graded strong by both; and the re-grade
+queue is only as good as the confirmations it receives (deferred regrades
+leave the damped weight in place, which is the conservative direction).

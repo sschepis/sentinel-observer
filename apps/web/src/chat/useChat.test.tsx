@@ -36,6 +36,7 @@ function fakeTeacher(kind: 'creative' | 'ask'): TeacherAgent {
   return {
     chatAnswer: () => (kind === 'creative' ? creativeAnswer : askAnswer),
     creativeGradeFeedback: () => true,
+    gradeCreativeWithReliability: () => ({ stored: true, weight: 1, disagreement: false, regradeId: null }),
     recallMemories: () => [{ content: 'the sky remembers the rain', id: 'trace-1', score: 0.9 }],
     recordGap: () => {}
   } as unknown as TeacherAgent;
