@@ -271,6 +271,17 @@ export interface SemanticObserverOptions {
    * (0 = off). Deterministic ties (amplitude desc, index asc).
    */
   winnerTakeAll?: number;
+
+  // ── SMF MOMENT IMPRINT (P13) ──────────────────────────────────────────
+  // The SMF is an exponential moving average (alpha ≈ 0.2, coherence-weighted)
+  // and nothing resets it: `settleField()` clears the oscillators, not the
+  // sketch, so a trace's sketch is the observer's drifting TRAJECTORY at
+  // teach time with content mixed in at ~20% per tick (measured: consecutive
+  // traces sit at 0.919 cosine regardless of content; unrelated at 0.436).
+  // This option makes the first imprint after each `settleField()` REPLACE
+  // the sketch (alpha = 1) instead of blending, so every lesson's sketch is
+  // imprinted from its own moment. Default false = the honest control.
+  smfMomentImprint?: boolean;
 }
 
 /** A coherence-driven moment. */
@@ -414,6 +425,9 @@ export class SemanticObserver implements Initializable {
   private lastMomentId: string | null = null;
   private lastSafety: SafetyCheckResult | null = null;
   private initialized = false;
+  /** P13: the next imprint replaces the sketch (set by settleField when
+   *  `smfMomentImprint` is on; cleared by the first tick after it). */
+  private smfNeedsMomentImprint = false;
 
   // Typed observables. Unlike a raw EventEmitter, an error published with no
   // subscribers is safely discarded (see Subject.error), never a process crash.
@@ -464,6 +478,7 @@ export class SemanticObserver implements Initializable {
       activationBudget: options.activationBudget ?? 0,
       inhibition: options.inhibition ?? 0,
       winnerTakeAll: options.winnerTakeAll ?? 0,
+      smfMomentImprint: options.smfMomentImprint ?? false,
       safety: options.safety
     };
 
@@ -797,7 +812,10 @@ export class SemanticObserver implements Initializable {
    */
   private projectTouchedAxes(): string[] {
     const projection = this.smf.clone();
-    projection.updateFromPrimeActivity(this.field.getState());
+    projection.updateFromPrimeActivity(
+      this.field.getState(),
+      this.smfNeedsMomentImprint ? { learningRate: 1 } : undefined
+    );
     const touched: string[] = [];
     for (let i = 0; i < projection.width; i++) {
       if (Math.abs(projection.get(i) - this.smf.get(i)) > 1e-9) {
@@ -945,6 +963,7 @@ export class SemanticObserver implements Initializable {
     let momentCountSnapshot = 0;
     let lastMomentIdSnapshot: string | null = null;
     let lastSafetySnapshot: SafetyCheckResult | null = null;
+    let smfMomentImprintSnapshot = false;
 
     try {
       const step = dt ?? this.options.dt;
@@ -965,6 +984,7 @@ export class SemanticObserver implements Initializable {
       momentCountSnapshot = this.momentCount;
       lastMomentIdSnapshot = this.lastMomentId;
       lastSafetySnapshot = this.lastSafety;
+      smfMomentImprintSnapshot = this.smfNeedsMomentImprint;
 
       this.tickCount += 1;
 
@@ -979,8 +999,17 @@ export class SemanticObserver implements Initializable {
       const metrics = this.field.tick(step);
       const state = this.field.getState();
 
-      // 2. Imprint the oscillator field onto the SMF.
-      this.smf.updateFromPrimeActivity(state);
+      // 2. Imprint the oscillator field onto the SMF. P13 (smfMomentImprint):
+      //    the first imprint after settleField() REPLACES the sketch
+      //    (learningRate 1 => alpha = 1 at full coherence) instead of
+      //    EMA-blending, so each lesson's sketch is imprinted from its own
+      //    moment rather than the trajectory accumulated across the
+      //    curriculum (the control keeps the EMA: alpha ≈ 0.2).
+      this.smf.updateFromPrimeActivity(
+        state,
+        this.smfNeedsMomentImprint ? { learningRate: 1 } : undefined
+      );
+      this.smfNeedsMomentImprint = false;
 
       // 3. Encode + evolve the hologram.
       const amplitudes = this.memoryPatternAmplitudes(state);
@@ -1094,6 +1123,7 @@ export class SemanticObserver implements Initializable {
         this.momentCount = momentCountSnapshot;
         this.lastMomentId = lastMomentIdSnapshot;
         this.lastSafety = lastSafetySnapshot;
+        this.smfNeedsMomentImprint = smfMomentImprintSnapshot;
       }
 
       const error = err instanceof Error ? err : new Error(String(err));
@@ -1264,6 +1294,10 @@ export class SemanticObserver implements Initializable {
     this.clusterSignature = null;
     this.clusterStableTicks = 0;
     this.clusterSatisfied = false;
+    // P13 (smfMomentImprint): the next imprint replaces the sketch, so the
+    // lesson's trace is imprinted from its own moment, not the EMA
+    // trajectory. Off by default — the trajectory is the honest control.
+    if (this.options.smfMomentImprint) this.smfNeedsMomentImprint = true;
   }
 
   /** Tick repeatedly until `predicate` holds or `maxTicks` is reached. */

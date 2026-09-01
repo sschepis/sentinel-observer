@@ -44,6 +44,7 @@ const COMPETITION = {
   winnerTakeAll: Number(process.env.MARGIN_BENCH_WTA ?? 0)
 };
 const MOMENT_CRITERION = process.env.MARGIN_BENCH_CRITERION ?? 'global-R';
+const SMF_MOMENT_IMPRINT = process.env.MARGIN_BENCH_SMF_IMPRINT === '1';
 
 interface ArmOptions {
   label: string;
@@ -147,7 +148,13 @@ function cosineCenteredOf(a: number[], b: number[], mean: Float64Array): number 
 async function runArm(opts: ArmOptions): Promise<MarginStats> {
   const started = Date.now();
   const session = new ObserverSession(
-    { ...OBSERVER_OPTIONS, ...COMPETITION, momentCriterion: MOMENT_CRITERION as 'global-R' | 'phase-clusters', ...opts.extra },
+    {
+      ...OBSERVER_OPTIONS,
+      ...COMPETITION,
+      momentCriterion: MOMENT_CRITERION as 'global-R' | 'phase-clusters',
+      smfMomentImprint: SMF_MOMENT_IMPRINT,
+      ...opts.extra
+    },
     100
   );
   await session.initialize();
@@ -234,7 +241,7 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(
     `[margin-bench] words=${WORDS} cues=${CUE_COUNT} pairs=${ALL_CONVERSATION_PAIRS.length} ` +
-      `competition=${JSON.stringify(COMPETITION)} criterion=${MOMENT_CRITERION}`
+      `competition=${JSON.stringify(COMPETITION)} criterion=${MOMENT_CRITERION} smfMomentImprint=${SMF_MOMENT_IMPRINT}`
   );
   if (!CENTERED_ONLY) print('raw', await runArm({ label: 'raw', extra: {} }));
   if (!RAW_ONLY) {

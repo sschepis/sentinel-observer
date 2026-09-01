@@ -1284,3 +1284,45 @@ arm, so the readings above are deterministic and not a single lucky
 sample. The benchmark is excluded from the default suite (12 arms x 928
 traces, ~11.5 min) and runs as `npm run test:sparse-bench`.
 
+## 20. SMF moment imprint — the trajectory IS the ranking signal
+
+**The mechanism (§19d located it).** The SMF sketch is an exponential moving
+average (alpha ≈ 0.2, coherence-weighted) and nothing resets it:
+`settleField()` clears the oscillators, not the sketch. A trace's sketch is
+the observer's drifting trajectory at teach time with content mixed in at
+~20%/tick — consecutive traces sit at 0.919 cosine regardless of content.
+
+**The experiment.** `smfMomentImprint` (opt-in, default OFF = the honest
+control): the first imprint after each `settleField()` REPLACES the sketch
+(`learningRate` 1 ⇒ alpha = 1 at full coherence) instead of blending, so
+every lesson's trace is imprinted from its own moment. One-shot by
+construction; re-armed by every settle; rolled back atomically with the tick
+(5 unit tests, `SmfMomentImprint.test.ts`).
+
+**Measured** (`margin-bench`, 200 words + 728 pairs, 200 taught cues; the
+default-off control is bit-identical to the pre-change engine):
+
+| arm | top-1 raw | margin raw | top-1 centered | margin centered | DC | cos raw | competency |
+|---|---|---|---|---|---|---|---|
+| control | 99.0% | **+0.129** | 33.3% | −0.044 | 0.732 | 0.452 | 99.0% |
+| budget 0.5 (§18) | 99.0% | **+0.178** | 99.0% | +0.175 | 0.650 | 0.484 | 99.7% |
+| imprint | 62.6% | +0.014 | 49.0% | +0.015 | 0.403 | 0.115 | 99.9% |
+| **budget 0.5 + imprint** | 99.0% | +0.163 | **99.5%** | **+0.173** | 0.376 | 0.226 | 100.0% |
+
+**Verdict: REJECT alone, not adopted in combination — but the falsifier
+finally flipped.** Imprint alone decollapses the sketch harder than anything
+measured so far (DC 0.732 → 0.403, cosine floor 0.452 → 0.115) and yet
+destroys ranking (top-1 62.6%, margin +0.014): the trajectory is the
+recency signal retrieval ranks by, not a noise floor. Combined with the
+budget, raw margin is +0.163 — below budget-alone's +0.178, so the
+combination loses on the decisive metric. But the §15 falsifier prediction
+is now demonstrated in full: with budget 0.5 + imprint ON, `centerSketches`
+turns POSITIVE (centered margin +0.173 > raw +0.163, top-1 99.5%, competency
+100.0%) — centering helps only when both the field budget and the sketch
+reset are engaged, i.e. the shared component §15 said "carries signal the
+cosine needs" is exactly the EMA trajectory.
+
+**Controls after the change:** typecheck clean · core **271/271** (266 + 5
+new) · web **818/818** · word-recognition gates 2/2 · competency 99.0%
+(control) / 100.0% (combined). Default-off, so the shipped engine is
+bit-identical.
