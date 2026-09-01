@@ -578,3 +578,26 @@ the sketch at readout (`centerSketches`, default OFF) was measured and it
 LOSES: top-1 rank collapses 98.5% -> 33.3% and the mean margin goes negative
 (-0.041). The shared component is not noise — it carries signal the cosine
 needs. The flag stays, default off, as a documented control.
+
+### 15b. Anaphora resolution was eating taught phrases
+
+With the margin gate in place, 95 of 728 taught cues were still refused —
+and the diagnostic said their true trace ranked first with score AND margin
+to spare (`what time is it` score 0.807 / margin 0.181). The cause was not
+retrieval at all: `chatAnswer` resolves references before recall, so once a
+conversation has a topic, "how is it going" is rewritten to "how is
+<topic> going" and the taught exchange becomes unrecognizable.
+
+Fix: try the resolved form first (reference-bearing questions need it), and
+fall back to the RAW utterance when the resolved lookup is not authoritative
+but the raw one is — a taught phrase beats a pronoun rewrite. The gate is
+then evaluated against whichever form produced the recall.
+
+**Measured on the shipped bootstrap** (no retraining — all three fixes are
+readout changes):
+
+| | before | margin gate | + raw-cue fallback |
+|---|---|---|---|
+| taught exchanges answered | ~66% | 633/728 (87.0%) | **717/728 (98.5%)** |
+| of those, exact taught response | — | 100% | **717/717 (100%)** |
+| untaught cues falsely answered | 0/20 | 0/20 | **0/20** |

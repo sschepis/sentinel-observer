@@ -3419,7 +3419,35 @@ export class TeacherAgent {
     //       taught exchange itself — the recall must carry the cue that was
     //       taught. Without this, degenerate tiny banks (a single trace)
     //       would still collapse onto any similar question.
-    const memorized = this.respond(resolved);
+    // A TAUGHT PHRASE BEATS A PRONOUN REWRITE. Anaphora resolution rewrites
+    // "it/they/that" against the working-memory topic, which silently
+    // corrupts fixed conversational cues ("how is it going" -> "how is
+    // <topic> going") and makes the exchange unrecognizable. Measured: 93
+    // of 728 taught cues were refused for exactly this reason even though
+    // their raw form recalled with score AND margin to spare. So: try the
+    // resolved form first (it is what reference-bearing questions need),
+    // and fall back to the RAW utterance when the resolved lookup is not
+    // authoritative but the raw one is.
+    let memorized = this.respond(resolved);
+    /** The utterance form the adopted recall was matched against. */
+    let memorizedQuery = resolved;
+    const resolvedAuthoritative =
+      memorized.response !== null &&
+      memorized.confidence !== null &&
+      memorized.cue !== null &&
+      authoritativeRecall(memorized.confidence, memorized.margin ?? 0, resolved, memorized.cue);
+    if (!resolvedAuthoritative && resolved !== utterance) {
+      const raw = this.respond(utterance);
+      if (
+        raw.response !== null &&
+        raw.confidence !== null &&
+        raw.cue !== null &&
+        authoritativeRecall(raw.confidence, raw.margin ?? 0, utterance, raw.cue)
+      ) {
+        memorized = raw;
+        memorizedQuery = utterance;
+      }
+    }
     const questionKey = resolved.trim().toLowerCase();
     const cueKey = (memorized.cue ?? '').toLowerCase();
     const cueMatches = matchesCue(questionKey, cueKey);
@@ -3427,7 +3455,7 @@ export class TeacherAgent {
       memorized.response !== null &&
       memorized.confidence !== null &&
       memorized.cue !== null &&
-      authoritativeRecall(memorized.confidence, memorized.margin ?? 0, resolved, memorized.cue)
+      authoritativeRecall(memorized.confidence, memorized.margin ?? 0, memorizedQuery, memorized.cue)
     ) {
       this.workingMemory.note('observer', memorized.response);
       this.noteAnswerMode('memorized');
