@@ -118,7 +118,7 @@ export function useChat(
   const gradeCreative = useCallback(
     async (
       utterance: string,
-      reply: { sentence: string; confidence: number | null; seedTraceIds: string[] },
+      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; templateIds: string[] },
       conversationId: string
     ) => {
       if (teacher === null) return;
@@ -141,7 +141,12 @@ export function useChat(
         feedback = 'grading unavailable — configure a teacher model in Settings';
       }
 
-      teacher.creativeGradeFeedback({ traceIds: reply.seedTraceIds, edges: [] }, score, utterance, reply.sentence);
+      teacher.creativeGradeFeedback(
+        { traceIds: reply.seedTraceIds, edges: [], templateIds: reply.templateIds },
+        score,
+        utterance,
+        reply.sentence
+      );
       pushExchange(
         utterance,
         {
@@ -181,7 +186,8 @@ export function useChat(
         void gradeCreative(utterance, {
           sentence: answer.response,
           confidence: answer.confidence,
-          seedTraceIds: answer.seedTraceIds
+          seedTraceIds: answer.seedTraceIds,
+          templateIds: answer.templateIds
         }, conversationId);
         return;
       }

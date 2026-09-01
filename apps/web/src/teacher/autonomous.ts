@@ -230,7 +230,7 @@ export async function runAutonomousCycle(
           // them (edges: []) used to leave a wrong classroom grade unable to
           // call the answer's own edges into question.
           teacher.creativeGradeFeedback(
-            { traceIds: reply.seedTraceIds, edges: reply.edges },
+            { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds },
             outcome.score,
             prompt,
             reply.sentence

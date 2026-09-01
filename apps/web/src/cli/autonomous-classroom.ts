@@ -241,7 +241,12 @@ async function main(): Promise<void> {
     const prompt = PROMPTS[cycle % PROMPTS.length];
     const answer = teacher.chatAnswer(prompt);
     if (answer.mode === 'creative' && answer.response.trim().length > 0) {
-      teacher.creativeGradeFeedback(answer.seedTraceIds, 0.8, prompt, answer.response);
+      teacher.creativeGradeFeedback(
+        { traceIds: answer.seedTraceIds, edges: [], templateIds: answer.templateIds },
+        0.8,
+        prompt,
+        answer.response
+      );
     }
 
     // 5b. HANDOVER FEED: every creative exercise is a chance to grow the

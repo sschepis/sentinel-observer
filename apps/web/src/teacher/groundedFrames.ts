@@ -8,242 +8,122 @@
  * by the relation graph (direct or inherited) or the confirmed-false store —
  * fabrication without an LLM.
  *
+ * The frame pool: the FIXED frames (framesFor) plus, when a
+ * LearnedFrameStore is supplied, the templates the observer has learned
+ * from accepted answers (see learnedFrames.ts) — same honesty contract,
+ * richer structure. Every composition records the template ids it used so
+ * the world's grade can be attributed back to the templates.
+ *
  * The dispatch contract: try grounded frames first; the Markov path remains
  * as a LABELED fallback (the caller marks the answer `grounded: false`).
  */
 
-import { edgeObjects, inheritsEdge } from './chain';
-import { isContentWord, tokenizeText } from './context';
-import type { Relation, RelationPredicate } from './relations';
-import type { Negation } from './relations';
+import { isContentWord } from './context';
+import type { Negation, Relation, RelationPredicate } from './relations';
+import { framesFor, fixedFrames, FIRST_FRAME_PREFERENCE, type FrameRef, type LearnedFrameStore } from './learnedFrames';
+import { criticize } from './critic';
 
-/** One parsed claim of a candidate sentence. */
-export interface Claim {
-  subject: string;
-  predicate: RelationPredicate;
-  object: string;
-  negated: boolean;
-}
+// The claim grammar and the fixed frames now live in critic.ts and
+// learnedFrames.ts respectively; re-exported here so existing importers
+// keep working unchanged.
+export { framesFor, fixedFrames, renderTemplate } from './learnedFrames';
+export { criticize, parseClaims, extractSubject, contentWordsOf } from './critic';
+export type { Claim } from './critic';
+export type {
+  LearnedFrameStore,
+  HoleTemplate,
+  FrameRef,
+  FrameTemplateStats,
+  AdmissionVerdict,
+  TemplateAudit
+} from './learnedFrames';
 
 export interface GroundedComposition {
   sentence: string;
   /** The backing edges of every claim (the provenance the answer cites). */
   edges: Array<{ subject: string; predicate: RelationPredicate; object: string }>;
   frames: string[];
-}
-
-const article = (word: string): string => (/^[aeiou]/.test(word) ? 'an' : 'a');
-
-/** "a" / "a and b" / "a, b and c" — the frame object list. */
-function listPhrase(words: readonly string[]): string {
-  if (words.length <= 1) return words[0] ?? '';
-  if (words.length === 2) return `${words[0]} and ${words[1]}`;
-  return `${words.slice(0, -1).join(', ')}, and ${words[words.length - 1]}`;
+  /** The template ids the composition was built from (fixed:... and
+   *  learned:...) — the credit/feedback attribution of each frame. */
+  templateIds: string[];
 }
 
 /**
- * The typed frames a subject can fill, each built ONLY from stored edges
+ * The typed frames a subject can fill, built ONLY from stored edges
  * (direct or inherited). The FIRST frame always names the subject (so the
  * critic can resolve it); later frames use "It".
  */
-export function framesFor(subject: string, relations: readonly Relation[]): string[] {
-  const frames: string[] = [];
-  const parents = edgeObjects(relations, subject, 'is-a');
-  const parts = edgeObjects(relations, subject, 'has-part').slice(0, 3);
-  const props = edgeObjects(relations, subject, 'has-property').slice(0, 3);
-  const actions = edgeObjects(relations, subject, 'capable-of').slice(0, 3);
-  const purposes = edgeObjects(relations, subject, 'used-for').slice(0, 3);
-  const materials = edgeObjects(relations, subject, 'made-of').slice(0, 3);
-
-  if (parents.length > 0) frames.push(`A ${subject} is ${article(parents[0])} ${parents[0]}.`);
-  else if (parts.length > 0) frames.push(`A ${subject} has ${listPhrase(parts)}.`);
-  else if (props.length > 0) frames.push(`A ${subject} is ${listPhrase(props)}.`);
-  else if (actions.length > 0) frames.push(`A ${subject} can ${listPhrase(actions)}.`);
-  else if (purposes.length > 0) frames.push(`A ${subject} is used for ${listPhrase(purposes)}.`);
-  else if (materials.length > 0) frames.push(`A ${subject} is made of ${listPhrase(materials)}.`);
-
-  if (parts.length > 0 && parents.length > 0) frames.push(`It has ${listPhrase(parts)}.`);
-  if (props.length > 0) frames.push(`It is ${listPhrase(props)}.`);
-  if (actions.length > 0) frames.push(`It can ${listPhrase(actions)}.`);
-  if (purposes.length > 0) frames.push(`It is used for ${listPhrase(purposes)}.`);
-  if (materials.length > 0) frames.push(`It is made of ${listPhrase(materials)}.`);
-
-  return frames;
-}
 
 /** Subjects (from the recall seeds) that have at least one fillable frame. */
-export function groundedSubjects(words: readonly string[], relations: readonly Relation[]): string[] {
-  return [...new Set(words)].filter((word) => isContentWord(word) && framesFor(word, relations).length > 0);
+export function groundedSubjects(
+  words: readonly string[],
+  relations: readonly Relation[],
+  denied: (subject: string, predicate: string, object: string) => boolean = () => false
+): string[] {
+  return [...new Set(words)].filter((word) => isContentWord(word) && framesFor(word, relations, denied).length > 0);
 }
 
 /**
  * Compose a grounded sentence: pick a seed subject with edges, fill 1–3
- * frames deterministically from the supplied rng. Returns null when no seed
- * subject has any edge — the caller falls back to the labeled Markov path.
+ * frames deterministically from the supplied rng. The frame pool is the
+ * fixed frames plus — when a LearnedFrameStore is given — its admitted
+ * learned templates and (with the store's exploration probability) its
+ * not-yet-admitted candidates, so learning can accumulate evidence from the
+ * world's verdicts. Returns null when no seed subject has any edge — the
+ * caller falls back to the labeled Markov path.
  */
 export function composeGrounded(
   seedWords: readonly string[],
   relations: readonly Relation[],
   rng: () => number,
-  maxSentences = 3
+  maxSentences = 3,
+  negations: readonly Negation[] = [],
+  learned: LearnedFrameStore | null = null
 ): GroundedComposition | null {
-  const candidates = groundedSubjects(seedWords, relations);
+  const denied = (subject: string, predicate: string, object: string): boolean =>
+    negations.some((n) => n.subject === subject && n.predicate === predicate && n.object === object);
+  const candidates = groundedSubjects(seedWords, relations, denied);
   if (candidates.length === 0) return null;
   // Prefer the utterance's own topic: seedWords are ordered [utterance words,
   // ...memory words], so the first candidate is the first utterance content
   // word with edges. It wins most draws; the pool keeps variety.
   const subject =
     rng() < 0.75 ? candidates[0] : candidates[Math.floor(rng() * candidates.length)];
-  const frames = framesFor(subject, relations);
-  // The FIRST frame always names the subject (the critic's resolution anchor);
-  // the rest are drawn deterministically from the remaining pool.
-  const picked: string[] = [frames[0]];
-  const pool = frames.slice(1);
-  const count = Math.min(maxSentences, Math.max(1, 1 + Math.floor(rng() * frames.length)));
+  // Named frames open the composition (the critic's resolution anchor); the
+  // rest are drawn deterministically from the anaphoric pool.
+  const refs: FrameRef[] =
+    learned !== null
+      ? learned.compositionFrames(subject, relations, denied, negations, rng)
+      : fixedFrames(subject, relations, denied);
+  const named = refs.filter((frame) => frame.namesSubject);
+  if (named.length === 0) return null;
+  // With a learned store, learned openings earn a share of first-frame
+  // draws; the top-priority fixed frame keeps the majority. Without one,
+  // named[0] is the only named frame — identical to the fixed-only behavior.
+  const first =
+    named.length === 1 || rng() < FIRST_FRAME_PREFERENCE
+      ? named[0]
+      : named[1 + Math.floor(rng() * (named.length - 1))];
+  const picked: FrameRef[] = [first];
+  const pool = refs.filter((frame) => !frame.namesSubject && frame.text !== first.text);
+  // The frame count draws from the pool (fixed path: identical distribution
+  // to the fixed-only composer); the SENTENCE budget caps the total — a
+  // learned multi-clause opening already spent some of it.
+  const count = Math.min(maxSentences, Math.max(1, 1 + Math.floor(rng() * refs.length)));
+  let sentences = (first.text.match(/[.!?]/g) ?? []).length;
   for (let i = 1; i < count && pool.length > 0; i += 1) {
-    picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+    const frame = pool.splice(Math.floor(rng() * pool.length), 1)[0];
+    const frameSentences = (frame.text.match(/[.!?]/g) ?? []).length;
+    if (sentences + frameSentences > maxSentences) continue;
+    picked.push(frame);
+    sentences += frameSentences;
   }
-  const sentence = picked.join(' ').replace(/\s+([.!?])/g, '$1');
-  const verdict = criticize(sentence, relations, []);
-  return { sentence, edges: verdict.grounded ? verdict.edges : [], frames: picked };
-}
-
-/**
- * THE INTERNAL CRITIC — parse a candidate sentence back through the claim
- * grammar and refuse any claim not supported by a stored edge (direct or
- * inherited) or the confirmed-false store. An unparseable sentence (no
- * resolvable subject, unknown clause) is ungrounded by definition.
- */
-export function criticize(
-  sentence: string,
-  relations: readonly Relation[],
-  negations: readonly Negation[]
-): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> } {
-  const subject = extractSubject(sentence);
-  if (subject === null) return { grounded: false, unbacked: [sentence], edges: [] };
-  const claims = parseClaims(sentence, subject);
-  if (claims.length === 0) return { grounded: false, unbacked: [sentence], edges: [] };
-
-  const edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> = [];
-  const unbacked: string[] = [];
-  for (const claim of claims) {
-    if (claim.negated) {
-      if (negations.some((n) => n.subject === claim.subject && n.predicate === claim.predicate && n.object === claim.object)) {
-        edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
-      } else {
-        unbacked.push(`${claim.subject} is-not ${claim.object}`);
-      }
-      continue;
-    }
-    const direct = relations.some(
-      (r) => r.subject === claim.subject && r.predicate === claim.predicate && r.object === claim.object
-    );
-    const via = direct ? null : inheritsEdge(relations, claim.subject, claim.predicate, claim.object);
-    if (direct || via !== null) {
-      edges.push({ subject: claim.subject, predicate: claim.predicate, object: claim.object });
-    } else {
-      unbacked.push(`${claim.subject} ${claim.predicate} ${claim.object}`);
-    }
-  }
-  return { grounded: unbacked.length === 0, unbacked, edges };
-}
-
-/** The subject named by the first "A {X} ..." frame (null when unresolvable). */
-function extractSubject(sentence: string): string | null {
-  const hit = sentence.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+(?:is|has|can|is used|is made)/i);
-  return hit === null ? null : hit[1].toLowerCase();
-}
-
-/** Split an object list ("wings and feathers", "cold and wet") into words. */
-function splitObjects(rest: string): string[] {
-  return rest
-    .split(/\s+(?:and|,)\s+/i)
-    .map((token) => token.trim().toLowerCase())
-    .filter((token) => token.length > 0 && isContentWord(token));
-}
-
-/** Parse every claim of a candidate sentence under a resolved subject. */
-export function parseClaims(sentence: string, subject: string): Claim[] {
-  const claims: Claim[] = [];
-  const parts = sentence.split(/[.!?]+\s*/).filter((part) => part.trim().length > 0);
-  for (const part of parts) {
-    const clause = part.trim();
-    const isA = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+(?:a|an)\s+([a-z]+(?:\s+[a-z]+)*)$/i);
-    if (isA !== null) {
-      claims.push({ subject: isA[1].toLowerCase(), predicate: 'is-a', object: isA[2].toLowerCase(), negated: false });
-      continue;
-    }
-    // FIRST-FRAME variants of every other clause ("A robin has wings.",
-    // "A snow is cold and wet.") — previously only the is-a first frame
-    // parsed, so a two-frame sentence's first claim was silently skipped
-    // (incomplete cited-edge provenance: a wrong grade weakened only the
-    // parseable frames) and a single non-is-a frame was rejected as
-    // ungrounded, demoting the composition to the Markov fallback.
-    const aHas = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+has\s+(.+)$/i);
-    if (aHas !== null) {
-      for (const object of splitObjects(aHas[2])) claims.push({ subject: aHas[1].toLowerCase(), predicate: 'has-part', object, negated: false });
-      continue;
-    }
-    const aCan = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+can\s+(.+)$/i);
-    if (aCan !== null) {
-      for (const object of splitObjects(aCan[2])) claims.push({ subject: aCan[1].toLowerCase(), predicate: 'capable-of', object, negated: false });
-      continue;
-    }
-    // ORDER: the used-for and made-of forms must precede the bare "is"
-    // property form ("a hammer is used for nails" must not parse as
-    // property "used for nails").
-    const aUsedFor = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+used\s+for\s+(.+)$/i);
-    if (aUsedFor !== null) {
-      for (const object of splitObjects(aUsedFor[2])) claims.push({ subject: aUsedFor[1].toLowerCase(), predicate: 'used-for', object, negated: false });
-      continue;
-    }
-    const aMadeOf = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+made\s+of\s+(.+)$/i);
-    if (aMadeOf !== null) {
-      for (const object of splitObjects(aMadeOf[2])) claims.push({ subject: aMadeOf[1].toLowerCase(), predicate: 'made-of', object, negated: false });
-      continue;
-    }
-    const aIs = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+(?!not\s+)([a-z]+(?:\s+[a-z]+)*)$/i);
-    if (aIs !== null) {
-      for (const object of splitObjects(aIs[2])) claims.push({ subject: aIs[1].toLowerCase(), predicate: 'has-property', object, negated: false });
-      continue;
-    }
-    const isNotA = clause.match(/^(?:it|they|[a-z]+(?:\s+[a-z]+)*)\s+is\s+not\s+(?:a|an)\s+([a-z]+(?:\s+[a-z]+)*)$/i);
-    if (isNotA !== null) {
-      claims.push({ subject, predicate: 'is-a', object: isNotA[1].toLowerCase(), negated: true });
-      continue;
-    }
-    const has = clause.match(/^(?:it|they)\s+has\s+(.+)$/i);
-    if (has !== null) {
-      for (const object of splitObjects(has[1])) claims.push({ subject, predicate: 'has-part', object, negated: false });
-      continue;
-    }
-    const can = clause.match(/^(?:it|they)\s+can\s+(.+)$/i);
-    if (can !== null) {
-      for (const object of splitObjects(can[1])) claims.push({ subject, predicate: 'capable-of', object, negated: false });
-      continue;
-    }
-    const usedFor = clause.match(/^(?:it|they)\s+is\s+used\s+for\s+(.+)$/i);
-    if (usedFor !== null) {
-      for (const object of splitObjects(usedFor[1])) claims.push({ subject, predicate: 'used-for', object, negated: false });
-      continue;
-    }
-    const madeOf = clause.match(/^(?:it|they)\s+is\s+made\s+of\s+(.+)$/i);
-    if (madeOf !== null) {
-      for (const object of splitObjects(madeOf[1])) claims.push({ subject, predicate: 'made-of', object, negated: false });
-      continue;
-    }
-    const isProp = clause.match(/^(?:it|they)\s+is\s+(.+)$/i);
-    if (isProp !== null) {
-      for (const object of splitObjects(isProp[1])) claims.push({ subject, predicate: 'has-property', object, negated: false });
-      continue;
-    }
-    // An unrecognized content clause is a fabrication risk — it stays
-    // unparsed and the critic marks the sentence ungrounded.
-  }
-  return claims;
-}
-
-/** The content words of a sentence — used by the fabrication-rate bench. */
-export function contentWordsOf(sentence: string): string[] {
-  return tokenizeText(sentence).filter(isContentWord);
+  const sentence = picked.map((frame) => frame.text).join(' ').replace(/\s+([.!?])/g, '$1');
+  const verdict = criticize(sentence, relations, negations);
+  return {
+    sentence,
+    edges: verdict.grounded ? verdict.edges : [],
+    frames: picked.map((frame) => frame.text),
+    templateIds: picked.map((frame) => frame.id)
+  };
 }

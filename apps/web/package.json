@@ -20,7 +20,8 @@
     "ask-audit": "tsx src/cli/ask-audit.ts",
     "grounded-bench": "tsx src/cli/grounded-bench.ts",
     "classroom": "tsx src/cli/autonomous-classroom.ts",
-    "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/"
+    "test:bench": "jest --testPathPatterns \"recallBenchmark|scaleBenchmark|scale20kBenchmark|fullDeckPruning|ciGates|semanticRecall\" --testPathIgnorePatterns /dev/null/",
+    "template-bench": "tsx src/cli/template-bench.ts"
   },
   "dependencies": {
     "@aleph-ai/tinyaleph": "^1.8.2",

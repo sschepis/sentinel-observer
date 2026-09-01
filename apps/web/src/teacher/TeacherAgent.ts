@@ -13,6 +13,7 @@ import {
 } from './conversation';
 import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
 import { composeGrounded, criticize, groundedSubjects } from './groundedFrames';
+import { LearnedFrameStore } from './learnedFrames';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
 import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classifyUtterance, blendReward, FADE_FLOOR, type FadeState, type GradeClass } from './fade';
 import { compositeScore } from './composite';
@@ -187,6 +188,10 @@ const ANSWER_GRADES_CAP = 200;
 export interface AnswerProvenance {
   traceIds: string[];
   edges: EdgeRef[];
+  /** The grounded templates the answer was composed from (P5 learned
+   *  frames): the world's grade credits or discounts exactly those
+   *  structures. Absent = non-grounded or pre-learned-frames callers. */
+  templateIds?: string[];
   /** Operator identity: built-in kind, learned patternId, or compiled-rule id. */
   operatorId?: string;
 }
@@ -194,7 +199,7 @@ export interface AnswerProvenance {
 export type ChatAnswer =
   | { mode: 'memorized'; response: string; confidence: number | null; cue: string | null; provenance: AnswerProvenance }
   | { mode: 'operator'; response: string; operator: OperatorResult; provenance: AnswerProvenance }
-  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; provenance: AnswerProvenance }
+  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; templateIds: string[]; provenance: AnswerProvenance }
   | { mode: 'ask'; response: string; provenance: AnswerProvenance }
   | { mode: 'decline'; provenance: AnswerProvenance };
 
@@ -208,6 +213,10 @@ export interface CreativeReply extends CreativeComposition {
   grounded: boolean;
   /** The edges backing a grounded composition (empty for the fallback). */
   edges: EdgeRef[];
+  /** The template ids the grounded composition was built from (fixed:... and
+   *  learned:...); empty for the fallback — the world's grade is attributed
+   *  back to these templates (learned frames induction). */
+  templateIds: string[];
 }
 
 /** An answer that cited nothing — the honest default for non-relational modes. */
@@ -617,6 +626,14 @@ export class TeacherAgent {
    * pure function of relations() — never persisted.
    */
   private relationalHologram: RelationalHologram | null = null;
+  /**
+   * LEARNED LANGUAGE TEMPLATES (P5 extension): the relation-hole templates
+   * induced from accepted grounded answers, admitted only when they survive
+   * the internal critic and match or beat the fixed-frame acceptance
+   * baseline. Session-scoped like the deviation meter (modeCounts/
+   * groundingTotal) — the fixed frames remain the evergreen seed set.
+   */
+  private readonly learnedFrames = new LearnedFrameStore();
   /** Executable rules induced from drills (P2): DSL programs compiled into
    *  first-class operators. Persisted with the learning state. */
   private compiledRules: CompiledRule[] = [];
@@ -1810,6 +1827,13 @@ export class TeacherAgent {
     return this.answerGrades;
   }
 
+  /** The learned language templates (P5 extension) — audit view for the
+   *  bench/CLI: which structures were induced, admitted, and how the world
+   *  grades them. */
+  learnedTemplateAudit(): ReturnType<LearnedFrameStore['audit']> {
+    return this.learnedFrames.audit();
+  }
+
   /**
    * The observer's curiosity: the next word that NEEDS review. P9: the
    * schedule is the model — a word is due when its FSRS `dueAt` has passed
@@ -2889,7 +2913,8 @@ export class TeacherAgent {
           seedTraceIds: reply.seedTraceIds,
           seedCount: reply.seedCount,
           grounded: reply.grounded,
-          provenance: { traceIds: reply.seedTraceIds, edges: reply.edges }
+          templateIds: reply.templateIds,
+          provenance: { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds }
         };
       }
     }
@@ -3108,7 +3133,7 @@ export class TeacherAgent {
   creativeReply(utterance: string, extraSeeds: readonly string[] = []): CreativeReply {
     const cue = utterance.trim();
     if (cue.length === 0) {
-      return { sentence: '', seedCount: 0, confidence: null, seedTraceIds: [], grounded: false, edges: [] };
+      return { sentence: '', seedCount: 0, confidence: null, seedTraceIds: [], grounded: false, edges: [], templateIds: [] };
     }
 
     // The moment (converged field) selects the seeds — recallMemories
@@ -3141,7 +3166,7 @@ export class TeacherAgent {
     const memorySubjects = groundedSubjects(tokenizeText(contents.join(' ')), relations);
     const useGrounded = utteranceSubjects.length > 0 || utteranceContent.length === 0;
     const grounded = useGrounded
-      ? composeGrounded([...utteranceSubjects, ...memorySubjects], relations, this.compositionRng)
+      ? composeGrounded([...utteranceSubjects, ...memorySubjects], relations, this.compositionRng, 3, this.negations, this.learnedFrames)
       : null;
     if (grounded !== null && grounded.edges.length > 0) {
       // The critic already verified the composition in composeGrounded;
@@ -3154,9 +3179,15 @@ export class TeacherAgent {
           confidence: bestScore,
           seedTraceIds,
           grounded: true,
-          edges: verdict.edges
+          edges: verdict.edges,
+          templateIds: grounded.templateIds
         };
       }
+      // A composition the re-parse refuses counts against the templates that
+      // produced it (learned templates are demoted on repeated refusal).
+      this.learnedFrames.observeRejection(grounded.templateIds);
+    } else if (grounded !== null) {
+      this.learnedFrames.observeRejection(grounded.templateIds);
     }
 
     const composed = composeCreativeResponse(contents, memories[0]?.content ?? '', {
@@ -3171,7 +3202,8 @@ export class TeacherAgent {
       confidence: bestScore,
       seedTraceIds,
       grounded: false,
-      edges: []
+      edges: [],
+      templateIds: []
     };
   }
 
@@ -3205,6 +3237,7 @@ export class TeacherAgent {
       : (provenance as AnswerProvenance);
     const seedTraceIds = producers.traceIds;
     const citedEdges = producers.edges;
+    const templateIds = producers.templateIds ?? [];
     if (score === null) return false;
     // THE FADING CONTROLLER (Phase 7c): when the student's own composite
     // has proven it can judge (measured agreement ≥ threshold), the reward
@@ -3231,6 +3264,15 @@ export class TeacherAgent {
         : score <= CREATIVE_WEAKEN_SCORE
           ? -CREATIVE_GRADE_DELTA
           : 0;
+    // P5 learned frames: the world's verdict is attributed to the templates
+    // the grounded composition used. A strong answer also demonstrates its
+    // structure — the induction reconstructs the template from the accepted
+    // sentence (content still read from stored edges at generation time).
+    const accepted = score >= CREATIVE_REINFORCE_SCORE;
+    this.learnedFrames.observeUse(templateIds, accepted);
+    if (delta > 0 && templateIds.length > 0 && answer.trim().length > 0) {
+      this.learnedFrames.induce(answer, this.relations(), this.negations);
+    }
     if (delta === 0) {
       // P7 contract: the ledger records the producers of EVERY graded
       // answer — a mid-grade (0.3–0.7) answer carries no reinforcement but
