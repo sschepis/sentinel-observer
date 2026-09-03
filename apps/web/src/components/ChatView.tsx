@@ -22,7 +22,73 @@ const MODE_BADGE: Record<NonNullable<ConversationMessage['mode']>, { label: stri
   decline: { label: 'not learned yet', tone: 'text-slate-500' }
 };
 
-const STARTERS = ['hello', 'what is your name?', 'how are you?', 'tell me something new'];
+/** Sample prompts shown on the empty chat. Grouped by the capability they
+ *  exercise so a visitor can range across everything the observer can do —
+ *  and honestly probe the boundary where it asks instead of guessing. */
+interface PromptGroup {
+  label: string;
+  prompts: string[];
+}
+
+const PROMPT_GROUPS: PromptGroup[] = [
+  {
+    label: 'say hello',
+    prompts: ['hello', 'what is your name?', 'how are you?', 'tell me something new']
+  },
+  {
+    label: 'ask what a word means',
+    prompts: [
+      'what is water?',
+      'what is music?',
+      'what is a computer?',
+      'what is a game?',
+      'what is the weather?',
+      'what is a star?',
+      'what is food?'
+    ]
+  },
+  {
+    label: 'reason about what it knows',
+    prompts: [
+      'is water a liquid?',
+      'is water used for drinking?',
+      'is a game a contest?',
+      'what is 7 + 5?',
+      'what is 20 - 8?',
+      'what is 36 / 6?',
+      'what is 5 percent of 200?',
+      'how many words do you know?'
+    ]
+  },
+  {
+    label: 'let it compose',
+    prompts: [
+      'tell me about water',
+      'tell me about music',
+      'tell me about the weather',
+      'what can you tell me about a star?'
+    ]
+  },
+  {
+    label: 'ask it about itself',
+    prompts: [
+      'what are you trying to do?',
+      'what do you know about water?',
+      'what time is it?',
+      "what is today's date?",
+      'say hello'
+    ]
+  },
+  {
+    label: "probe its honesty (it should say it doesn't know)",
+    prompts: [
+      'what is a quasar?',
+      'do you know calculus?',
+      'is a cat a dog?',
+      'what is 7 / 2?'
+    ]
+  }
+];
 
 function ObserverMessage({ message }: { message: ConversationMessage }) {
   const badge = message.mode !== undefined ? MODE_BADGE[message.mode] : null;
@@ -147,23 +213,33 @@ export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver
       <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-6 py-8">
           {chat.messages.length === 0 ? (
-            <div className="flex flex-col items-center py-20 text-center">
+            <div className="py-8">
               <h2 className="text-xl font-medium text-slate-200">Say something to the observer</h2>
-              <p className="mt-2 max-w-md text-sm text-slate-500">
-                It answers only from what it has actually learned. When it cannot, it says so — and asks.
+              <p className="mt-2 max-w-lg text-sm text-slate-500">
+                It answers only from what it has actually learned. When it cannot, it says so — and asks. Try a
+                sample from any of the groups below.
               </p>
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {STARTERS.map((starter) => (
-                  <button
-                    key={starter}
-                    onClick={() => {
-                      chat.send(starter);
-                      setInput('');
-                    }}
-                    className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-1.5 text-sm text-slate-400 transition hover:border-slate-600 hover:text-slate-200"
-                  >
-                    {starter}
-                  </button>
+              <div className="mt-8 space-y-6">
+                {PROMPT_GROUPS.map((group) => (
+                  <div key={group.label}>
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      {group.label}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {group.prompts.map((prompt) => (
+                        <button
+                          key={prompt}
+                          onClick={() => {
+                            chat.send(prompt);
+                            setInput('');
+                          }}
+                          className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-1.5 text-sm text-slate-400 transition hover:border-slate-600 hover:text-slate-200"
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
