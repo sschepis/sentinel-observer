@@ -374,3 +374,15 @@ All baselines recorded in the 2026-09 review + pinned where executable:
   weights), §3.4 (drive temperature), §3.5 (hypothesis tier + corrected
   stale 34% → 57.7% coverage), §5.10 (sim fix + 100% result),
   §8.4 (the emergent handover LANDED paragraph). TODO baselines refreshed.
+- [x] **24.5 W13 decomposition DONE**: TeacherAgent split per
+  `docs/refactors/teacher-agent-split.md` — one commit per step, each gated
+  by `tsc --noEmit` + the full web suite (95 suites / 1110 tests); the sweep
+  adds ciGates 4/4. Zero logic change, zero renames, frozen public module
+  surface (re-exports intact; plan.ts repointed to `agent/support` so the
+  goal/rules mixins add no new runtime cycle). Final lines
+  (`wc -l src/teacher/TeacherAgent.ts src/teacher/agent/*.ts`):
+  TeacherAgent.ts 776; autoloop 183, base 464, conversation 338,
+  creative 691, curriculum 169, goals 261, motivation 374, operators 48,
+  persistence 1198, relations 665, rules 489, support 558, wordloop 771.
+  persistence.ts exceeds the ~900 soft budget because restore/import/export
+  are inherently the largest bodies; every other faculty file is ≤ ~775.
