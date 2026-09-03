@@ -97,7 +97,9 @@ import {
   BOOTSTRAP_VOCABULARY_SCHEME,
   type BootstrapRecord
 } from './bootstrap';
-import { TeacherAgentCore } from './agent/base';
+import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './agent/base';
+import { GoalsMixin } from './agent/goals';
+import { AutoLoopMixin } from './agent/autoloop';
 import {
   // Module-scope vocabulary moved to agent/support.ts (public names are
   // re-exported below; the internal ones are imported for the class body).
@@ -201,238 +203,13 @@ export type {
   RetentionReport
 } from './agent/support';
 
-export class TeacherAgent extends TeacherAgentCore {
-  protected readonly states = new Map<string, WordState>();
-  protected autoLoopToken = 0;
-  protected autoLoopRunning = false;
-  protected autoStep: AutoLoopStep | null = null;
-  protected readonly autoListeners = new Set<(step: AutoLoopStep) => void>();
-  /** Trace ids of memorized conversation exchanges (kind: 'conversation'). */
-  protected readonly conversationTraceIds = new Set<string>();
-  /** Cues that have been taught, so re-teaching is a no-op. */
-  protected readonly taughtConversationCues = new Set<string>();
-  /** Cues the observer has actually spoken in reply (competency measure). */
-  protected readonly producedConversationCues = new Set<string>();
-  /** Uttered keys of stored creative answers — O(1) dedup (no bank scan). */
-  protected readonly creativeUtteredKeys = new Set<string>();
-  /** Belief traces stored about the observer's own state — dedup keys. */
-  protected readonly beliefsStored = new Set<string>();
-  /** Last measured recall confidence per cue (belief-drops detection). */
-  protected readonly lastRecallConfidence = new Map<string, number>();
-  /** Learned arbitration weights — experience modifies what the observer
-   *  prioritizes. Persisted; absent weights use archetypal defaults. */
-  protected behaviorWeights: BehaviorWeights = {};
-  /** Outcome cascade per behavior — the credit history behind the weights. */
-  protected readonly behaviorOutcomes: Record<BehaviorOption, { wins: number; losses: number }> = {
-    answer: { wins: 0, losses: 0 },
-    ask: { wins: 0, losses: 0 },
-    compose: { wins: 0, losses: 0 },
-    practice: { wins: 0, losses: 0 },
-    verify: { wins: 0, losses: 0 }
-  };
-  /** Learned transition weights for creative composition (surprise terrain). */
-  protected readonly compositionWeights: TransitionWeights = new Map<string, number>();
-  /** L3 (19.2): per-n-gram use stamps — the decay clock of the weights. */
-  protected readonly compositionWeightMeta: WeightMeta = new Map<string, number>();
-  /** L3 (19.3): per-behavior last-outcome stamps — the drive drift clock. */
-  protected readonly behaviorOutcomeAt = new Map<BehaviorOption, number>();
-  /** Phase 24.3 (W8): the read-only calibration ledger — the riskiest
-   *  confidence gates record (score, outcome) evidence; benches read drift. */
-  protected readonly calibration = new CalibrationLedger();
-  /** Trace ids of memorized STRONG creative answers (kind: 'creative'). */
-  protected readonly creativeMemoryIds = new Set<string>();
-  /** Utterances the observer could not answer (kind: 'gap' traces). */
-  protected readonly gapUtterances = new Set<string>();
-  /** Trace ids of recorded gaps (kind: 'gap'). */
-  protected readonly gapTraceIds = new Set<string>();
-  /** How many times each gap was re-encountered unanswered (curiosity fuel). */
-  protected readonly gapMissCounts = new Map<string, number>();
-  /** Deck words the observer has heard often without a definition. */
-  protected readonly encounterCounts = new Map<string, number>();
-  /** Content words the observer has heard in conversation (introspection). */
-  protected readonly exposureCounts = new Map<string, number>();
-  /** Last recall confidence per practiced cue (for review-curiosity). */
-  protected readonly cueConfidence = new Map<string, number>();
-  /** Curiosity triggers already asked (one question per trigger). */
-  protected readonly curiosityAsked = new Set<string>();
-  /** Answer-mode counters — the deviation meter (session-scoped by design:
-   *  grounding is measured over the live session, not across restarts). */
-  protected readonly modeCounts: Record<string, number> = {};
-  /** Per-composition grounding accumulation — the deviation meter's
-   *  attribution: composed answers split into grounded (own material) and
-   *  deviated (stitched) exposure. */
-  protected readonly groundingTotal = { answers: 0, grounded: 0, deviated: 0 };
+const TeacherAgentComposed = AutoLoopMixin(
+  GoalsMixin(TeacherAgentCore as unknown as Constructor<TeacherAgentCore & CrossFacultyApi>)
+);
 
-  protected noteAnswerMode(mode: string): void {
-    this.modeCounts[mode] = (this.modeCounts[mode] ?? 0) + 1;
-  }
-
-  /** Session answer-mode counts: memorized/operator (grounded), creative
-   *  (composed — deviation expected), ask/decline (abstained). */
-  answerModeCounts(): Readonly<Record<string, number>> {
-    return { ...this.modeCounts };
-  }
-
-  /** The deviation meter's grounding attribution (Phase 8): across all
-   *  composed answers, how much speaks the observer's own material vs.
-   *  deviated from it. */
-  groundingAttribution(): { answers: number; groundedShare: number; deviatedShare: number } {
-    if (this.groundingTotal.answers === 0) {
-      return { answers: 0, groundedShare: 0, deviatedShare: 0 };
-    }
-    return {
-      answers: this.groundingTotal.answers,
-      groundedShare: this.groundingTotal.grounded / this.groundingTotal.answers,
-      deviatedShare: this.groundingTotal.deviated / this.groundingTotal.answers
-    };
-  }
-
-  /** Note a composed answer's grounding into the meter. */
-  protected noteGrounding(grounding: number): void {
-    const attribution = groundingAttribution(grounding);
-    this.groundingTotal.answers += 1;
-    this.groundingTotal.grounded += attribution.grounded;
-    this.groundingTotal.deviated += attribution.deviated;
-  }
-
-  /** Recent conversation turns (session-scoped context for references). */
-  protected readonly workingMemory = new WorkingMemory();
-  /** Lazily extracted relational edges over the deck definitions. */
-  protected relationsCache: Relation[] | null = null;
-  /** LLM-supplied (Chaperone) edges, reconciled and provenance-tagged. */
-  protected chaperoneRelations: Relation[] = [];
-  /**
-   * Per-edge confidence overlay (P8): key = subject\u0000predicate\u0000object,
-   * value = the signed delta applied over the derived graph's base strength
-   * (1 per stated source). Agreement bumps +1; wrong grades of answers citing
-   * the edge weaken it. Persisted with the learning state.
-   */
-  protected edgeConfidence = new Map<string, number>();
-  /**
-   * P14 per-edge corroboration store: key = subject\u0000predicate\u0000object,
-   * value = the INDEPENDENT source classes that support the edge beyond its
-   * own origin class — conversation evidence mined from user statements,
-   * world-feedback from accepted graded answers, and definition-class credit
-   * from an agreeing chaperone edge. Rides the derived graph as
-   * `Relation.sourceClasses`; persisted with the learning state.
-   */
-  protected edgeSources = new Map<string, SourceClass[]>();
-  /**
-   * M5 (Phase 22): THE HYPOTHESIS TIER — proposer/validator split. Loose
-   * extractions (objects that are real content words but not deck words —
-   * "a bird is a creature", "with feathers") are held here as standing
-   * hypotheses: spoken only hedged, never chained, never merged into the
-   * asserted graph — until CORROBORATION promotes them (a second
-   * independent source class via addEdgeSource, e.g. conversation mining or
-   * a strong world grade citing the edge). Precision lives in the promotion
-   * gate, not the proposer. Bounded FIFO.
-   */
-  protected hypothesisEdges: Relation[] = [];
-  /**
-   * P14 example corpus index: content token -> deck example sentences (from
-   * the taught states' `example` fields). Built once per relations-cache
-   * build; a chaperone edge corroborated by a curriculum example sentence
-   * ("A bird can fly." is the deck itself confirming bird capable-of fly)
-   * gains the 'curriculum' class.
-   */
-  protected exampleIndex: Map<string, string[]> | null = null;
-  /** P14 user statements from PERSISTED conversations, mined once at
-   *  construction (the live turns are mined as they arrive). */
-  protected readonly persistedConversationTexts: string[] = [];
-  /**
-   * The confirmed-false store (P8): claims explicitly taught ("golf is not a
-   * bird") or confirmed by a graded "No" answer. The ONLY source of "No" —
-   * absence of evidence never answers absence.
-   */
-  protected negations: Negation[] = [];
-  /**
-   * The contradiction-sweep resolution ledger: conflict ids the world has
-   * resolved through the sweep. ONE-SHOT — a resolved conflict is never
-   * re-reported (no ping-pong), even when its edges still show both sides
-   * (a multi-source positive edge cannot fall below the support floor).
-   * Persisted with the learning state, capped like the grade ledger.
-   */
-  protected resolvedSweepConflicts: Set<string> = new Set();
-  /**
-   * The distributed-vector VIEW over the relation graph (P1): H(subject) =
-   * Σ bind(role, object), rebuilt whenever the cache is invalidated. It is a
-   * pure function of relations() — never persisted.
-   */
-  protected relationalHologram: RelationalHologram | null = null;
-  /**
-   * LEARNED LANGUAGE TEMPLATES (P5 extension): the relation-hole templates
-   * induced from accepted grounded answers, admitted only when they survive
-   * the internal critic and match or beat the fixed-frame acceptance
-   * baseline. Session-scoped like the deviation meter (modeCounts/
-   * groundingTotal) — the fixed frames remain the evergreen seed set.
-   */
-  protected readonly learnedFrames = new LearnedFrameStore();
-  /** Executable rules induced from drills (P2): DSL programs compiled into
-   *  first-class operators. Persisted with the learning state. */
-  protected compiledRules: CompiledRule[] = [];
-  /**
-   * THE REWRITE RULE STORE (R0–R5): the observer's procedures as memories.
-   * Authored decks (Peano naturals, digit strings, signed integers, the
-   * boolean/logic deck) are seeded from code; induced rules are added by
-   * the drill loop and restored from the bootstrap record. Rules are
-   * gradeable, corroborated, denied, and stopped — never deleted.
-   */
-  protected readonly ruleStore = new RuleStore([...PEANO_RULES, ...DIGITS_RULES, ...INT_RULES, ...LOGIC_RULES, ...ALG_RULES]);
-  /** Composition rules as a learnable seed set (R4b): the fixed table stays
-   *  the evergreen floor; the world's accepted chains admit new sequences. */
-  protected readonly compositionRules = new CompositionRuleStore();
-  /** One-shot ledger of stopped rules (R5) — a rule the world denied twice
-   *  stays stopped across reloads; the record is kept, never re-litigated. */
-  protected readonly ruleResolutions = new Set<string>();
-  /** R11: open rule questions — the drill loop raised "what is the rule
-   *  for X?" and a procedure answer is being awaited (concept → drill).
-   *  The chat's teach-reply consumes one entry when the user's text parses
-   *  as a rule for it. */
-  protected readonly pendingRuleQuestions = new Map<string, string>();
-  /** The MDL frequency prior for composition gating (P10): the full deck's
-   *  Zipf costs, fixed once per agent — the same prior the operator learner
-   *  uses, so generation and operator paths gate chains identically. */
-  protected readonly compositionCost = new TokenCostModel(ACTIVE_DECK.map((entry) => entry.word));
+export class TeacherAgent extends TeacherAgentComposed {
   /** P12 held-out gate: edge keys hidden from the symbolic graph only. */
   protected readonly hiddenRelationKeys: ReadonlySet<string> | null;
-  /**
-   * Bounded per-answer grade ledger (P7): who produced each graded answer
-   * and how it was graded — the surgical-repair record. Persisted like
-   * strengthHistory.
-   */
-  protected answerGrades: AnswerGradeEntry[] = [];
-  /**
-   * THE GRADER RELIABILITY MODEL: per-criteria (answer type, FSRS difficulty
-   * band, question template, provider) agreement between the LLM teacher's
-   * grades and the rule-based checks / later world verdicts. Low-reliability
-   * buckets contribute less to edge confidence, trace reinforcement, and
-   * FSRS state updates; disagreements schedule re-grades whose outcomes feed
-   * the same model. Persisted with the learning state.
-   */
-  protected readonly reliabilityModel = new GraderReliabilityModel();
-  protected persistCounter = 0;
-  /**
-   * Writes are chained, never overlapped: the store's saveWordStates and
-   * saveTraces both clear-then-bulkPut, so two concurrent runs can
-   * interleave into a truncated table. The chain is the serialization
-   * point; `flush()` awaits it.
-   */
-  protected persistChain: Promise<void> = Promise.resolve();
-  protected persistTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Wall-clock of the first unwritten mutation (bounds the coalescing). */
-  protected dirtySince: number | null = null;
-  /**
-   * Runtime-tunable behaviour. Never the prime basis — changing that would
-   * decode stored traces against a mismatched encoding.
-   */
-  protected tuning = { forgettingRate: 1, reviewThreshold: REVIEW_STRENGTH_THRESHOLD };
-
-  /** Consecutive failed drill rounds per technical concept (weak-drill
-   *  signal). Persisted with the learning state. */
-  protected readonly drillFailures = new Map<string, number>();
-  /** Lazy semantic vocabulary over the teacher's own deck (the sparsity
-   *  signal's neighborhood graph) — ~75 ms at the full 20k deck, once. */
-  protected curriculumVocabCache: Record<string, number[]> | null = null;
 
   /** Adjust behaviour that is read at the point of use. */
   setTuning(next: Partial<{ forgettingRate: number; reviewThreshold: number }>): void {
@@ -1079,36 +856,12 @@ export class TeacherAgent extends TeacherAgentCore {
     }
   }
 
-  /** Restored goal traces rejoin the active goal content (without firing a
-   *  duplicate storage — the trace is already in the bank). */
-  protected storeGoalIfNewInStatic(trace: unknown): void {
-    const metadata = (trace as { metadata?: Record<string, unknown> }).metadata ?? {};
-    const type = String(metadata.goalType ?? '') as GoalType;
-    const target = String(metadata.target ?? '');
-    const isGoalType = ['learn-word', 'fill-gap', 'practice', 'verify-belief'].includes(type);
-    if (!isGoalType || target.length === 0) return;
-    const existing = this.goals.find((g) => g.type === type && g.target === target && g.status === 'active');
-    if (existing === undefined && (metadata.goalStatus ?? 'active') === 'active') {
-      this.goals.push({
-        id: goalId(type, target),
-        type,
-        target,
-        completeWhen: () => false,
-        describe: () => `${target} — restored goal`,
-        steps: [],
-        status: 'active',
-        attempts: 0,
-        priority: Number(metadata.priority ?? 0)
-      });
-    }
-  }
-
   /**
    * Throttled persistence hook: only every `persistEvery`-th action marks the
    * record dirty, so large batch runs do not spend the run re-serializing their
    * own history (which would otherwise be O(n²) in words taught).
    */
-  protected maybePersist(): void {
+  maybePersist(): void {
     this.persistCounter += 1;
     if (this.persistCounter % this.persistEvery === 0) {
       this.schedulePersist();
@@ -2102,7 +1855,7 @@ export class TeacherAgent extends TeacherAgentCore {
   /** The FSRS difficulty band of a graded answer's seed memories: the mean
    *  difficulty of the deck words whose traces were the seeds (5 when no
    *  word trace is among them). */
-  protected difficultyBandOfSeeds(seedTraceIds: readonly string[]): DifficultyBand {
+  difficultyBandOfSeeds(seedTraceIds: readonly string[]): DifficultyBand {
     const traceIdSet = new Set(seedTraceIds);
     let sum = 0;
     let count = 0;
@@ -2509,7 +2262,7 @@ export class TeacherAgent extends TeacherAgentCore {
 // trace that reinforcement and decay act on; a failed grade can
   // CONTRADICT it, storing a revising belief and demoting the original.
 
-  protected storeBelief(
+  storeBelief(
     about: string,
     content: string,
     beliefKind: string,
@@ -3369,7 +3122,7 @@ export class TeacherAgent extends TeacherAgentCore {
    * at 0.1), records the denial, and stops a doubly-denied rule at the
    * floor — never deleted, the record is kept.
    */
-  protected weakenRule(id: string, weight: number, denial?: Partial<DerivationDenial>): void {
+  weakenRule(id: string, weight: number, denial?: Partial<DerivationDenial>): void {
     const rule = this.ruleStore.get(id);
     if (rule === undefined) return;
     this.ruleStore.adjustStrength(id, -RULE_GRADE_DELTA * Math.max(0, Math.min(1, weight)));
@@ -3777,23 +3530,6 @@ export class TeacherAgent extends TeacherAgentCore {
     this.maybePersist();
   }
 
-  /** Live observer state for model visualization (coherence, entropy, ...). */
-  observerState(): { coherence: number; entropy: number; orderParameter: number; memoryTraceCount: number; momentCount: number; totalAmplitude: number } | null {
-    try {
-      const state = this.session.observer.getState();
-      return {
-        coherence: state.coherence,
-        entropy: state.entropy,
-        orderParameter: state.orderParameter,
-        memoryTraceCount: state.memoryTraceCount,
-        momentCount: state.momentCount,
-        totalAmplitude: state.totalAmplitude
-      };
-    } catch {
-      return null;
-    }
-  }
-
   /** Number of stored creative memories (strong answers, incl. hybrid). */
   creativeMemoryCount(): number {
     return this.creativeMemoryIds.size;
@@ -3803,7 +3539,7 @@ export class TeacherAgent extends TeacherAgentCore {
    * Rebuild the learned-operator library from the observer's stored creative
    * memories — memory is the source of truth; the pattern library is a view.
    */
-  protected rebuildLearnedOperators(): void {
+  rebuildLearnedOperators(): void {
     const bank = this.session.observer.getMemoryBank();
     for (const trace of bank.all()) {
       if (trace.metadata?.kind !== 'creative' || typeof trace.metadata.uttered !== 'string') continue;
@@ -4320,11 +4056,6 @@ export class TeacherAgent extends TeacherAgentCore {
     return this.recallMemories(phrase, 4).map((memory) => memory.content);
   }
 
-  /** The observer's memory bank (read-only access for benches/CLI). */
-  getMemoryBank() {
-    return this.session.observer.getMemoryBank();
-  }
-
   /**
    * PROACTIVE CURIOSITY: the observer asks about something it wants to
    * learn, when it can see its own gaps. Triggers, in priority order:
@@ -4395,7 +4126,7 @@ export class TeacherAgent extends TeacherAgentCore {
    * moment is the answer, and fuzzy partial overlaps fail to form a coherent
    * attractor.
    */
-  protected exciteAndSettle(utterance: string): void {
+  exciteAndSettle(utterance: string): void {
     this.session.settleField();
     this.session.observeText(utterance);
     this.session.observer.tick(0.02);
@@ -4989,342 +4720,6 @@ export class TeacherAgent extends TeacherAgentCore {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Autonomous teaching loop
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /** The goals the planner is pursuing (installed by adoptGoals). */
-  protected readonly goals: LearningGoal[] = [];
-  protected goalLoopToken = 0;
-  protected goalLoopRunning = false;
-
-  /** Store a goal as an ordinary memory trace (kind: 'goal') — the observer
-   *  holds its plans as content, alongside its beliefs and its knowledge.
-   *  Stored under the target's orientation; returns the trace id. */
-  protected storeGoalTrace(goal: LearningGoal, status: 'active' | 'complete' | 'stalled'): string | null {
-    this.session.settleField();
-    this.session.observeText(goal.target);
-    this.session.observer.tick(0.02);
-    return this.session.storeMemory(
-      `${goal.describe(this)} — ${status === 'complete' ? 'done' : status === 'stalled' ? 'could not finish' : 'in progress'}`,
-      {
-        metadata: {
-          kind: 'goal',
-          goalType: goal.type,
-          target: goal.target,
-          goalStatus: status,
-          formedAt: Date.now(),
-          priority: goal.priority
-        }
-      }
-    )?.id ?? null;
-  }
-
-  /** One stored goal trace per (type, target) — the "what are you trying
-   *  to do" recall source. */
-  protected storeGoalIfNew(goal: LearningGoal): void {
-    const bank = this.session.observer.getMemoryBank();
-    const exists = bank.all().some(
-      (trace) =>
-        trace.metadata?.kind === 'goal' &&
-        trace.metadata.goalType === goal.type &&
-        trace.metadata.target === goal.target &&
-        trace.metadata.goalStatus === 'active'
-    );
-    if (!exists) this.storeGoalTrace(goal, 'active');
-  }
-
-  /** A stalled goal stores a REVISING GOAL-BELIEF — "I planned to learn X
-   *  and could not" — the intent-analog of the belief contradiction. */
-  protected noteGoalFailure(goal: LearningGoal): void {
-    const key = `goal-failed:${goal.id}`;
-    if (this.beliefsStored.has(key)) return;
-    this.session.settleField();
-    this.session.observeText(goal.target);
-    this.session.observer.tick(0.02);
-    const trace = this.session.storeMemory(`I planned to learn ${goal.target} and could not.`, {
-      metadata: { kind: 'belief', beliefKind: 'goal-failed', about: goal.id, basis: { type: goal.type }, contradicts: false }
-    });
-    if (trace !== null) this.beliefsStored.add(key);
-  }
-
-  /** Install the goals to pursue (replaces the current set). Each goal is
-   *  stored as a memory trace — the observer holds its plans as content. */
-  adoptGoals(goals: readonly LearningGoal[]): void {
-    this.goals.length = 0;
-    this.goals.push(...goals);
-    for (const goal of goals) this.storeGoalIfNew(goal);
-  }
-
-  /** Snapshot of the current goals (deep copies — the planner mutates them). */
-  goalList(): LearningGoal[] {
-    return this.goals.map((g) => ({ ...g, steps: [...g.steps] }));
-  }
-
-  /**
-   * GOAL-DRIVEN SCHOOL: each cycle picks the highest-priority ACTIVE goal
-   * (ordered by the learned drive weights from Phase 2) and executes one
-   * step of its plan (teach / quiz / expose / ask — all existing
-   * primitives). Steps are progress-evaluated; a quiescent teach REVISES
-   * the plan to the exposure route. Goals that cannot progress are marked
-   * stalled — the loop ends when no active goals remain.
-   */
-  startGoalLoop(goals: readonly LearningGoal[], options: AutoLoopOptions = {}): AutoLoopHandle {
-    if (this.goalLoopRunning) {
-      return { stop: () => this.stopGoalLoop(), get running() { return false; } };
-    }
-    this.adoptGoals(goals);
-    const token = ++this.goalLoopToken;
-    this.goalLoopRunning = true;
-    const self = this;
-    const thisGoalLoopRunning = (): boolean => self.goalLoopRunning;
-    const stepPauseMs = options.teachPauseMs ?? 500;
-
-    void (async () => {
-      try {
-        while (token === this.goalLoopToken) {
-          // EXPECTED-VALUE SELECTION (Phase 6b): each goal's type carries the
-          // observer's own success rate — ends move with the observer's life.
-          for (const g of this.goals) {
-            const h = this.goalHistory[g.type] ?? { completed: 0, abandoned: 0 };
-            const n = h.completed + h.abandoned;
-            g.successRate = n === 0 ? 0.5 : h.completed / n; // Laplace prior 0.5
-          }
-          const goal = chooseGoal(this.goals, this);
-          if (goal === null) break; // none active — all complete or stalled
-          let result;
-          try {
-            result = await executeGoalStep(this, goal);
-          } catch (reason) {
-            // A step that THREW (unknown target, internal error) must not
-            // kill the loop silently: the goal is marked STALLED honestly
-            // (the "stalled, never hidden" contract) and the loop continues
-            // with the remaining goals.
-            goal.status = 'stalled';
-            this.noteGoalOutcome(goal.type, false);
-            this.noteGoalFailure(goal);
-            const message = reason instanceof Error ? reason.message : String(reason);
-            for (const listener of [...this.autoListeners]) {
-              listener({ phase: 'idle', word: goal.target, cue: null, answer: null, grade: null, message: `goal error (${message}): ${goal.target}` });
-            }
-            await sleep(stepPauseMs);
-            continue;
-          }
-          if (token !== this.goalLoopToken) break;
-          if (result.outcome === 'complete') {
-            // A completed VERIFY-BELIEF goal is a successful verification —
-            // the acquired drive's outcome feeds its learned weight.
-            if (goal.type === 'verify-belief') this.noteBehaviorOutcome('verify', true);
-            // The goal-type history learns: this plan worked.
-            this.noteGoalOutcome(goal.type, true);
-            // The goal trace is reinforced — a memory of a fulfilled intent.
-            const bank = this.session.observer.getMemoryBank();
-            for (const trace of bank.all()) {
-              if (trace.metadata?.kind === 'goal' && trace.metadata.goalType === goal.type && trace.metadata.target === goal.target) {
-                bank.reinforce(trace.id, 0.1);
-              }
-            }
-            for (const listener of [...this.autoListeners]) {
-              listener({ phase: 'idle', word: goal.target, cue: null, answer: null, grade: null, message: `goal complete: ${goal.target}` });
-            }
-          } else if (result.outcome === 'failed' && goal.status === 'stalled') {
-            // A stalled goal stores a revising goal-belief — the observer
-            // remembers its own intention failing. And the history learns.
-            this.noteGoalOutcome(goal.type, false);
-            this.noteGoalFailure(goal);
-          }
-          await sleep(stepPauseMs);
-        }
-        for (const listener of [...this.autoListeners]) {
-          listener({ phase: 'done', word: null, cue: null, answer: null, grade: null, message: 'all goals complete or stalled' });
-        }
-      } finally {
-        this.goalLoopRunning = false;
-      }
-    })();
-
-    return {
-      stop: () => this.stopGoalLoop(),
-      get running() { return thisGoalLoopRunning(); }
-    };
-  }
-
-  stopGoalLoop(): void {
-    this.goalLoopToken += 1;
-    this.goalLoopRunning = false;
-  }
-
-  /** Goals stalling honestly — surfaced for introspection, never hidden. */
-  stalledGoals(): LearningGoal[] {
-    return this.goalList().filter((g) => g.status === 'stalled');
-  }
-
-  /**
-   * Run the school automatically: teach → ask → grade → next, continuously.
-   *
-   * The observer's own state drives WHAT to learn (curiosity: decaying
-   * traces first, then untaught words) and the quiz direction (recognition
-   * until a word has a success, then production — asking it to speak the
-   * word from its meaning). The teacher only decides WHEN, on a human-
-   * watchable cadence. The loop stops when the deck is exhausted and
-   * nothing is decaying, or on stop()/dispose.
-   */
-  startAutoLoop(options: AutoLoopOptions = {}): AutoLoopHandle {
-    if (this.autoLoopRunning) {
-      return { stop: () => this.stopAutoLoop(), get running() { return false; } };
-    }
-
-    const token = ++this.autoLoopToken;
-    this.autoLoopRunning = true;
-    const teachPauseMs = options.teachPauseMs ?? 1500;
-    const askPauseMs = options.askPauseMs ?? 1500;
-    const gradePauseMs = options.gradePauseMs ?? 2500;
-
-    const setStep = (step: AutoLoopStep) => {
-      if (token !== this.autoLoopToken) return;
-      this.autoStep = step;
-      for (const listener of [...this.autoListeners]) {
-        try {
-          listener(step);
-        } catch {
-          // An isolated UI listener can never break the teaching loop.
-        }
-      }
-    };
-
-    void (async () => {
-      setStep({ phase: 'idle', word: null, cue: null, answer: null, grade: null, message: 'the school begins' });
-      try {
-        while (token === this.autoLoopToken) {
-          const word = this.nextReview() ?? this.nextNewWord();
-          if (word === null) {
-            setStep({
-              phase: 'done',
-              word: null,
-              cue: null,
-              answer: null,
-              grade: null,
-              message: 'the deck is learned — nothing is decaying and nothing is new'
-            });
-            break;
-          }
-
-          // Teach only what is new; reviews exercise existing traces.
-          if (this.requiredState(word).traceId === null) {
-            const teachResult = this.teach(word);
-            setStep({
-              phase: 'teaching',
-              word,
-              cue: null,
-              answer: null,
-              grade: null,
-              message: teachResult.traceId !== null
-                ? `teaching "${word}" — stored in the observer's memory`
-                : `teaching "${word}" — the field was quiescent, nothing stored`
-            });
-            await sleep(teachPauseMs);
-            if (token !== this.autoLoopToken) break;
-          }
-
-          // Recognition first: what does the word mean?
-          const recognition = this.ask(word, 'recognition');
-          setStep({
-            phase: 'asking',
-            word,
-            cue: recognition.cue,
-            answer: recognition.answer,
-            grade: null,
-            message: 'asking it for the meaning of the word'
-          });
-          await sleep(askPauseMs);
-          if (token !== this.autoLoopToken) break;
-          const recognitionGrade = this.grade(word, recognition);
-          setStep({
-            phase: 'grading',
-            word,
-            cue: recognition.cue,
-            answer: recognition.answer,
-            grade: recognitionGrade,
-            message: `graded ${recognitionGrade.verdict}${recognitionGrade.confidence !== null ? ` (confidence ${recognitionGrade.confidence.toFixed(2)})` : ''}`
-          });
-          await sleep(gradePauseMs);
-          if (token !== this.autoLoopToken) break;
-
-          // Production: speak the word from its meaning — only when a
-          // meaning exists. Word-only words are practiced by recognition
-          // until the Chaperone fills their definitions.
-          if (!hasDefinition(this.requiredState(word).word)) continue;
-          const production = this.ask(word, 'production');
-          setStep({
-            phase: 'asking',
-            word,
-            cue: production.cue,
-            answer: production.answer,
-            grade: null,
-            message: 'asking it to speak the word from its meaning'
-          });
-          await sleep(askPauseMs);
-          if (token !== this.autoLoopToken) break;
-          const productionGrade = this.grade(word, production);
-          setStep({
-            phase: 'grading',
-            word,
-            cue: production.cue,
-            answer: production.answer,
-            grade: productionGrade,
-            message: `graded ${productionGrade.verdict}${productionGrade.confidence !== null ? ` (confidence ${productionGrade.confidence.toFixed(2)})` : ''}`
-          });
-          await sleep(gradePauseMs);
-        }
-      } catch (error) {
-        setStep({
-          phase: 'error',
-          word: null,
-          cue: null,
-          answer: null,
-          grade: null,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      } finally {
-        if (token === this.autoLoopToken) {
-          this.autoLoopRunning = false;
-        }
-      }
-    })();
-
-    const agent = this;
-    return {
-      stop: () => agent.stopAutoLoop(),
-      get running() {
-        return token === agent.autoLoopToken && agent.autoLoopRunning;
-      }
-    };
-  }
-
-  stopAutoLoop(): void {
-    this.autoLoopToken += 1;
-    this.autoLoopRunning = false;
-  }
-
-  /** Subscribe to loop steps; returns an unsubscribe function. */
-  onAutoStep(listener: (step: AutoLoopStep) => void): () => void {
-    this.autoListeners.add(listener);
-    if (this.autoStep !== null) {
-      listener(this.autoStep);
-    }
-    return () => this.autoListeners.delete(listener);
-  }
-
-  /** The latest loop step (null when the loop has never run). */
-  getAutoStep(): AutoLoopStep | null {
-    return this.autoStep;
-  }
-
-  /** Whether the autonomous loop is currently running. */
-  isAutoLoopRunning(): boolean {
-    return this.autoLoopRunning;
-  }
-
   /** Snapshot of every word's learning state, for the teacher UI. */
   listWords(): Array<WordState & { strength: number | null; status: WordStatus }> {
     return [...this.states.values()].map((state) => {
@@ -5335,25 +4730,6 @@ export class TeacherAgent extends TeacherAgentCore {
       }
       return { ...state, strength: trace?.strength ?? null, status };
     });
-  }
-
-  protected traceOf(traceId: string): ReturnType<ReturnType<ObserverSession['observer']['getMemoryBank']>['get']> {
-    return this.session.observer.getMemoryBank().get(traceId);
-  }
-
-  protected requiredState(word: string): WordState {
-    const state = this.states.get(word);
-    if (!state) {
-      throw new Error(`Unknown deck word: ${word}`);
-    }
-    return state;
-  }
-
-  // ── Planner support ───────────────────────────────────────────────────────
-
-  /** Wait — a safe lookup that returns null instead of throwing. */
-  tryState(word: string): WordState | null {
-    return this.states.get(word) ?? null;
   }
 
   /** The recall confidence of a taught phrase (0 when never recalled). */
@@ -5372,25 +4748,6 @@ export class TeacherAgent extends TeacherAgentCore {
     }
     return out;
   }
-
-  // ── WORLD FEEDBACK (Phase 7b): the world as junior judge ─────────────────
-  //
-  // The LLM is the teacher; the WORLD is the junior judge. Two signals need
-  // no teacher at all, because they ARE the outcome:
-  //   · RE-ASK — the user asks the same question again: the prior answer
-  //     failed. Its composition paths must be weakened.
-  //   · RETENTION — a stored creative trace gets recalled again later: the
-  //     answer was worth keeping. Its paths must be reinforced.
-  // Both flow into the SAME composition-weights gradient as the LLM grade,
-  // so the observer learns from the world's replies even during scaffolding.
-
-  /** Recently-produced creative answers, keyed by their utterance, with the
-   *  trace ids they were composed from (for retention + re-ask credit). The
-   *  LLM grade's score, provider, and question template travel with the
-   *  entry so a later world verdict can confirm or contradict the grade
-   *  under the ORIGINAL bucket (the reliability model's world-feedback
-   *  channel). */
-  protected readonly authoredAnswers = new Map<string, { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null; compositeBand?: GradeBand | null }>();
 
   /** Note a creative answer the observer itself produced (the seed traces
    *  it was composed from + when). */
@@ -5466,7 +4823,7 @@ export class TeacherAgent extends TeacherAgentCore {
    *  worth keeping. Reinforce its composition paths by the small retention
    *  delta (a weaker, cumulative signal than the LLM grade — the world
    *  confirms slowly, the teacher confirms sharply). */
-  protected creditRetention(traceId: string): void {
+  creditRetention(traceId: string): void {
     const trace = this.session.observer.getMemoryBank().get(traceId);
     if (trace === undefined) return;
     // GRADER RELIABILITY — WORLD FEEDBACK: the world kept this answer. A
@@ -5549,19 +4906,6 @@ export class TeacherAgent extends TeacherAgentCore {
     return available;
   }
 
-  // ── THE EMERGENT HANDOVER (L2, Phase 20 — replaced the Phase 7c fading
-  // controller): λ is normalized trust from the kernel, not stored state. ──
-  /** Latest measured bench agreement per class (telemetry only — the λ
-   *  evidence is the kernel's, this is the report card's raw number). */
-  protected readonly fadeAgreementTelemetry: Record<GradeClass, number | null> = {
-    conversational: null,
-    operator: null,
-    other: null
-  };
-  /** λ-traffic accounting (20.5): the dependence rate is the traffic-
-   *  weighted mean teacher share over graded answers. */
-  protected readonly lambdaTraffic = { sum: 0, count: 0 };
-
   /** Feed a freshly measured bench agreement (7a Spearman window) into the
    *  kernel as composite-judge evidence: a window at/above the strong band
    *  agrees, below it disagrees. The raw value is kept as telemetry. */
@@ -5575,7 +4919,7 @@ export class TeacherAgent extends TeacherAgentCore {
    *  so an upgraded observer keeps its earned handover instead of resetting
    *  to scaffolded. (Additive: runs once per restored legacy record; new
    *  records carry no fadeState.) */
-  protected seedLegacyFadeState(fade: { lambda?: Record<string, number> }): void {
+  seedLegacyFadeState(fade: { lambda?: Record<string, number> }): void {
     if (typeof fade.lambda !== 'object' || fade.lambda === null) return;
     for (const cls of ['conversational', 'operator', 'other'] as const) {
       const lambda = fade.lambda[cls];
@@ -5601,10 +4945,6 @@ export class TeacherAgent extends TeacherAgentCore {
       other: this.reliabilityModel.lambdaFor(fadeCriteria('other'))
     };
   }
-
-  /** Which bootstrap deploy was last imported (generatedAt + word count) —
-   *  so the UI can tell a NEWER headless deploy from stale IndexedDB state. */
-  protected bootstrapImportedMeta: { generatedAt: string; words: number } | null = null;
 
   /** The last-imported bootstrap meta (read-only, null = never imported). */
   lastBootstrapImported(): { generatedAt: string; words: number } | null {
@@ -5661,73 +5001,5 @@ export class TeacherAgent extends TeacherAgentCore {
     this.lambdaTraffic.sum += effective;
     this.lambdaTraffic.count += 1;
     return blendReward(teacherGrade, composite, lambda);
-  }
-
-  /** PER-GOAL-TYPE outcome history — the observer's own record of whether
-   *  its plans tend to work (feeds expected-value choice + introspection). */
-  protected readonly goalHistory: Record<GoalType, { completed: number; abandoned: number }> = {
-    'learn-word': { completed: 0, abandoned: 0 },
-    'fill-gap': { completed: 0, abandoned: 0 },
-    practice: { completed: 0, abandoned: 0 },
-    'verify-belief': { completed: 0, abandoned: 0 }
-  };
-
-  /** The goal-type outcome history (read-only). */
-  goalHistorySnapshot(): Record<GoalType, { completed: number; abandoned: number }> {
-    return {
-      'learn-word': { ...this.goalHistory['learn-word'] },
-      'fill-gap': { ...this.goalHistory['fill-gap'] },
-      practice: { ...this.goalHistory.practice },
-      'verify-belief': { ...this.goalHistory['verify-belief'] }
-    };
-  }
-
-  protected noteGoalOutcome(type: GoalType, completed: boolean): void {
-    const record = this.goalHistory[type];
-    if (completed) record.completed += 1;
-    else record.abandoned += 1;
-  }
-
-  /** The plan completed a goal — the observer's goal history learns. */
-  noteGoalSuccess(type: GoalType): void {
-    this.noteGoalOutcome(type, true);
-  }
-
-  /** A goal was abandoned — the observer's goal history learns. */
-  noteGoalAbandon(type: GoalType): void {
-    this.noteGoalOutcome(type, false);
-  }
-
-  /** DELIBERATION VIEW: the active goal traces, ranked by priority, with the
-   *  reason computed from the observer's own goal history — the answer to
-   *  "what are you trying to do" is its own evaluated plan, not a canned
-   *  string. */
-  activeGoalView(): Array<{ target: string; type: GoalType; priority: number; reason: string }> {
-    const bank = this.session.observer.getMemoryBank();
-    const active: Array<{ target: string; type: GoalType; priority: number }> = [];
-    for (const trace of bank.all()) {
-      if (trace.metadata?.kind !== 'goal' || trace.metadata.goalStatus !== 'active') continue;
-      const type = String(trace.metadata.goalType ?? '') as GoalType;
-      const target = String(trace.metadata.target ?? '');
-      const priority = Number(trace.metadata.priority ?? 0);
-      const isGoalType = ['learn-word', 'fill-gap', 'practice', 'verify-belief'].includes(type);
-      if (isGoalType && target.length > 0) active.push({ target, type, priority });
-    }
-    for (const inMemory of this.goals) {
-      if (inMemory.status !== 'active') continue;
-      if (!active.some((g) => g.target === inMemory.target && g.type === inMemory.type)) {
-        active.push({ target: inMemory.target, type: inMemory.type, priority: inMemory.priority });
-      }
-    }
-    active.sort((a, b) => b.priority - a.priority);
-    return active.map((goal) => {
-      const history = this.goalHistory[goal.type] ?? { completed: 0, abandoned: 0 };
-      const total = history.completed + history.abandoned;
-      const successRate = total === 0 ? 0.5 : history.completed / total;
-      const reason = successRate >= 0.5
-        ? `${goal.type} has gone well for me (${history.completed}/${total})`
-        : `I have not tried much ${goal.type} yet`;
-      return { target: goal.target, type: goal.type, priority: goal.priority, reason };
-    });
   }
 }

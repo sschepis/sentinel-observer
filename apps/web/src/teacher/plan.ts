@@ -18,7 +18,8 @@
  * Honesty contract preserved: a goal that cannot progress is marked STALLED
  * and surfaced by introspection — never pursued forever, never hidden.
  */
-import { TeacherAgent, REVIEW_STRENGTH_THRESHOLD } from './TeacherAgent';
+import type { TeacherAgent } from './TeacherAgent';
+import { REVIEW_STRENGTH_THRESHOLD } from './agent/support';
 import { hasDefinition } from './deck';
 import type { BehaviorOption } from './drives';
 import { scoreWord } from './curriculum';
