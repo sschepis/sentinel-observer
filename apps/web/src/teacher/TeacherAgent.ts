@@ -1,8 +1,6 @@
-import type { RecallResult } from '@sschepis/sentient-core';
 import type { ObserverSession } from '../observer/engine';
 import type { PersistenceStore } from '../persistence/store';
-import { lessonText, productionCue, recognitionCue, hasDefinition, type DeckWord } from './deck';
-import { retentionProbability, dueIntervalDays, decayToward, FSRS_TARGET_RETENTION, STABILITY_PRESETS } from './retention';
+import { type DeckWord } from './deck';
 import {
   FSRS_INITIAL_STABILITY,
   FSRS_INITIAL_DIFFICULTY,
@@ -13,8 +11,6 @@ import {
   applyRetentionDecay,
   type RetentionParams
 } from './fsrs';
-import { bumpAgedWeights, decayAgedWeights, capAgedWeights, type WeightMeta } from './agedWeights';
-import { CalibrationLedger, type CalibrationReport } from './calibration';
 import {
   CONVERSATION_RECALL_FLOOR,
   CREATIVE_UNLOCK_THRESHOLD,
@@ -23,12 +19,15 @@ import {
   type CreativeComposition,
   type TransitionWeights
 } from './conversation';
-import { applyOperator, isClockOrDateQuestion, clockAnswer, clusterGaps, questionFormOf, parseNegationStatement, type OperatorResult } from './operators';
-import { composeGrounded, criticize, groundedSubjects, hedgeComposition, framesFor } from './groundedFrames';
+import {
+  applyOperator,
+  isClockOrDateQuestion,
+  clockAnswer,
+  questionFormOf,
+  parseNegationStatement,
+  type OperatorResult
+} from './operators';
 import { deniedFromNegations } from './chain';
-import { readText } from './reading';
-import { LearnedFrameStore } from './learnedFrames';
-import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from './plan';
 import {
   nextCurriculumWord,
   rankCurriculum,
@@ -38,17 +37,8 @@ import {
   type CurriculumContext,
   type CurriculumItem
 } from './curriculum';
-import { semanticVocabulary } from './semanticSignature';
-import { classifyUtterance, blendReward, fadeCriteria, type GradeClass } from './fade';
-import { JUDGE_COMPOSITE } from './trust';
-import { compositeScore } from './composite';
-import { groundingScore, groundingAttribution, stripHedges } from './grounding';
-import { extractRelations, mergeRelations, reconcileRelations, predicateVerb, sourceClassForOrigin, isSourceClass, type Relation, type RelationPredicate, type Negation, type SourceClass } from './relations';
-import {
-  corroborationConfidence,
-  distinctClasses,
-  evidenceInText
-} from './corroboration';
+import { groundingScore, stripHedges } from './grounding';
+import { corroborationConfidence, distinctClasses, evidenceInText } from './corroboration';
 import {
   GraderReliabilityModel,
   difficultyBandOf,
@@ -63,34 +53,13 @@ import {
   type GradeCriteria,
   type ReliabilitySnapshot
 } from './reliability';
-import { RelationalHologram, mulberry32 } from '@sschepis/sentient-core';
-import { matchArgs, evaluate, canonicalNumber, conversionPairOf, type DSLExpr } from './technical/dsl';
-import { RuleStore, RULE_GRADE_DELTA, type DerivationDenial, type RewriteRule, type RuleOrigin } from './rules/types';
-import { PEANO_RULES, natFromDecimal, natToDecimal } from './rules/peano';
-import { DIGITS_RULES } from './rules/digits';
-import { INT_RULES } from './rules/int';
-import { LOGIC_RULES } from './rules/logic';
-import { ALG_RULES } from './rules/alg';
-import { reduce } from './rules/engine';
-import { parseRewritePrompt, decodeNormalForm } from './rules/parse';
-import { CompositionRuleStore } from './rules/compositionSeeds';
-import { induceRuleSet, validateHeldOut, type InductionInstance } from './rules/induction';
-import { termBits, termToString } from './rules/terms';
-import { generateExercises, chanceLevel } from './technical/verify';
-import { rewriteTargetFor, INDUCTION_MARGIN, MIN_INDUCTION_HITS } from './technical/drill';
-import { RULE_CORROBORATION_HORIZON_MS, drillForRuleName } from './rules/maintenance';
-import { parseTaughtRule, validateTaughtRule, taughtRuleSpecFor, type TaughtRuleSpec } from './rules/instruction';
-import { technicalRelations } from './technical';
-import { SUPPLEMENTAL_RELATIONS } from './decks/relationSupplements';
-import { GROUNDED_FACTS_RELATIONS } from './decks/groundedFacts';
+import { mulberry32 } from '@sschepis/sentient-core';
 import { OperatorLearner } from './operators/learning';
 import { TokenCostModel } from './mdl';
 import { ACTIVE_DECK } from './decks';
 import { loadConversations } from './conversations';
-import { computeDrives, chooseBehavior, updateDriveWeight, ARCHETYPAL_BEHAVIORS, DEFAULT_BEHAVIOR_WEIGHTS, type DriveSignals, type DriveState, type BehaviorOption, type BehaviorWeights } from './drives';
-import { WorkingMemory, resolveReferences, extractUnknownSubject, tokenizeText, singularize, isContentWord, cosineSimilarity, type WorkingTurn } from './context';
-import { EpisodicMemory, EPISODIC_SPOKEN_RELEVANCE_FLOOR, type EpisodicFact, type RememberedFact } from './episodic';
-import { clampRange } from '@sschepis/sentient-core';
+import { resolveReferences, extractUnknownSubject, tokenizeText, isContentWord } from './context';
+import { EpisodicMemory, EPISODIC_SPOKEN_RELEVANCE_FLOOR } from './episodic';
 import {
   BOOTSTRAP_VERSION,
   BOOTSTRAP_MIN_SUPPORTED_VERSION,
@@ -212,15 +181,24 @@ export type {
   RetentionReport
 } from './agent/support';
 
+// The mixin chain over TeacherAgentCore. WordLoop is innermost (right above
+// the core), then Curriculum, Relations, Rules, Operators, Motivation,
+// Conversation, Creative, Goals, AutoLoop, Persistence outermost.
 const TeacherAgentComposed = PersistenceMixin(
-  CreativeMixin(
-    WordLoopMixin(
-      ConversationMixin(
-        MotivationMixin(
-          RelationsMixin(
-            RulesMixin(
-              CurriculumMixin(
-                OperatorsMixin(AutoLoopMixin(GoalsMixin(TeacherAgentCore as unknown as Constructor<TeacherAgentCore & CrossFacultyApi>)))
+  AutoLoopMixin(
+    GoalsMixin(
+      CreativeMixin(
+        ConversationMixin(
+          MotivationMixin(
+            OperatorsMixin(
+              RulesMixin(
+                RelationsMixin(
+                  CurriculumMixin(
+                    WordLoopMixin(
+                      TeacherAgentCore as unknown as Constructor<TeacherAgentCore & CrossFacultyApi>
+                    )
+                  )
+                )
               )
             )
           )
@@ -231,8 +209,6 @@ const TeacherAgentComposed = PersistenceMixin(
 );
 
 export class TeacherAgent extends TeacherAgentComposed {
-  /** P12 held-out gate: edge keys hidden from the symbolic graph only. */
-  protected readonly hiddenRelationKeys: ReadonlySet<string> | null;
 
   /** Adjust behaviour that is read at the point of use. */
   setTuning(next: Partial<{ forgettingRate: number; reviewThreshold: number }>): void {
