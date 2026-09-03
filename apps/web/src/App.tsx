@@ -3,6 +3,7 @@ import { Dashboard } from './components/Dashboard';
 import { ChatView } from './components/ChatView';
 import { TrainingView } from './components/TrainingView';
 import { VocabularyView } from './components/VocabularyView';
+import { RulesPanel, ruleStoreSnapshot } from './components/RulesPanel';
 import { SettingsView } from './components/SettingsView';
 import { ModelStateBar } from './components/ModelStateBar';
 import ServerPanel, { RemoteVocabulary, RemoteSettings } from './components/ServerPanel';
@@ -31,12 +32,13 @@ import {
  * always restore against the same prime basis.
  */
 
-type View = 'chat' | 'training' | 'vocabulary' | 'mind' | 'settings';
+type View = 'chat' | 'training' | 'vocabulary' | 'rules' | 'mind' | 'settings';
 
 const NAV: ReadonlyArray<{ key: View; label: string; icon: string; hint: string }> = [
   { key: 'chat', label: 'Chat', icon: '◍', hint: 'Talk to the observer' },
   { key: 'training', label: 'Training', icon: '⁘', hint: 'Watch it learn, live' },
   { key: 'vocabulary', label: 'Vocabulary', icon: '≡', hint: 'What it knows' },
+  { key: 'rules', label: 'Rules', icon: '⌬', hint: 'Its procedures' },
   { key: 'mind', label: 'Mind', icon: '◎', hint: 'Raw observer physics' },
   { key: 'settings', label: 'Settings', icon: '⚙', hint: 'Teacher model and records' }
 ];
@@ -45,6 +47,7 @@ const VIEW_TITLE: Record<View, string> = {
   chat: 'Chat',
   training: 'Training',
   vocabulary: 'Vocabulary',
+  rules: 'Rules',
   mind: "The observer's mind",
   settings: 'Settings'
 };
@@ -138,10 +141,13 @@ export default function App() {
   }
 
   // The teacher exists only when the observer (the learner) is running.
+  // R7: rules mode is the shipped behavior — the drill loop (when the
+  // learning engine runs drills) routes memorized drills to rewrite-rule
+  // synthesis with a DSL fallback for families the engine does not own.
   const teacher = useMemo(
     () =>
       session !== null
-        ? new TeacherAgent(session, ACTIVE_DECK, persistence.current, 1, undefined, compositionSeed.current!)
+        ? new TeacherAgent(session, ACTIVE_DECK, persistence.current, 1, undefined, compositionSeed.current!, undefined, undefined, undefined, true)
         : null,
     [session]
   );
@@ -473,6 +479,19 @@ export default function App() {
             <RemoteVocabulary client={remoteClient} revision={summaryTick} />
           ) : (
             <VocabularyView teacher={teacher} revision={summaryTick + engine.revision} />
+          ))}
+
+        {view === 'rules' &&
+          (serverMode ? (
+            <div className="mx-auto w-full max-w-4xl px-6 py-8 text-sm text-slate-500">
+              The observer&apos;s rule store lives on the server; open the local mode to inspect its rules.
+            </div>
+          ) : (
+            <RulesPanel
+              snapshot={
+                teacher !== null ? ruleStoreSnapshot(teacher) : null
+              }
+            />
           ))}
 
         {view === 'mind' && (

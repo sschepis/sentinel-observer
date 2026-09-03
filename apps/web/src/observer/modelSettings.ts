@@ -16,9 +16,10 @@ const STORAGE_KEY = 'sentinel.model.settings.v1';
 
 export interface ModelSettings {
   /**
-   * Multiplier on every forgetting half-life. 1 is the measured default
-   * (7 days unreinforced, 30 practised, 120 consolidated); 2 forgets half
-   * as fast; 0.5 twice as fast.
+   * Multiplier on every FSRS stability (L3: the one forgetting law).
+   * 1 is the model's own schedule (a fresh word falls due after ~1 day, a
+   * consolidated one after ~30); 2 forgets half as fast (horizons double);
+   * 0.5 twice as fast.
    */
   forgettingRate: number;
   /** Strength below which a word is scheduled for review. */
@@ -92,8 +93,13 @@ export function saveModelSettings(settings: ModelSettings): ModelSettings {
   return normalized;
 }
 
-/** The half-lives, in days, that a given forgetting rate produces. */
-export function halfLivesFor(forgettingRate: number): { fresh: number; practised: number; consolidated: number } {
+/**
+ * The due horizons, in days, that a forgetting rate produces (L3, Phase
+ * 19.1): under the FSRS law the review falls due after ≈ stability × rate
+ * days (interval ≈ stability at the target retention). Fresh S = 1,
+ * practised S ≈ 5 (a few correct reviews), consolidated S ≥ 30.
+ */
+export function dueHorizonsFor(forgettingRate: number): { fresh: number; practised: number; consolidated: number } {
   const rate = Math.max(0.01, forgettingRate);
-  return { fresh: 7 * rate, practised: 30 * rate, consolidated: 120 * rate };
+  return { fresh: 1 * rate, practised: 5 * rate, consolidated: 30 * rate };
 }

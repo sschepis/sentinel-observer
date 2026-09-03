@@ -167,7 +167,12 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
         const edges = Array.isArray(body.edges) ? body.edges : [];
         const score = typeof body.score === 'number' ? body.score : null;
         const graded = teacher.gradeCreativeWithReliability(
-          { traceIds, edges, templateIds: Array.isArray(body.templateIds) ? body.templateIds.map(String) : [] },
+          {
+            traceIds,
+            edges,
+            templateIds: Array.isArray(body.templateIds) ? body.templateIds.map(String) : [],
+            ruleIds: Array.isArray(body.ruleIds) ? body.ruleIds.map(String) : undefined
+          },
           score,
           String(body.utterance ?? ''),
           String(body.answer ?? ''),

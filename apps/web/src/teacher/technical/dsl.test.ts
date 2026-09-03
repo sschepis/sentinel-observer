@@ -65,7 +65,16 @@ describe('DSL evaluation', () => {
     expect(matchArgs('force', 'What force accelerates 5 kilograms at 3 meters per second squared?')).toEqual([5, 3]);
     expect(matchArgs('convert-time', 'How many seconds are in 5 minutes?')).toEqual([5]);
     expect(matchArgs('addition', 'not a prompt')).toBeNull();
-    expect(matchArgs('gcf', 'What is the greatest common factor of 8 and 12?')).toBeNull();
+    // R4: the gcf/lcm families gained parsers (the rewrite engine's first
+    // and only computing path) — a deliberate, named contract change from
+    // the pre-R parseability they had.
+    expect(matchArgs('gcf', 'What is the greatest common factor of 8 and 12?')).toEqual([8, 12]);
+    expect(matchArgs('lcm', 'What is the least common multiple of 4 and 6?')).toEqual([4, 6]);
+    // R9: word-problem stories lift both quantities from the generated
+    // shapes.
+    expect(matchArgs('word-problem-add', 'Sam has 7 apples and gets 5 more. How many apples does Sam have?')).toEqual([7, 5]);
+    expect(matchArgs('word-problem-mul', 'There are 6 boxes with 9 pencils in each box. How many pencils are there in all?')).toEqual([6, 9]);
+    expect(matchArgs('word-problem-add', 'Sam has 5 apples and 3 bananas. How many apples does Sam have?')).toBeNull();
   });
 });
 

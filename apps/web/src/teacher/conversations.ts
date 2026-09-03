@@ -19,6 +19,11 @@ export interface ConversationMessage {
   score?: number | null;
   feedback?: string | null;
   at: number;
+  /** R8: the rewrite derivation that produced an operator answer — the
+   *  bounded step trace and the rules it applied ("show your work"). */
+  derivation?: Array<{ ruleId: string; after: string }>;
+  ruleIds?: string[];
+  steps?: number;
 }
 
 export interface Conversation {

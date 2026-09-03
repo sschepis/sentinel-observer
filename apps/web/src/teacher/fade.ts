@@ -1,52 +1,39 @@
 /**
- * THE FADING CONTROLLER (Phase 7c) — the calibrated handover.
+ * THE EMERGENT HANDOVER (L2, Phase 20 — replaces the Phase 7c fading
+ * controller).
  *
  * The teacher (LLM) grades every composition during scaffolding; the student
- * has a developing composite. The controller blends them per task class:
+ * has a developing composite. The blend per graded answer is
  *
- *     final_reward = λ_class × composite + (1 − λ_class) × teacher
+ *     final_reward = λ × composite + (1 − λ) × teacher
  *
- * where λ_class grows ONLY where measured agreement (Spearman, from the 7a
- * bench) has proven the student's composite predicts the teacher's judgment
- * at or above the threshold. Below the threshold the teacher dominates;
- * above it the student takes over progressively. Two guards keep the
- * scaffold honest:
+ * — but λ is no longer a stored state machine driven by four constants
+ * (threshold, rate, ceiling, floor: all DELETED). λ is NORMALIZED TRUST,
+ * computed per bucket from the trust kernel (trust.ts):
  *
- *   · UNCERTAINTY FALLBACK — on answers where the student's own composite
- *     is unsure (low fluency, or a novel token the weights have never seen),
- *     λ falls and the teacher is consulted: novel terrain keeps the teacher
- *     in the loop.
- *   · CEILING — λ never reaches 1: a rolling spot-check (the residual
- *     teacher weight) keeps the internal signal calibrated against drift.
+ *     λ = T_composite / (T_composite + T_llm)
+ *
+ * where each T is the Wilson lower bound on the judge's measured agreement
+ * with ground truth (rule-based grounding checks, world outcomes, bench
+ * windows). Every property the old controller hard-coded is now a theorem:
+ *   · the FLOOR: a blind bucket has T_composite = 0 → λ = 0 — the teacher
+ *     is the authority on novel terrain;
+ *   · the CEILING: the teacher's prior + measured mass keep T_llm > 0 →
+ *     λ < 1 always; two equally-proven judges settle at λ* = 0.5 — the
+ *     teacher is never dismissed, it is out-measured;
+ *   · the RATE: λ climbs exactly as fast as evidence tightens the bound;
+ *   · REGRESSION/HACK-RESISTANCE: a composite that stops agreeing with the
+ *     rule checks and world verdicts loses measured rate and λ falls.
+ *
+ * The uncertainty fallback is subsumed: the composite is multiplicative
+ * (fluency × novelty × relevance × resonance), so "no opinion" — fluency 0,
+ * an echo (novelty 0), or no reference to the question (relevance 0) — makes
+ * composite = 0 and blendReward's guard passes the teacher grade through
+ * untouched (the old isUncertain checked exactly the fluency≤0 case).
  */
-import type { TransitionWeights } from './conversation';
-import { tokenizeText } from './context';
-
-/** Agreement (Spearman) at which a class is considered handover-ready. */
-export const HANDOVER_THRESHOLD = 0.7;
-/** How fast λ climbs once a class crosses the threshold. */
-export const FADE_RATE = 0.1;
-/** λ never exceeds this — the residual teacher weight is the spot-check. */
-export const FADE_CEILING = 0.9;
-/** λ never falls below this — the student's signal always has a voice. */
-export const FADE_FLOOR = 0.1;
+import type { GradeCriteria } from './reliability';
 
 export type GradeClass = 'conversational' | 'operator' | 'other';
-
-/** The persistent per-class fade state. */
-export interface FadeState {
-  /** Latest measured agreement (Spearman) for the class (null = unmeasured). */
-  agreement: Record<GradeClass, number | null>;
-  /** Current λ for the class. */
-  lambda: Record<GradeClass, number>;
-}
-
-export function emptyFadeState(): FadeState {
-  return {
-    agreement: { conversational: null, operator: null, other: null },
-    lambda: { conversational: 0, operator: 0, other: 0 }
-  };
-}
 
 /** Classify a task class from the utterance's shape. Conversational prompts
  *  ("what do you think...", "tell me...") are NOT operator questions even
@@ -58,46 +45,10 @@ export function classifyUtterance(utterance: string): GradeClass {
   return 'conversational';
 }
 
-/**
- * Update the controller with a new measured agreement for a class (from the
- * 7a bench). λ rises toward the ceiling only when agreement ≥ threshold;
- * it drifts down when agreement falls below (the student regressed).
- */
-export function updateFadeState(state: FadeState, cls: GradeClass, agreement: number): void {
-  state.agreement[cls] = agreement;
-  const current = state.lambda[cls];
-  if (agreement >= HANDOVER_THRESHOLD) {
-    state.lambda[cls] = Math.min(FADE_CEILING, current + FADE_RATE);
-  } else if (current > 0) {
-    state.lambda[cls] = Math.max(0, current - FADE_RATE);
-  }
-}
-
-/**
- * Uncertain? The student's composite is not trustworthy when its OWN model
- * has no opinion: the ANSWER has no fluent transitions under its learned
- * weights (fluency ≈ 0). The utterance's tokens are NOT consulted — the
- * observer need never have composed a question before to grade an answer to
- * it with its own transition model; only the answer's own flow matters.
- * (Measured: checking utterance tokens flagged nearly every live utterance
- * as novel, because the transition map only holds composition-context
- * n-grams — the fallback never released.)
- */
-export function isUncertain(
-  utterance: string,
-  answer: string,
-  weights: TransitionWeights,
-  fluency: number
-): boolean {
-  void utterance;
-  void weights;
-  return fluency <= 0;
-}
-
-/** The effective λ for an answer — after uncertainty fallback. */
-export function effectiveLambda(state: FadeState, cls: GradeClass, uncertain: boolean): number {
-  if (uncertain) return Math.min(state.lambda[cls], FADE_FLOOR); // consult the teacher
-  return state.lambda[cls];
+/** The trust-kernel bucket of a grade class — the composite judge's evidence
+ *  and the λ probe must address the SAME criteria tuple. */
+export function fadeCriteria(cls: GradeClass): GradeCriteria {
+  return { answerType: 'creative', difficultyBand: 'mid', template: cls, provider: '' };
 }
 
 /**

@@ -89,6 +89,13 @@ describe('the full learning state survives a reload (the user’s scenario)', ()
     // handover does not reset to scaffolded).
     expect(fresh.getCompositionWeights().size).toBeGreaterThan(0);
 
+    // L3 (19.2): the weights' decay clocks survive — a reload does NOT
+    // restart every n-gram's forgetting clock at zero.
+    expect(fresh.getCompositionWeightMeta().size).toBeGreaterThan(0);
+    for (const key of fresh.getCompositionWeights().keys()) {
+      expect(fresh.getCompositionWeightMeta().get(key)).toBeDefined();
+    }
+
     // The DRIVE GRADIENT survives (the evaluative learning persists).
     // 2 from the correct grades + 3 explicit = 5; weight 0.5 + 5×0.1 = 1.0 →
     // clamped by the ceiling (1.5 falls to... 0.5+0.5=1.0).

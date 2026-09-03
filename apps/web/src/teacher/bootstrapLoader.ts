@@ -1,6 +1,7 @@
 import type { TeacherAgent } from './TeacherAgent';
 import {
   BOOTSTRAP_VERSION,
+  BOOTSTRAP_MIN_SUPPORTED_VERSION,
   BOOTSTRAP_VOCABULARY_SCHEME,
   computeVocabularyFingerprint,
   type BootstrapRecord
@@ -52,7 +53,7 @@ export interface BootstrapImportSummary {
 /** Exported for the round-trip gate: the app's own export must always be
  *  re-importable under the deck it stamps (H5). */
 export function assertImportable(record: BootstrapRecord): void {
-  if (record.version !== BOOTSTRAP_VERSION) {
+  if (typeof record.version !== 'number' || record.version < BOOTSTRAP_MIN_SUPPORTED_VERSION || record.version > BOOTSTRAP_VERSION) {
     throw new Error(`unsupported bootstrap record version ${record.version}; regenerate it with npm run train`);
   }
   if (record.vocabularyScheme !== BOOTSTRAP_VOCABULARY_SCHEME) {

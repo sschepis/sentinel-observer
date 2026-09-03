@@ -357,10 +357,15 @@ describe('P7 answer provenance', () => {
     for (const entry of deck) teacher2.teach(entry.word);
     runDrill(teacher2, addition, 0);
 
+    // On a fresh teacher the REWRITE engine owns addition (dispatch 2.7) —
+    // the answer derives through the authored deck with rule provenance,
+    // instead of a DSL-compiled rule. The provenance names the rules.
     const answer = teacher2.chatAnswer('What is 17 + 25?');
     expect(answer.mode).toBe('operator');
     if (answer.mode === 'operator') {
-      expect(answer.provenance.operatorId).toBe(`addition\u0000addition`);
+      expect(answer.provenance.operatorId).toBe('rewrite');
+      expect(answer.provenance.ruleIds?.length).toBeGreaterThan(0);
+      expect(answer.provenance.derivationSteps).toBeGreaterThan(0);
     }
     session2.dispose();
   });

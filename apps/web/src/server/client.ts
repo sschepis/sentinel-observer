@@ -118,6 +118,7 @@ export class RemoteClient {
     traceIds: string[];
     edges: unknown[];
     templateIds: string[];
+    ruleIds?: string[];
   }, score: number | null, utterance: string, answer: string, provider: string): Promise<{
     stored: boolean;
     weight: number;
@@ -237,7 +238,8 @@ export function remoteChatTeacher(client: RemoteClient): ChatTeacher {
       const traceIds = 'traceIds' in provenance ? provenance.traceIds : [...provenance];
       const edges = 'traceIds' in provenance ? (provenance.edges ?? []) : [];
       const templateIds = 'traceIds' in provenance ? (provenance.templateIds ?? []) : [];
-      return client.grade({ traceIds, edges, templateIds }, score, utterance, answer, provider);
+      const ruleIds = 'traceIds' in provenance ? (provenance.ruleIds ?? []) : [];
+      return client.grade({ traceIds, edges, templateIds, ruleIds }, score, utterance, answer, provider);
     }
   };
 }

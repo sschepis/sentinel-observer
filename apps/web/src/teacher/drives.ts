@@ -61,7 +61,22 @@ export const BEHAVIOR_WEIGHT_CEILING = 1.5;
 /** Learning rate for a single outcome. */
 export const BEHAVIOR_WEIGHT_LR = 0.1;
 
+/** M4 (Phase 21): the temperature bounds of behavior arbitration. */
+export const BEHAVIOR_TEMPERATURE_MIN = 0.05;
+export const BEHAVIOR_TEMPERATURE_MAX = 1.0;
+
 const clamp = (value: number): number => Math.max(0, Math.min(1, value));
+
+/**
+ * M4 (Phase 21): THE DRIVES SET THE ENTROPY OF ACTION. Exploration is not a
+ * bolted-on ε — it is the organism's state: high curiosity or novel terrain
+ * runs HOT (the arbitration samples widely), coherent/conserving states run
+ * COLD (near-argmax exploitation). T → T_MIN recovers the argmax exactly.
+ */
+export function behaviorTemperature(drives: DriveState): number {
+  const raw = BEHAVIOR_TEMPERATURE_MIN + 0.5 * drives.curiosity + 0.5 * drives.novelty;
+  return Math.max(BEHAVIOR_TEMPERATURE_MIN, Math.min(BEHAVIOR_TEMPERATURE_MAX, raw));
+}
 
 /** Normalize raw signals into drive state in [0,1]. */
 export function computeDrives(signals: DriveSignals): DriveState {
@@ -85,12 +100,20 @@ export function computeDrives(signals: DriveSignals): DriveState {
  * selected, no matter their weight — an axis the observer has not yet
  * acquired is one it does not even consider. Defaults to the archetypal
  * four; the caller widens the set when acquisition evidence accumulates.
+ *
+ * M4 (Phase 21): with an `rng`, the choice is BOLTZMANN-SAMPLED at the
+ * drive temperature — the exploration policy the argmax never had. Every
+ * drive term carries coefficient 1 (the hand-tuned `curiosity × 2` is gone:
+ * curiosity's extra push now flows through the TEMPERATURE, where it
+ * belongs). Without an rng the choice is the exact argmax (the cold limit) —
+ * deterministic callers and tests are unchanged.
  */
 export function chooseBehavior(
   drives: DriveState,
   options: readonly BehaviorOption[],
   weights: BehaviorWeights = {},
-  available: ReadonlySet<BehaviorOption> = new Set(ARCHETYPAL_BEHAVIORS)
+  available: ReadonlySet<BehaviorOption> = new Set(ARCHETYPAL_BEHAVIORS),
+  rng?: (() => number) | null
 ): BehaviorOption | null {
   const scores: Array<[BehaviorOption, number]> = options.map((option) => {
     if (!available.has(option)) return [option, -Infinity];
@@ -100,8 +123,9 @@ export function chooseBehavior(
         // memory and the answer is consistent.
         return [option, (weights.answer ?? DEFAULT_BEHAVIOR_WEIGHTS.answer) + drives.coherence + drives.selfConsistency];
       case 'ask':
-        // Curiosity dominates: the observer seeks what it does not know.
-        return [option, (weights.ask ?? DEFAULT_BEHAVIOR_WEIGHTS.ask) + drives.curiosity * 2];
+        // Curiosity seeks what the observer does not know (coefficient 1 —
+        // its urgency flows through the temperature, not a multiplier).
+        return [option, (weights.ask ?? DEFAULT_BEHAVIOR_WEIGHTS.ask) + drives.curiosity];
       case 'compose':
         // Novelty drives invention: compose new combinations from memory.
         return [option, (weights.compose ?? DEFAULT_BEHAVIOR_WEIGHTS.compose) + drives.novelty];
@@ -116,6 +140,27 @@ export function chooseBehavior(
         return [option, 0];
     }
   });
+
+  // Boltzmann sampling at the drive temperature (M4) — only with an rng.
+  if (rng !== undefined && rng !== null) {
+    const viable = scores.filter(([, score]) => Number.isFinite(score));
+    if (viable.length === 0) return null;
+    const temperature = behaviorTemperature(drives);
+    const maxScore = Math.max(...viable.map(([, score]) => score));
+    let total = 0;
+    const masses = viable.map(([, score]) => {
+      const mass = Math.exp((score - maxScore) / temperature);
+      total += mass;
+      return mass;
+    });
+    let draw = rng() * total;
+    for (let i = 0; i < viable.length; i += 1) {
+      draw -= masses[i];
+      if (draw <= 0) return viable[i][0];
+    }
+    return viable[viable.length - 1][0];
+  }
+
   let best: BehaviorOption | null = null;
   let bestScore = -Infinity;
   for (const [option, score] of scores) {

@@ -147,6 +147,37 @@ describe('SedenionMemoryField', () => {
     expect(field.norm()).toBe(0);
   });
 
+  it('L1b coherenceWeighting: floor imprints incoherent moments at half rate; linear barely imprints them', () => {
+    const sample = { primes: [2], phases: [0], amplitudes: [1], coherence: 0 };
+    const floorField = SedenionMemoryField.zero();
+    const linearField = SedenionMemoryField.zero();
+    const floorRate = floorField.updateFromPrimeActivity(sample, { learningRate: 0.2 });
+    const linearRate = linearField.updateFromPrimeActivity(sample, {
+      learningRate: 0.2,
+      coherenceWeighting: 'linear'
+    });
+    expect(floorRate).toBeCloseTo(0.1, 12); // legacy: 0.2·(0.5 + 0.5·0)
+    expect(linearRate).toBe(0); // linear: 0.2·0 — a fully incoherent moment does not imprint
+    expect(linearField.norm()).toBe(0);
+  });
+
+  it('L1b coherenceWeighting: linear is lr·coherence and agrees with floor at full coherence', () => {
+    const sample = { primes: [2], phases: [0], amplitudes: [1], coherence: 0.6 };
+    const partial = SedenionMemoryField.zero();
+    expect(
+      partial.updateFromPrimeActivity(sample, { learningRate: 0.5, coherenceWeighting: 'linear' })
+    ).toBeCloseTo(0.3, 12);
+    const linearFull = SedenionMemoryField.zero();
+    const floorFull = SedenionMemoryField.zero();
+    expect(
+      linearFull.updateFromPrimeActivity({ ...sample, coherence: 1 }, { learningRate: 0.5, coherenceWeighting: 'linear' })
+    ).toBeCloseTo(0.5, 12);
+    expect(
+      floorFull.updateFromPrimeActivity({ ...sample, coherence: 1 }, { learningRate: 0.5 })
+    ).toBeCloseTo(0.5, 12);
+    expect(linearFull.toArray()).toEqual(floorFull.toArray());
+  });
+
   it('coherenceWith is cosine similarity', () => {
     const a = SedenionMemoryField.fromArray([1, 0]);
     const b = SedenionMemoryField.fromArray([0, 1]);

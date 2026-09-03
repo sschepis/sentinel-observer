@@ -57,14 +57,14 @@ function renderSettings(engine: LearningEngine) {
 }
 
 describe('SettingsView model controls', () => {
-  it('states the forgetting half-lives in days rather than a bare number', () => {
+  it('states the due horizons in days rather than a bare number (L3: the FSRS law)', () => {
     renderSettings(engineStub());
-    expect(screen.getByText(/half its strength after 7 days unpractised/)).toBeDefined();
+    expect(screen.getByText(/falls due for review after ~1 day freshly taught/)).toBeDefined();
   });
 
-  it('restates the half-lives when the rate changes', () => {
+  it('restates the horizons when the rate changes', () => {
     renderSettings(engineStub({ model: { ...DEFAULT_MODEL_SETTINGS, forgettingRate: 2 } }));
-    expect(screen.getByText(/after 14 days unpractised, 60 once practised, 240 once consolidated/)).toBeDefined();
+    expect(screen.getByText(/~2 days freshly taught, ~10 days once practised, ~60 once consolidated/)).toBeDefined();
     expect(screen.getByText('2× slower')).toBeDefined();
   });
 

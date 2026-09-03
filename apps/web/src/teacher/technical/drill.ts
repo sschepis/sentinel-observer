@@ -7,6 +7,12 @@ import { CHECKABLE_CONCEPTS } from './index';
 import { generateExercises, splitExercises, verify, chanceLevel, type Exercise } from './verify';
 import { induceRule, matchArgs, evaluate, conversionPairOf, type DSLExpr, type TrainInstance } from './dsl';
 import type { TechnicalConcept } from './types';
+import { induceRuleSet, validateHeldOut, INDUCTION_FUEL, type InductionInstance } from '../rules/induction';
+import { RuleStore, type RewriteRule } from '../rules/types';
+import { reduce } from '../rules/engine';
+import { natFromDecimal } from '../rules/peano';
+import { digitsFromDecimal } from '../rules/digits';
+import { tLit, tSym, termBits, termToString, type Term } from '../rules/terms';
 
 /**
  * THE DRILL LOOP — teaching something whose answers can be checked.
@@ -36,13 +42,13 @@ const TRAIN_SIZE = 12;
 /** Held-out exercises used to test generalization. */
 const TEST_SIZE = 10;
 /** Held-out accuracy must clear the null model by this much. */
-const INDUCTION_MARGIN = 0.2;
+export const INDUCTION_MARGIN = 0.2;
 /**
  * Held-out answers required before induction may be claimed at all. A
  * couple of lucky hits on a small set is not evidence of a rule, however
  * favourably it divides.
  */
-const MIN_INDUCTION_HITS = 3;
+export const MIN_INDUCTION_HITS = 3;
 /** Accuracy on taught instances that counts as having stored them. */
 const MEMORIZED_FLOOR = 0.5;
 
@@ -274,20 +280,64 @@ export function runDrill(teacher: TeacherAgent, concept: TechnicalConcept, round
   let ruleTestAccuracy: number | undefined;
   let ruleNodes: number | undefined;
   if (verdict === 'memorized') {
-    const induced = induceCompiledRule(teacher, concept, drill, trainSet, testSet, chance);
-    if (induced !== null) {
-      verdict = 'rule-induced';
-      ruleTestAccuracy = induced.testAccuracy;
-      ruleNodes = induced.nodes;
-      events.push({
-        role: 'system',
-        text: `induced an executable rule for ${concept.word} (${induced.nodes} nodes, held-out ${Math.round(induced.testAccuracy * 100)}%)`,
-        meta: 'drill-induced'
-      });
+    // R4: the rewrite-induction mode is the A/B arm — a memorized drill
+    // routes to recursive rewrite-rule synthesis instead of DSL
+    // compilation. gcf is the flagship target (Euclidean gcd is recursive
+    // by nature and never authored); lcm composes from it.
+    //
+    // R7 MIGRATION POLICY: when the rewrite arm cannot induce a family
+    // (no rewrite target for it), the drill FALLS BACK to the DSL path —
+    // conversions, geometry, and science families keep compiling compiled
+    // rules until their decks land. The engine owns what it owns; the DSL
+    // stays the computing path for everything else.
+    if (teacher.rewriteInductionEnabled()) {
+      const induced = induceRewriteRules(teacher, concept, drill, trainSet, testSet, chance);
+      if (induced !== null) {
+        verdict = 'rule-induced';
+        ruleTestAccuracy = induced.testAccuracy;
+        ruleNodes = induced.nodes;
+        events.push({
+          role: 'system',
+          text: `induced a rewrite rule for ${concept.word} (${induced.nodes} bits, held-out ${Math.round(induced.testAccuracy * 100)}%)`,
+          meta: 'drill-induced'
+        });
+      } else {
+        const fallback = induceCompiledRule(teacher, concept, drill, trainSet, testSet, chance);
+        if (fallback !== null) {
+          verdict = 'rule-induced';
+          ruleTestAccuracy = fallback.testAccuracy;
+          ruleNodes = fallback.nodes;
+          events.push({
+            role: 'system',
+            text: `induced a compiled rule for ${concept.word} (${fallback.nodes} nodes, held-out ${Math.round(fallback.testAccuracy * 100)}%)`,
+            meta: 'drill-induced'
+          });
+        } else {
+          ruleQuestion = ruleQuestionFor(concept);
+          teacher.recordGap(ruleQuestion);
+          // R11: the question is OPEN — a procedure answer is awaited.
+          teacher.notePendingRuleQuestion(concept.word, drill);
+          events.push({ role: 'observer', text: ruleQuestion, meta: 'curious' });
+        }
+      }
     } else {
-      ruleQuestion = ruleQuestionFor(concept);
-      teacher.recordGap(ruleQuestion);
-      events.push({ role: 'observer', text: ruleQuestion, meta: 'curious' });
+      const induced = induceCompiledRule(teacher, concept, drill, trainSet, testSet, chance);
+      if (induced !== null) {
+        verdict = 'rule-induced';
+        ruleTestAccuracy = induced.testAccuracy;
+        ruleNodes = induced.nodes;
+        events.push({
+          role: 'system',
+          text: `induced an executable rule for ${concept.word} (${induced.nodes} nodes, held-out ${Math.round(induced.testAccuracy * 100)}%)`,
+          meta: 'drill-induced'
+        });
+      } else {
+        ruleQuestion = ruleQuestionFor(concept);
+        teacher.recordGap(ruleQuestion);
+        // R11: the question is OPEN — a procedure answer is awaited.
+        teacher.notePendingRuleQuestion(concept.word, drill);
+        events.push({ role: 'observer', text: ruleQuestion, meta: 'curious' });
+      }
     }
   }
 
@@ -394,6 +444,171 @@ function instancesFor(exercises: readonly Exercise[]): TrainInstance[] | null {
     });
   }
   return instances;
+}
+
+/**
+ * R4 — the rewrite-induction arm of the drill loop. A memorized drill
+ * synthesizes a RECURSIVE rewrite rule from the taught instances (the
+ * flagship: Euclidean gcd), gated by the same MDL + held-out discipline
+ * the DSL path uses. Returns the induced rule's measurement, or null when
+ * the family has no rule to induce (no parser, no generalizing program).
+ */
+function induceRewriteRules(
+  teacher: TeacherAgent,
+  concept: TechnicalConcept,
+  drill: string,
+  trainSet: readonly Exercise[],
+  testSet: readonly Exercise[],
+  chance: number
+): { nodes: number; testAccuracy: number } | null {
+  const target = rewriteTargetFor(drill);
+  if (target === null) return null;
+  const train = rewriteInstancesFor(trainSet, target);
+  const test = rewriteInstancesFor(testSet, target);
+  if (train === null || test === null || train.length === 0 || test.length === 0) return null;
+  const instanceBits = train.reduce((sum, instance) => sum + termBits(instance.answer), 0);
+  const induced = induceRuleSet(teacher.rewriteRuleStore(), target.name, train, {
+    instanceBits,
+    baseline: chance,
+    margin: INDUCTION_MARGIN,
+    minHits: MIN_INDUCTION_HITS,
+    schema: target.schema
+  });
+  if (induced === null) return null;
+  // REVIEW FIX (Med4): held-out validation must run on the SAME budget
+  // the schema's own simulations require — the search schema raises its
+  // fuel to >= 60,000 (sqrt(324) needs ~5,400 steps), while the default
+  // 5,000 would exhaust every held-out instance >= 324 and understate
+  // generalization.
+  if (
+    !validateHeldOut(
+      teacher.rewriteRuleStore(),
+      induced,
+      test,
+      chance,
+      INDUCTION_MARGIN,
+      MIN_INDUCTION_HITS,
+      target.schema === 'search' ? 60_000 : INDUCTION_FUEL
+    )
+  ) {
+    return null;
+  }
+  // REVIEW FIX (M4): a rule the world STOPPED is never re-registered by
+  // induction — the deterministic ids would resurrect it with its denials.
+  // The rule question path takes over; only the human or chaperone may
+  // re-litigate a stopped procedure.
+  const store = teacher.rewriteRuleStore();
+  const stoppedIncumbent = store
+    .all()
+    .find((entry) => entry.name === target.name && entry.origin !== 'authored' && store.isStopped(entry.id));
+  if (stoppedIncumbent !== undefined) return null;
+  teacher.registerLearnedRules(induced);
+  const nodes = induced.reduce((sum, rule) => sum + rule.bits, 0);
+  const correct = test.filter((instance) =>
+    testInstancesReduceTo(teacher.rewriteRuleStore(), target.name, instance, induced)
+  ).length;
+  return { nodes, testAccuracy: correct / Math.max(1, test.length) };
+}
+
+/** How a drill family's induction is targeted: the rewrite symbol, the
+ *  recursion schema to synthesize it under, and how its prompts lift to
+ *  terms (not every family lifts as plain nat numerals — place-value needs
+ *  the digit LIST and the digit's positional index). */
+export interface RewriteTarget {
+  name: string;
+  schema: 'measure' | 'accessor' | 'search' | 'scalar';
+  lift(exercise: Exercise): InductionInstance | null;
+}
+
+export function rewriteTargetFor(drill: string): RewriteTarget | null {
+  if (drill === 'gcf') {
+    return {
+      name: 'nat.gcd',
+      schema: 'measure',
+      lift: (exercise) => numLift(exercise, drill, (numbers) => numbers.map((n) => natFromDecimal(n)))
+    };
+  }
+  if (drill === 'square-root') {
+    // The drill asks the root of a perfect square; the induced search
+    // derives the floor root, which IS the answer for squares.
+    return {
+      name: 'nat.sqrt',
+      schema: 'search',
+      lift: (exercise) => numLift(exercise, drill, (numbers) => numbers.map((n) => natFromDecimal(n)))
+    };
+  }
+  if (drill === 'place-value') {
+    return {
+      name: 'dig.placeVal',
+      schema: 'accessor',
+      lift: (exercise) => {
+        const args = matchArgs(drill, exercise.prompt);
+        if (args === null) return null;
+        const value = Number(args[0]);
+        const digit = Number(args[1]);
+        if (!Number.isFinite(value) || !Number.isFinite(digit)) return null;
+        const digits = String(value);
+        const left = digits.indexOf(String(digit));
+        if (left === -1) return null;
+        const index = digits.length - 1 - left;
+        return {
+          args: [digitsFromDecimal(value), natFromDecimal(index)],
+          answer: natFromDecimal(Number(exercise.answer))
+        };
+      }
+    };
+  }
+  // R13: the integer-ratio conversion families — the constant multiplier
+  // is learned from the instances (convert-time: ×60, mass: ×1000,
+  // volume: ×1000). convert-length stays on the DSL path: its metric
+  // pairs have decimal factors that need a rational layer, not nat rules.
+  if (drill === 'convert-time' || drill === 'convert-mass' || drill === 'convert-volume') {
+    return {
+      name: `conv.${drill}`,
+      schema: 'scalar',
+      lift: (exercise) => numLift(exercise, drill, (numbers) => numbers.map((n) => natFromDecimal(n)))
+    };
+  }
+  return null;
+}
+
+function numLift(
+  exercise: Exercise,
+  drill: string,
+  encode: (numbers: number[]) => Term[]
+): InductionInstance | null {
+  const args = matchArgs(drill, exercise.prompt);
+  if (args === null) return null;
+  const numbers = args.map((arg) => (typeof arg === 'number' ? arg : NaN));
+  if (numbers.some((n) => Number.isNaN(n))) return null;
+  const answer = Number(exercise.answer);
+  if (!Number.isInteger(answer)) return null;
+  return { args: encode(numbers), answer: natFromDecimal(answer) };
+}
+
+/** Numeric drill instances as rewrite terms, per the family's target. */
+function rewriteInstancesFor(exercises: readonly Exercise[], target: RewriteTarget): InductionInstance[] | null {
+  const instances: InductionInstance[] = [];
+  for (const exercise of exercises) {
+    const instance = target.lift(exercise);
+    if (instance === null) return null;
+    instances.push(instance);
+  }
+  return instances;
+}
+
+/** Reduce each test instance with the induced rules registered, exactly as
+ *  the held-out validator does — the drill's measurement of generalization. */
+function testInstancesReduceTo(
+  store: RuleStore,
+  name: string,
+  instance: InductionInstance,
+  induced: readonly RewriteRule[]
+): boolean {
+  const probe = new RuleStore([...store.all(), ...induced], store.allDenials());
+  const { outcome } = reduce(probe, tSym(name, instance.args));
+  if (outcome.status !== 'normal') return false;
+  return termToString(outcome.term) === termToString(instance.answer);
 }
 
 /** Canonical value equality (numbers trimmed to the verifier's precision). */

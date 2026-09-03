@@ -70,6 +70,8 @@ export interface GroundedComposition {
 export interface FrameOptions {
   negations?: readonly Negation[];
   cost?: TokenCostModel | null;
+  /** R4b: ADMITTED composition rules beyond the seed table. */
+  extraRules?: readonly import('./composition').CompositionRule[];
 }
 
 const article = (word: string): string => (/^[aeiou]/.test(word) ? 'an' : 'a');
@@ -227,7 +229,7 @@ function composeFromRefs(
     sentences += frameSentences;
   }
   const sentence = picked.map((frame) => frame.text).join(' ').replace(/\s+([.!?])/g, '$1');
-  const verdict = criticize(sentence, relations, negations, { cost: options.cost ?? null });
+  const verdict = criticize(sentence, relations, negations, { cost: options.cost ?? null, extraRules: options.extraRules });
   return {
     sentence,
     edges: verdict.grounded ? verdict.edges : [],
@@ -255,7 +257,7 @@ export function criticize(
   sentence: string,
   relations: readonly Relation[],
   negations: readonly Negation[],
-  options: { cost?: TokenCostModel | null } = {}
+  options: { cost?: TokenCostModel | null; extraRules?: readonly import('./composition').CompositionRule[] } = {}
 ): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }>; hedged: boolean; hedges: HedgeWord[] } {
   const subject = extractSubject(sentence);
   if (subject === null) return { grounded: false, unbacked: [sentence], edges: [], hedged: false, hedges: [] };
@@ -292,7 +294,8 @@ export function criticize(
     // provenance names real stored edges.
     const composed = composeClaim(relations, claim.subject, claim.predicate, claim.object, {
       negations,
-      cost: options.cost ?? null
+      cost: options.cost ?? null,
+      extraRules: options.extraRules
     });
     if (composed !== null) {
       for (const hop of composed.hops) {

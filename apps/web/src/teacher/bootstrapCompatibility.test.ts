@@ -73,6 +73,29 @@ describe('bootstrap vocabulary compatibility', () => {
     await expect(importRecord(target, legacy)).rejects.toThrow(/regenerate/);
   });
 
+  it('R7: v2 records (pre-rewrite-rules) import unchanged — the v3 fields are optional', async () => {
+    const source = await teacher();
+    source.teach('apple');
+    const current = source.exportBootstrap('en-20000');
+    // A v2 record: same vocabulary scheme, no rewrite-rule fields. The app
+    // ships a v2 public/bootstrap.json — R0–R6 bumped the version constant
+    // to 3, and the import MUST keep accepting the shipped record (the
+    // loader regression this test pins: it was caught by probing the real
+    // record after the bump).
+    const v2 = { ...current, version: 2 } as unknown as BootstrapRecord;
+    delete (v2 as Partial<BootstrapRecord>).rewriteRules;
+    delete (v2 as Partial<BootstrapRecord>).rewriteDenials;
+    delete (v2 as Partial<BootstrapRecord>).ruleResolutions;
+
+    const target = await teacher();
+    expect(target.importBootstrap(v2).restored).toBe(1);
+    expect(assertImportable(v2)).toBeUndefined();
+
+    // And v4 (a record from the future) is still refused loudly.
+    const future = { ...v2, version: 4 } as unknown as BootstrapRecord;
+    expect(() => target.importBootstrap(future)).toThrow(/incompatible/);
+  });
+
   it('the deployed-record guard rejects a vocabulary-fingerprint mismatch loudly', async () => {
     const source = await teacher();
     source.teach('apple');

@@ -123,7 +123,7 @@ async function runSimulation(curriculumEnabled: boolean): Promise<SimResult> {
       // Predicted retention at review time — read BEFORE grading, while the
       // stability still describes the interval that just elapsed.
       const sinceReview = (now - (lastReviewAt.get(word) ?? start)) / DAY;
-      const predicted = retentionProbability(state.stability, state.difficulty, sinceReview);
+      const predicted = retentionProbability(state.stability, sinceReview);
       if (isHard) {
         hardReviewRetention.push(predicted);
         if (predicted < 0.7) hardLateReviews += 1;

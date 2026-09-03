@@ -38,6 +38,7 @@ export type OperatorResult =
   | { kind: 'requires'; subject: string; requirement: string; via: string | null; answer: string; score?: number }
   | { kind: 'composed'; subject: string; predicate: RelationPredicate; object: string; hops: Array<{ subject: string; predicate: RelationPredicate; object: string }>; support: number; answer: string }
   | { kind: 'compiled-rule'; concept: string; drill: string; answer: string }
+  | { kind: 'rewrite'; ruleIds: string[]; steps: number; answer: string; trace: Array<{ ruleId: string; before: string; after: string }> }
   | { kind: 'self-knowledge'; word: string; answer: string }
   | null;
 
@@ -69,6 +70,9 @@ export interface OperatorContext {
   /** The MDL frequency prior for composition gating (P10). When omitted,
    *  the composed fallback derives one from the relation graph. */
   compositionCost?: TokenCostModel;
+  /** R4b: ADMITTED composition rules beyond the seed table — the sequences
+   *  the world accepted, gated by the learned store. */
+  extraCompositionRules?: readonly import('./composition').CompositionRule[];
   // ── Distributed-vector recall (P1 — graded fallback beneath the graph)
   /** The unbind+cleanup score of one object under (subject, predicate). */
   relationalScore?(subject: string, predicate: string, object: string): number;
@@ -1191,7 +1195,8 @@ function composedClosedAnswer(text: string, ctx: OperatorContext): OperatorResul
         const negation = ctx.negationOf?.(s, p, o);
         return negation !== null && negation !== undefined;
       },
-      cost: ctx.compositionCost ?? null
+      cost: ctx.compositionCost ?? null,
+      extraRules: ctx.extraCompositionRules
     });
     if (claim === null) continue;
     return {

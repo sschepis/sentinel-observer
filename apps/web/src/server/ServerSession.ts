@@ -132,7 +132,15 @@ export class ServerSession {
       this.store,
       1,
       undefined,
-      this.options.compositionSeed !== 0 ? this.options.compositionSeed : undefined
+      this.options.compositionSeed !== 0 ? this.options.compositionSeed : undefined,
+      undefined,
+      undefined,
+      undefined,
+      // R7: rules mode is the shipped behavior. On the server the flag is
+      // inert today (no drills run server-side; chat 2.7 derivation is
+      // unconditional) — kept true for parity with the browser and for
+      // future drill-driven server maintenance.
+      true
     );
     this.teacher = teacher;
 

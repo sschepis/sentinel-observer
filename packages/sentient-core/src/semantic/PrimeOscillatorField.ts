@@ -21,6 +21,7 @@ import type { Initializable } from '../common/types';
 import { SemanticKernel, getSharedKernel, type TAKuramotoModel } from './tinyaleph';
 import { clampRange, NonFiniteValueError, requireAllFinite, requireFinite, safeDivide } from './numeric';
 import { ConfigurationLimitError, MAX_PRIME_COUNT, NotInitializedError } from './errors';
+import { HebbianCouplingStore, normalizeHebbianOptions, type HebbianOptions, type HebbianSnapshot } from './HebbianCoupling';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -83,6 +84,15 @@ export interface PrimeOscillatorFieldOptions {
    * 0 (default), or any k at/above the oscillator count, = off.
    */
   winnerTakeAll?: number;
+
+  /**
+   * H6 (Phase 23, EXPERIMENT — default off): Hebbian coupling. Co-excited
+   * winners of coherent MOMENTS potentiate a sparse, bounded, decaying
+   * pairwise coupling that scales the phase-sweep weight — what agrees
+   * together, wires together. At `undefined`/`enabled: false` the field is
+   * bit-identical to the control (the store is never even allocated).
+   */
+  hebbian?: HebbianOptions;
 }
 
 /** The competition configuration actually in force (see the options above). */
@@ -391,7 +401,10 @@ function requireInRange(label: string, value: number, min: number, max: number):
 
 export class PrimeOscillatorField implements Initializable {
   private readonly kernel: SemanticKernel;
-  private readonly options: Required<Omit<PrimeOscillatorFieldOptions, 'kernel'>>;
+  private readonly options: Required<Omit<PrimeOscillatorFieldOptions, 'kernel' | 'hebbian'>>;
+  /** H6: the learned coupling store — null unless the experiment flag is on
+   *  (at null the tick path is untouched: bit-identical control). */
+  private readonly hebbian: HebbianCouplingStore | null;
 
   private model: TAKuramotoModel | null = null;
   private primeList: number[] = [];
@@ -429,6 +442,8 @@ export class PrimeOscillatorField implements Initializable {
         )
       )
     };
+    const hebbianConfig = normalizeHebbianOptions(options.hebbian);
+    this.hebbian = hebbianConfig.enabled ? new HebbianCouplingStore(hebbianConfig) : null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -554,7 +569,8 @@ export class PrimeOscillatorField implements Initializable {
       throw new Error(`PrimeOscillatorField.tick requires a positive finite dt, got ${String(dt)}`);
     }
 
-    if (this.options.inhibition > 0) this.tickInhibited(dt);
+    if (this.hebbian !== null) this.tickHebbian(dt);
+    else if (this.options.inhibition > 0) this.tickInhibited(dt);
     else bank.tick(dt);
 
     if (this.options.decayRate > 0) bank.decayAll(this.options.decayRate, dt);
@@ -623,6 +639,145 @@ export class PrimeOscillatorField implements Initializable {
     }
 
     for (const osc of oscillators) osc.decay(TA_MODEL_DECAY_RATE, dt);
+  }
+
+  /**
+   * H6 (Phase 23): the HEBBIAN phase sweep — the pairwise weight scaled by
+   * the LEARNED coupling:
+   *
+   *     w_ij = base_ij · (1 + K_ij)
+   *
+   * row-normalized by mean weight so the `K·Σ/N` energy scaling stays
+   * stable. FAST PATH (no inhibition — the production shape): a Jacobi
+   * mean-field sweep — the uniform part collapses to the Kuramoto identity
+   * `Σ_j sin(φ_j − φ_i) = ΣSin·cos φ_i − ΣCos·sin φ_i` in O(N), and the
+   * learned part iterates only the SPARSE row (≤ neighbors entries), so the
+   * experiment costs O(N + N·k̄) instead of O(N²). With inhibition on (a
+   * rare combination) the dense sweep below carries the group weights.
+   */
+  private tickHebbian(dt: number): void {
+    if (this.options.inhibition > 0) {
+      this.tickHebbianDense(dt);
+      return;
+    }
+    const oscillators = this.bank().oscillators;
+    const n = oscillators.length;
+    if (n === 0) return;
+
+    const k = this.bank().K;
+    const store = this.hebbian;
+
+    const phases = new Float64Array(n);
+    for (let i = 0; i < n; i++) phases[i] = oscillators[i].phase;
+    let sumSin = 0;
+    let sumCos = 0;
+    for (let i = 0; i < n; i++) {
+      sumSin += Math.sin(phases[i]);
+      sumCos += Math.cos(phases[i]);
+    }
+
+    for (let i = 0; i < n; i++) {
+      const phase = phases[i];
+      const sinI = Math.sin(phase);
+      const cosI = Math.cos(phase);
+      // Uniform part: Σ_{j≠i} sin(φ_j − φ_i) (the j = i term is zero).
+      let sum = sumSin * cosI - sumCos * sinI;
+      let mass = n - 1;
+      const row = store?.row(i);
+      if (row !== undefined) {
+        for (const [j, kij] of row) {
+          sum += kij * Math.sin(phases[j] - phase);
+          mass += kij;
+        }
+      }
+      const rowMean = Math.max(0.1, mass / (n - 1));
+      oscillators[i].tick(dt, ((k * sum) / (n * rowMean)) * dt);
+    }
+
+    for (const osc of oscillators) osc.decay(TA_MODEL_DECAY_RATE, dt);
+  }
+
+  /** The dense Hebbian sweep (inhibition × hebbian — the rare combination):
+   *  the inhibited sweep with each pair's weight scaled by (1 + K_ij). */
+  private tickHebbianDense(dt: number): void {
+    const oscillators = this.bank().oscillators;
+    const n = oscillators.length;
+    if (n === 0) return;
+
+    const k = this.bank().K;
+    const inhibition = this.options.inhibition;
+    const crossWeight = 1 - 2 * inhibition;
+    const threshold = this.options.activeThreshold;
+    const store = this.hebbian;
+
+    const active = new Array<boolean>(n);
+    for (let i = 0; i < n; i++) active[i] = oscillators[i].amplitude >= threshold;
+
+    for (let i = 0; i < n; i++) {
+      const osc = oscillators[i];
+      const phase = osc.phase;
+      const group = active[i];
+      const row = store?.row(i);
+      let sum = 0;
+      let weightMass = 0;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const base = active[j] === group ? 1 : crossWeight;
+        const weight = base * (1 + (row?.get(j) ?? 0));
+        sum += weight * Math.sin(oscillators[j].phase - phase);
+        weightMass += Math.abs(weight);
+      }
+      const rowMean = Math.max(0.1, weightMass / (n - 1));
+      osc.tick(dt, ((k * sum) / (n * rowMean)) * dt);
+    }
+
+    for (const osc of oscillators) osc.decay(TA_MODEL_DECAY_RATE, dt);
+  }
+
+  /**
+   * H6: potentiate the co-excited winners of a coherent MOMENT — called by
+   * the observer when a moment fires (never on ordinary ticks). The top
+   * `maxWinners` active oscillators by amplitude wire together, scaled by
+   * their amplitudes and the moment's coherence. No-op when the flag is off.
+   */
+  potentiateHebbian(coherence: number, maxWinners = 12): number {
+    if (this.hebbian === null) return 0;
+    const oscillators = this.bank().oscillators;
+    const threshold = this.options.activeThreshold;
+    const winners: Array<{ index: number; amplitude: number }> = [];
+    for (let i = 0; i < oscillators.length; i += 1) {
+      const amplitude = oscillators[i].amplitude;
+      if (amplitude >= threshold) winners.push({ index: i, amplitude });
+    }
+    winners.sort((a, b) => b.amplitude - a.amplitude || a.index - b.index);
+    const top = winners.slice(0, Math.max(2, maxWinners));
+    if (top.length < 2) return 0;
+    this.hebbian.potentiate(top, coherence, this.elapsed);
+    return top.length;
+  }
+
+  /** H6: the learned coupling of a prime pair (0 unlearned/off) — benches. */
+  hebbianCouplingOf(primeA: number, primeB: number): number {
+    if (this.hebbian === null) return 0;
+    const i = this.primeIndex.get(primeA);
+    const j = this.primeIndex.get(primeB);
+    if (i === undefined || j === undefined) return 0;
+    return this.hebbian.get(i, j);
+  }
+
+  /** H6: learned-pair count (benches/telemetry). */
+  hebbianPairCount(): number {
+    return this.hebbian?.pairCount() ?? 0;
+  }
+
+  /** H6: serialize the learned coupling (compact triplets). */
+  hebbianSnapshot(): HebbianSnapshot | null {
+    return this.hebbian?.snapshot() ?? null;
+  }
+
+  /** H6: restore a serialized coupling store (no-op when the flag is off). */
+  restoreHebbian(snapshot: HebbianSnapshot | null | undefined): void {
+    this.hebbian?.restore(snapshot);
   }
 
   /**

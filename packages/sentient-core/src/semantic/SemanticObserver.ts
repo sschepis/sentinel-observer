@@ -43,6 +43,7 @@ import {
   type PhaseClusterMetrics,
   type PrimeOscillatorSnapshot
 } from './PrimeOscillatorField';
+import type { HebbianOptions } from './HebbianCoupling';
 import { SedenionMemoryField, SMF_DIMENSION, MAX_SMF_WIDTH } from './SedenionMemoryField';
 import { SMF_AXES, type SMFAxisIndex } from '../common/types';
 import { HolographicMemory } from './HolographicMemory';
@@ -282,6 +283,21 @@ export interface SemanticObserverOptions {
   // the sketch (alpha = 1) instead of blending, so every lesson's sketch is
   // imprinted from its own moment. Default false = the honest control.
   smfMomentImprint?: boolean;
+  /**
+   * L1b (Phase 18.1): how coherence scales the SMF imprint rate.
+   *   · 'floor' (default): alpha = lr·(0.5 + 0.5·coherence) — the legacy
+   *     curve; even a fully incoherent moment imprints at half rate.
+   *   · 'linear': alpha = lr·coherence — an incoherent moment barely
+   *     imprints; junk perturbations no longer overwrite the orientation.
+   */
+  smfImprintWeighting?: 'floor' | 'linear';
+  /**
+   * H6 (Phase 23, EXPERIMENT — default off): Hebbian coupling in the
+   * oscillator field. Coherent moments potentiate a sparse, bounded,
+   * decaying pairwise coupling between their co-excited winners. See
+   * PrimeOscillatorFieldOptions.hebbian.
+   */
+  hebbian?: HebbianOptions;
 }
 
 /** A coherence-driven moment. */
@@ -377,6 +393,7 @@ export class SemanticObserver implements Initializable {
         | 'smfProjectionSeed'
         | 'smfProjectionDensity'
         | 'clusterCriterion'
+        | 'hebbian'
       >
     >,
     never
@@ -479,6 +496,7 @@ export class SemanticObserver implements Initializable {
       inhibition: options.inhibition ?? 0,
       winnerTakeAll: options.winnerTakeAll ?? 0,
       smfMomentImprint: options.smfMomentImprint ?? false,
+      smfImprintWeighting: options.smfImprintWeighting ?? 'floor',
       safety: options.safety
     };
 
@@ -556,6 +574,9 @@ export class SemanticObserver implements Initializable {
       activationBudget: this.options.activationBudget,
       inhibition: this.options.inhibition,
       winnerTakeAll: this.options.winnerTakeAll,
+      // H6 (Phase 23): the Hebbian experiment flag rides the raw options —
+      // undefined/off keeps the field bit-identical to the control.
+      hebbian: options.hebbian,
       kernel: this.kernel
     });
 
@@ -814,7 +835,9 @@ export class SemanticObserver implements Initializable {
     const projection = this.smf.clone();
     projection.updateFromPrimeActivity(
       this.field.getState(),
-      this.smfNeedsMomentImprint ? { learningRate: 1 } : undefined
+      this.smfNeedsMomentImprint
+        ? { learningRate: 1, coherenceWeighting: this.options.smfImprintWeighting }
+        : { coherenceWeighting: this.options.smfImprintWeighting }
     );
     const touched: string[] = [];
     for (let i = 0; i < projection.width; i++) {
@@ -1004,10 +1027,13 @@ export class SemanticObserver implements Initializable {
       //    (learningRate 1 => alpha = 1 at full coherence) instead of
       //    EMA-blending, so each lesson's sketch is imprinted from its own
       //    moment rather than the trajectory accumulated across the
-      //    curriculum (the control keeps the EMA: alpha ≈ 0.2).
+      //    curriculum (the control keeps the EMA: alpha ≈ 0.2). L1b: the
+      //    coherence weighting of the blend rate follows smfImprintWeighting.
       this.smf.updateFromPrimeActivity(
         state,
-        this.smfNeedsMomentImprint ? { learningRate: 1 } : undefined
+        this.smfNeedsMomentImprint
+          ? { learningRate: 1, coherenceWeighting: this.options.smfImprintWeighting }
+          : { coherenceWeighting: this.options.smfImprintWeighting }
       );
       this.smfNeedsMomentImprint = false;
 
@@ -1058,6 +1084,10 @@ export class SemanticObserver implements Initializable {
             phaseBins: this.clusterCriterion.phaseBins
           })
         };
+        // H6 (Phase 23, experiment-gated): a coherent MOMENT wires its
+        // co-excited winners together — what agrees together, wires
+        // together. No-op unless the hebbian flag is on.
+        this.field.potentiateHebbian(metrics.coherence);
         this.momentEvents.next(moment);
       }
 

@@ -453,7 +453,15 @@ export const GENERATORS: Record<string, Generator> = {
     return numeric(c, 'lcm', `What is the least common multiple of ${a} and ${b}?`, (a * b) / gcd(a, b));
   },
   'place-value': (rng, c) => {
-    const digits = [between(rng, 1, 9), between(rng, 0, 9), between(rng, 0, 9)];
+    // R12: the prompt names a digit VALUE ("the digit 7"), so the three
+    // digits must be DISTINCT — a repeated digit (707) would make the
+    // question ambiguous and unanswerable by any parser.
+    const hundreds = between(rng, 1, 9);
+    const remaining = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter((digit) => digit !== hundreds);
+    const tensIndex = between(rng, 0, remaining.length - 1);
+    const tens = remaining.splice(tensIndex, 1)[0];
+    const ones = remaining[between(rng, 0, remaining.length - 1)];
+    const digits = [hundreds, tens, ones];
     const position = between(rng, 0, 2);
     const value = Number(digits.join(''));
     const weight = [100, 10, 1][position];
@@ -814,13 +822,15 @@ const CLUSTERED_ANSWER_SPACE: Record<string, number> = {
   lcm: 112,
   'square-root': 19,
   temperature: 121,
-  rounding: 101
+  rounding: 101,
+  'place-value': 28,
+  'convert-time': 30,
+  'convert-mass': 50,
+  'convert-volume': 50,
+  'solve-x-add': 30,
+  'solve-x-mul': 11
 };
 
-/**
- * Rough probability of a correct answer by guessing. An accuracy at or below
- * this level on unseen exercises means nothing was induced.
- */
 export function chanceLevel(drill: string): number {
   if (BINARY_DRILLS.has(drill)) return 0.5;
   const space = CLUSTERED_ANSWER_SPACE[drill];

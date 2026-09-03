@@ -8,9 +8,9 @@ import {
   normalizeModelSettings,
   loadModelSettings,
   saveModelSettings,
-  halfLivesFor
+  dueHorizonsFor
 } from './modelSettings';
-import { applyTimeDecay } from '../teacher/TeacherAgent';
+import { applyRetentionDecay, retentionProbability } from '../teacher/TeacherAgent';
 
 describe('model settings', () => {
   beforeEach(() => localStorage.clear());
@@ -56,60 +56,63 @@ describe('model settings', () => {
     expect(settings.reviewThreshold).toBe(DEFAULT_MODEL_SETTINGS.reviewThreshold);
   });
 
-  it('reports the half-lives a rate produces', () => {
-    expect(halfLivesFor(1)).toEqual({ fresh: 7, practised: 30, consolidated: 120 });
-    expect(halfLivesFor(2)).toEqual({ fresh: 14, practised: 60, consolidated: 240 });
+  it('reports the due horizons a rate produces (FSRS: interval ≈ stability × rate)', () => {
+    expect(dueHorizonsFor(1)).toEqual({ fresh: 1, practised: 5, consolidated: 30 });
+    expect(dueHorizonsFor(2)).toEqual({ fresh: 2, practised: 10, consolidated: 60 });
   });
 });
 
-describe('the forgetting rate actually changes forgetting', () => {
+describe('the forgetting rate actually changes forgetting (L3: the one FSRS law)', () => {
   const WEEK = 7 * 24 * 60 * 60 * 1000;
-  const traceAt = (strength: number) => ({
+  const traceAt = (): { id: string; lastAccessAt: number; strength: number } => ({
+    id: 'w',
     lastAccessAt: 0,
-    strength,
-    accessCount: 0,
-    consolidated: false
+    strength: 1
+  });
+  const params = (stability: number) => () => ({ stability, difficulty: 5 });
+
+  it('sets strength to the model prediction after a week idle (fresh word, S = 1)', () => {
+    const trace = traceAt();
+    applyRetentionDecay([trace], params(1), WEEK, 1);
+    expect(trace.strength).toBeCloseTo(retentionProbability(1, 7), 5);
+    expect(trace.strength).toBeLessThan(0.7); // R(1, 7) ≈ 0.615 — past due
   });
 
-  it('halves an unpractised memory over its half-life at the default rate', () => {
-    const trace = traceAt(1);
-    applyTimeDecay([trace], WEEK, 1);
-    expect(trace.strength).toBeCloseTo(0.5, 5);
-  });
-
-  it('forgets more slowly at a higher rate', () => {
-    const fast = traceAt(1);
-    const slow = traceAt(1);
-    applyTimeDecay([fast], WEEK, 1);
-    applyTimeDecay([slow], WEEK, 2);
+  it('forgets more slowly at a higher rate (rate scales stability)', () => {
+    const fast = traceAt();
+    const slow = traceAt();
+    applyRetentionDecay([fast], params(1), WEEK, 1);
+    applyRetentionDecay([slow], params(1), WEEK, 2);
     expect(slow.strength).toBeGreaterThan(fast.strength);
-    expect(slow.strength).toBeCloseTo(Math.SQRT1_2, 5);
+    expect(slow.strength).toBeCloseTo(retentionProbability(2, 7), 5);
   });
 
   it('forgets faster at a lower rate', () => {
-    const trace = traceAt(1);
-    applyTimeDecay([trace], WEEK, 0.5);
-    expect(trace.strength).toBeCloseTo(0.25, 5);
+    const trace = traceAt();
+    applyRetentionDecay([trace], params(1), WEEK, 0.5);
+    expect(trace.strength).toBeCloseTo(retentionProbability(0.5, 7), 5);
   });
 
-  it('protects consolidated memories regardless of rate', () => {
-    const consolidated = { lastAccessAt: 0, strength: 1, accessCount: 5, consolidated: true };
-    const fresh = traceAt(1);
-    applyTimeDecay([consolidated], WEEK, 1);
-    applyTimeDecay([fresh], WEEK, 1);
+  it('protects consolidated memories regardless of rate (stability carries the protection)', () => {
+    const consolidated = traceAt();
+    const fresh = traceAt();
+    applyRetentionDecay([consolidated], params(30), WEEK, 1);
+    applyRetentionDecay([fresh], params(1), WEEK, 1);
     expect(consolidated.strength).toBeGreaterThan(fresh.strength);
+    expect(consolidated.strength).toBeGreaterThan(0.9);
   });
 
-  it('never forgets anything over a sub-minute gap', () => {
-    const trace = traceAt(1);
-    applyTimeDecay([trace], 30 * 1000, 0.25);
-    expect(trace.strength).toBe(1);
+  it('barely forgets over a sub-minute gap', () => {
+    const trace = { id: 'w', lastAccessAt: Date.now() - 30 * 1000, strength: 1 };
+    applyRetentionDecay([trace], params(1), Date.now(), 0.25);
+    expect(trace.strength).toBeGreaterThan(0.999);
   });
 
   it('treats a nonsensical rate as the fastest allowed, not as division by zero', () => {
-    const trace = traceAt(1);
-    applyTimeDecay([trace], WEEK, 0);
+    const trace = traceAt();
+    applyRetentionDecay([trace], params(1), WEEK, 0);
     expect(Number.isFinite(trace.strength)).toBe(true);
     expect(trace.strength).toBeLessThan(1);
+    expect(trace.strength).toBeGreaterThan(0);
   });
 });

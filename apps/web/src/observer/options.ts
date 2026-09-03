@@ -25,6 +25,12 @@ export const OBSERVER_OPTIONS = {
   // 99.8% top-1 at 20k vs the fold's 99.3%, at ~1.1 KB/trace with q8
   // compact serialization (docs/SCALING.md §7).
   smfWidth: 128,
+  // L1b (Phase 18.1): the imprint rate is linear in coherence
+  // (alpha = lr·coherence) — an incoherent moment barely imprints, matching
+  // the architecture's own claim. The legacy 'floor' curve imprinted junk
+  // perturbations at half rate. Gate (smfImprintWeighting.test.ts): recall
+  // 100% = floor, exact 10/10 = floor, fuzz FP 0 = floor.
+  smfImprintWeighting: 'linear' as const,
   vocabulary: semanticVocabulary(
     [...ACTIVE_DECK, ...CONVERSATION_CUE_TOKENS.map((word) => ({ word }))],
     PRIME_SPACE

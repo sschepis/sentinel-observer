@@ -163,6 +163,16 @@ export interface Relation {
    * the edge bump it; wrong grades weaken it. Absent = 1.
    */
   strength?: number;
+  /**
+   * M5 (Phase 22): the edge's tier. 'asserted' (or absent — every legacy
+   * edge) is the precision-first graph: operators answer it, walks chain it.
+   * 'hypothesis' is the PROPOSER tier: a loose extraction or unvalidated
+   * second-pass edge that may only ever be spoken HEDGED, never chained,
+   * and is PROMOTED to asserted purely by corroboration (a second
+   * independent source class or a strong world grade citing it). Precision
+   * lives in the promotion gate, not in the proposer.
+   */
+  tier?: 'asserted' | 'hypothesis';
 }
 
 /** A confirmed-false claim (P8): "golf is not a bird" — evidence-backed No. */

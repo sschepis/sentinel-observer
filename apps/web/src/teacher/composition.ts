@@ -108,6 +108,9 @@ export interface CompositionOptions {
   cost?: TokenCostModel | null;
   /** Maximum chain length in edges (the walk is breadth-bounded). */
   maxDepth?: number;
+  /** R4b: ADMITTED composition rules beyond the fixed seed table — the
+   *  sequences the world accepted, gated by the learned store. */
+  extraRules?: readonly CompositionRule[];
 }
 
 /**
@@ -120,11 +123,18 @@ export const COMPOSITION_STEP_COST = 2;
 /** The rule matching a predicate sequence, or null when the sequence is
  *  unsound. Consecutive is-a hops collapse to one (transitivity is itself
  *  the [is-a, is-a] rule, applied twice), so a chain through a multi-level
- *  taxonomy still matches the 3-hop pattern. */
-export function isSoundSequence(predicates: readonly RelationPredicate[]): CompositionRule | null {
-  const exact = COMPOSITION_RULES.find(
-    (rule) => rule.hops.length === predicates.length && rule.hops.every((p, i) => p === predicates[i])
-  );
+ *  taxonomy still matches the 3-hop pattern. `extraRules` (R4b) extends the
+ *  table with sequences the world accepted — the fixed table stays the
+ *  evergreen floor. */
+export function isSoundSequence(
+  predicates: readonly RelationPredicate[],
+  extraRules: readonly CompositionRule[] = []
+): CompositionRule | null {
+  const match = (rules: readonly CompositionRule[], hops: readonly RelationPredicate[]): CompositionRule | undefined =>
+    rules.find(
+      (rule) => rule.hops.length === hops.length && rule.hops.every((p, i) => p === hops[i])
+    );
+  const exact = match(COMPOSITION_RULES, predicates) ?? match(extraRules, predicates);
   if (exact !== undefined) return exact;
   // Collapsed form: [is-a, is-a, X] and longer is-a runs mean [is-a, X].
   const collapsed: RelationPredicate[] = [];
@@ -134,9 +144,9 @@ export function isSoundSequence(predicates: readonly RelationPredicate[]): Compo
   }
   if (collapsed.length === predicates.length) return null;
   return (
-    COMPOSITION_RULES.find(
-      (rule) => rule.hops.length === collapsed.length && rule.hops.every((p, i) => p === collapsed[i])
-    ) ?? null
+    match(COMPOSITION_RULES, collapsed) ??
+    match(extraRules, collapsed) ??
+    null
   );
 }
 
@@ -279,7 +289,10 @@ export function composeClaim(
   let best: ComposedClaim | null = null;
   for (const hops of allChains(relations, subject, maxDepth)) {
     if (hops.length < 2) continue;
-    const rule = isSoundSequence(hops.map((hop) => hop.predicate));
+    const rule = isSoundSequence(
+      hops.map((hop) => hop.predicate),
+      options.extraRules
+    );
     if (rule === null || rule.conclusion !== predicate) continue;
     if (hops[hops.length - 1].object !== object) continue;
     const claim = evaluate(rule, hops, cost, options);
@@ -305,7 +318,10 @@ export function composedClaimsFor(
   const byKey = new Map<string, ComposedClaim>();
   for (const hops of allChains(relations, subject, maxDepth)) {
     if (hops.length < 2) continue;
-    const rule = isSoundSequence(hops.map((hop) => hop.predicate));
+    const rule = isSoundSequence(
+      hops.map((hop) => hop.predicate),
+      options.extraRules
+    );
     if (rule === null) continue;
     const claim = evaluate(rule, hops, cost, options);
     if (claim === null) continue;

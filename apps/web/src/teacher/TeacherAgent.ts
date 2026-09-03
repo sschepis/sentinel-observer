@@ -2,11 +2,23 @@ import type { RecallResult } from '@sschepis/sentient-core';
 import type { ObserverSession } from '../observer/engine';
 import type { PersistenceStore } from '../persistence/store';
 import { lessonText, productionCue, recognitionCue, hasDefinition, type DeckWord } from './deck';
+import { retentionProbability, dueIntervalDays, decayToward, FSRS_TARGET_RETENTION, STABILITY_PRESETS } from './retention';
+import {
+  FSRS_INITIAL_STABILITY,
+  FSRS_INITIAL_DIFFICULTY,
+  FSRS_CONSOLIDATED_STABILITY,
+  FSRS_OVERDUE_BONUS,
+  FSRS_DIFFICULTY_SCALE,
+  reviewRetrievability,
+  applyRetentionDecay,
+  type RetentionParams
+} from './fsrs';
+import { bumpAgedWeights, decayAgedWeights, capAgedWeights, type WeightMeta } from './agedWeights';
+import { CalibrationLedger, type CalibrationReport } from './calibration';
 import {
   CONVERSATION_RECALL_FLOOR,
   CREATIVE_UNLOCK_THRESHOLD,
   composeCreativeResponse,
-  updateCompositionWeights,
   type ConversationPair,
   type CreativeComposition,
   type TransitionWeights
@@ -27,7 +39,8 @@ import {
   type CurriculumItem
 } from './curriculum';
 import { semanticVocabulary } from './semanticSignature';
-import { emptyFadeState, updateFadeState, effectiveLambda, isUncertain, classifyUtterance, blendReward, FADE_FLOOR, type FadeState, type GradeClass } from './fade';
+import { classifyUtterance, blendReward, fadeCriteria, type GradeClass } from './fade';
+import { JUDGE_COMPOSITE } from './trust';
 import { compositeScore } from './composite';
 import { groundingScore, groundingAttribution, stripHedges } from './grounding';
 import { extractRelations, mergeRelations, reconcileRelations, predicateVerb, sourceClassForOrigin, isSourceClass, type Relation, type RelationPredicate, type Negation, type SourceClass } from './relations';
@@ -42,13 +55,31 @@ import {
   gradeBandOf,
   ruleBandForGrounding,
   bandsAgree,
+  GRADE_STRONG_THRESHOLD,
+  WORLD_FEEDBACK_WEIGHT,
   type AnswerType,
   type DifficultyBand,
+  type GradeBand,
   type GradeCriteria,
   type ReliabilitySnapshot
 } from './reliability';
 import { RelationalHologram, mulberry32 } from '@sschepis/sentient-core';
 import { matchArgs, evaluate, canonicalNumber, conversionPairOf, type DSLExpr } from './technical/dsl';
+import { RuleStore, RULE_GRADE_DELTA, type DerivationDenial, type RewriteRule, type RuleOrigin } from './rules/types';
+import { PEANO_RULES, natFromDecimal, natToDecimal } from './rules/peano';
+import { DIGITS_RULES } from './rules/digits';
+import { INT_RULES } from './rules/int';
+import { LOGIC_RULES } from './rules/logic';
+import { ALG_RULES } from './rules/alg';
+import { reduce } from './rules/engine';
+import { parseRewritePrompt, decodeNormalForm } from './rules/parse';
+import { CompositionRuleStore } from './rules/compositionSeeds';
+import { induceRuleSet, validateHeldOut, type InductionInstance } from './rules/induction';
+import { termBits, termToString } from './rules/terms';
+import { generateExercises, chanceLevel } from './technical/verify';
+import { rewriteTargetFor, INDUCTION_MARGIN, MIN_INDUCTION_HITS } from './technical/drill';
+import { RULE_CORROBORATION_HORIZON_MS, drillForRuleName } from './rules/maintenance';
+import { parseTaughtRule, validateTaughtRule, taughtRuleSpecFor, type TaughtRuleSpec } from './rules/instruction';
 
 /** An executable rule compiled from drill induction (P2). */
 export interface CompiledRule {
@@ -75,12 +106,13 @@ import { OperatorLearner } from './operators/learning';
 import { TokenCostModel } from './mdl';
 import { ACTIVE_DECK } from './decks';
 import { loadConversations } from './conversations';
-import { computeDrives, chooseBehavior, updateDriveWeight, ARCHETYPAL_BEHAVIORS, type DriveSignals, type DriveState, type BehaviorOption, type BehaviorWeights } from './drives';
+import { computeDrives, chooseBehavior, updateDriveWeight, ARCHETYPAL_BEHAVIORS, DEFAULT_BEHAVIOR_WEIGHTS, type DriveSignals, type DriveState, type BehaviorOption, type BehaviorWeights } from './drives';
 import { WorkingMemory, resolveReferences, extractUnknownSubject, tokenizeText, singularize, isContentWord, cosineSimilarity, type WorkingTurn } from './context';
 import { EpisodicMemory, EPISODIC_SPOKEN_RELEVANCE_FLOOR, type EpisodicFact, type RememberedFact } from './episodic';
 import { clampRange } from '@sschepis/sentient-core';
 import {
   BOOTSTRAP_VERSION,
+  BOOTSTRAP_MIN_SUPPORTED_VERSION,
   BOOTSTRAP_VOCABULARY_SCHEME,
   type BootstrapRecord
 } from './bootstrap';
@@ -212,6 +244,9 @@ export interface AnswerGradeEntry {
   traceIds: string[];
   edges: EdgeRef[];
   operatorId?: string;
+  /** The rewrite rules the answer derived through (R5) — a wrong grade
+   *  weakens exactly those rules, never the whole store. */
+  ruleIds?: string[];
 }
 
 /** The ledger's cap — bounded like strengthHistory, never unbounded growth. */
@@ -234,6 +269,10 @@ export interface AnswerProvenance {
   templateIds?: string[];
   /** Operator identity: built-in kind, learned patternId, or compiled-rule id. */
   operatorId?: string;
+  /** The rewrite rules the answer derived through (R5), with the derivation
+   *  step count. A grade credits or weakens exactly these rules. */
+  ruleIds?: string[];
+  derivationSteps?: number;
 }
 
 export type ChatAnswer =
@@ -322,6 +361,30 @@ export const RETENTION_FRACTION = 0.25;
 export const CREATIVE_WEAKEN_SCORE = 0.3;
 /** Strength delta applied per seed when a composition is graded. */
 const CREATIVE_GRADE_DELTA = 0.05;
+
+/**
+ * L1b (Phase 18.2): the creative grade delta is SURPRISE-SCALED by the
+ * grade's margin beyond its gate — a 0.95 grade moves seeds more than a
+ * 0.71, a 0.05 grade weakens more than a 0.28 — floored at 0.25 of the base
+ * delta so a gate-edge grade still moves. The BAND never changes (mirroring
+ * the reliability model's contract: scale deltas, never bands); mid-band
+ * grades stay 0. The extremes reproduce the pre-L1b magnitudes exactly:
+ * creativeGradeDelta(1) = +CREATIVE_GRADE_DELTA, creativeGradeDelta(0) =
+ * −CREATIVE_GRADE_DELTA — the world-feedback channels (re-ask = full
+ * weaken, retention confirm = full reinforce × RETENTION_FRACTION) route
+ * through those extremes.
+ */
+export function creativeGradeDelta(score: number): number {
+  if (score >= CREATIVE_REINFORCE_SCORE) {
+    const margin = (score - CREATIVE_REINFORCE_SCORE) / (1 - CREATIVE_REINFORCE_SCORE);
+    return CREATIVE_GRADE_DELTA * Math.max(0.25, Math.min(1, margin));
+  }
+  if (score <= CREATIVE_WEAKEN_SCORE) {
+    const margin = (CREATIVE_WEAKEN_SCORE - score) / CREATIVE_WEAKEN_SCORE;
+    return -CREATIVE_GRADE_DELTA * Math.max(0.25, Math.min(1, margin));
+  }
+  return 0;
+}
 /** Strength delta applied to the producing trace on a wrong quiz grade (P7). */
 const QUIZ_GRADE_DELTA = 0.1;
 /** Traces below this floor are never weakened further by a failed quiz. */
@@ -372,21 +435,9 @@ function normalizedContentTokens(text: string): Set<string> {
 // history, replacing the strength < 0.6 review gate: strength becomes the
 // MODEL's prediction (retention at the elapsed interval), and the schedule
 // is dueAt = now + interval (the stability that decays to target retention).
+// Phase 24.2: the scheduler's constants and pure functions live in fsrs.ts;
+// they are imported here and re-exported for the existing importers.
 
-/** Initial stability (days) of a freshly taught word. */
-export const FSRS_INITIAL_STABILITY = 1;
-/** Initial difficulty in [1, 10] — mid, the observer has no evidence yet. */
-export const FSRS_INITIAL_DIFFICULTY = 5;
-/** Target retention at review time: the due interval solves R(interval) = this. */
-export const FSRS_TARGET_RETENTION = 0.9;
-/** Stability multiplier on a correct recall (shrinks with difficulty). */
-const FSRS_SUCCESS_GAIN = 1.0;
-/** Difficulty scale of the success gain (e^(−D/scale)). */
-const FSRS_DIFFICULTY_SCALE = 8;
-/** Stability (days) beyond which a word reads as consolidated. */
-export const FSRS_CONSOLIDATED_STABILITY = 30;
-/** The FSRS v4 forgetting-curve constant (19/81). */
-const FSRS_FORGETTING_FACTOR = 19 / 81;
 /**
  * Chat routing threshold: a memorized exchange is only authoritative when
  * recall confidence clears this. Taught cues recall at 0.84-0.98; weak
@@ -485,87 +536,26 @@ function matchesCue(questionKey: string, cueKey: string): boolean {
   return cueKey.length > 0 && (cueKey === questionKey || (questionKey.includes(cueKey) && questionKey.length - cueKey.length <= 8));
 }
 
-/**
- * Apply wall-clock forgetting to every restored trace: strength decays
- * exponentially since its last access, with a half-life that grows as the
- * trace is reinforced (unreinforced a week, practiced a month, consolidated
- * four months). These were measured too aggressive in practice — a freshly
- * taught word fell below the review floor after ~1.5 days idle, and real
- * users watched the observer "forget" overnight. The slower curve keeps
- * spaced repetition honest: forgetting happens, but on a human-timescale
- * schedule the review loop can actually service.
- *
- * `rate` scales every half-life: 2 forgets half as fast, 0.5 twice as fast.
- */
-export function applyTimeDecay(
-  traces: Iterable<{ lastAccessAt: number; strength: number; accessCount: number; consolidated: boolean }>,
-  now = Date.now(),
-  rate = 1
-): void {
-  const DAY = 24 * 60 * 60 * 1000;
-  const scale = Math.max(0.01, rate);
-  for (const trace of traces) {
-    const elapsed = Math.max(0, now - trace.lastAccessAt);
-    if (elapsed < 60 * 1000) continue; // sub-minute: no measurable forgetting
-
-    const halfLifeDays = (trace.consolidated ? 120 : trace.accessCount >= 2 ? 30 : 7) * scale;
-    const halfLifeMs = halfLifeDays * DAY;
-    trace.strength = trace.strength * Math.pow(0.5, elapsed / halfLifeMs);
-  }
-}
+// L3 (Phase 19.1): the legacy tiered half-life decay (`applyTimeDecay`) is
+// DELETED. There is exactly one forgetting law — the FSRS retention curve
+// below (`applyRetentionDecay`): strength IS the model's prediction. The
+// legacy curve survived only in the CLI retention sim's comment and the
+// modelSettings tests, which now exercise the real law.
 
 // ── P9: the retention model ─────────────────────────────────────────────────
+// L3 (Phase 19.4): the curve itself lives in retention.ts — THE one law.
+// Phase 24.2: the FSRS scheduler (constants, retrievability, trace decay)
+// lives in fsrs.ts. Both are re-exported here for existing importers.
 
-/**
- * The FSRS v4 forgetting curve: the probability the observer recalls a word
- * after `elapsedDays` given stability S. R(0) = 1, R(S) = the target
- * retention (0.9), monotone decreasing in time. Difficulty shapes the
- * STABILITY updates (the v4 separation), not the curve itself.
- */
-export function retentionProbability(stabilityDays: number, difficulty: number, elapsedDays: number): number {
-  if (stabilityDays <= 0) return 0;
-  const ratio = elapsedDays / stabilityDays;
-  return Math.pow(1 + FSRS_FORGETTING_FACTOR * ratio, -0.5);
-}
-
-/** The review interval (days) whose retention is `retention` — the inversion
- *  of the forgetting curve. At the target 0.9, interval ≈ stability. */
-export function dueIntervalDays(stabilityDays: number, retention = FSRS_TARGET_RETENTION): number {
-  if (stabilityDays <= 0) return 0;
-  return (stabilityDays * (Math.pow(retention, -2) - 1)) / FSRS_FORGETTING_FACTOR;
-}
-
-/** The per-trace FSRS parameters the retention decay reads. */
-export interface RetentionParams {
-  stability: number;
-  difficulty: number;
-}
-
-/**
- * P9 wall-clock forgetting: every trace's strength becomes the MODEL's
- * prediction — retentionProbability(S, D, elapsed) — replacing the tiered
- * half-life curve. Word traces decay on their per-word FSRS stability; other
- * traces (conversation/creative/gap/belief) use the default stability so
- * taught phrases still forget on a human timescale.
- *
- * `rate` scales stability: 2 forgets half as fast, 0.5 twice as fast.
- */
-export function applyRetentionDecay(
-  traces: Iterable<{ id: string; lastAccessAt: number; strength: number }>,
-  params: (traceId: string) => RetentionParams | null,
-  now = Date.now(),
-  rate = 1
-): void {
-  const DAY = 24 * 60 * 60 * 1000;
-  const scale = Math.max(0.01, rate);
-  for (const trace of traces) {
-    const p = params(trace.id);
-    const stability = p !== null ? Math.max(0.01, p.stability * scale) : FSRS_INITIAL_STABILITY * 7;
-    const difficulty = p !== null ? p.difficulty : FSRS_INITIAL_DIFFICULTY;
-    const elapsed = Math.max(0, now - trace.lastAccessAt);
-    trace.strength = clampRange(retentionProbability(stability, difficulty, elapsed / DAY), 0.01, 1);
-  }
-}
+export { retentionProbability, dueIntervalDays, FSRS_TARGET_RETENTION } from './retention';
+export {
+  FSRS_INITIAL_STABILITY,
+  FSRS_INITIAL_DIFFICULTY,
+  FSRS_CONSOLIDATED_STABILITY,
+  reviewRetrievability,
+  applyRetentionDecay,
+  type RetentionParams
+} from './fsrs';
 
 /**
  * Review scheduling state per word, from the trace's live strength.
@@ -661,6 +651,13 @@ export class TeacherAgent {
   };
   /** Learned transition weights for creative composition (surprise terrain). */
   private readonly compositionWeights: TransitionWeights = new Map<string, number>();
+  /** L3 (19.2): per-n-gram use stamps — the decay clock of the weights. */
+  private readonly compositionWeightMeta: WeightMeta = new Map<string, number>();
+  /** L3 (19.3): per-behavior last-outcome stamps — the drive drift clock. */
+  private readonly behaviorOutcomeAt = new Map<BehaviorOption, number>();
+  /** Phase 24.3 (W8): the read-only calibration ledger — the riskiest
+   *  confidence gates record (score, outcome) evidence; benches read drift. */
+  private readonly calibration = new CalibrationLedger();
   /** Trace ids of memorized STRONG creative answers (kind: 'creative'). */
   private readonly creativeMemoryIds = new Set<string>();
   /** Utterances the observer could not answer (kind: 'gap' traces). */
@@ -752,6 +749,17 @@ export class TeacherAgent {
    */
   private edgeSources = new Map<string, SourceClass[]>();
   /**
+   * M5 (Phase 22): THE HYPOTHESIS TIER — proposer/validator split. Loose
+   * extractions (objects that are real content words but not deck words —
+   * "a bird is a creature", "with feathers") are held here as standing
+   * hypotheses: spoken only hedged, never chained, never merged into the
+   * asserted graph — until CORROBORATION promotes them (a second
+   * independent source class via addEdgeSource, e.g. conversation mining or
+   * a strong world grade citing the edge). Precision lives in the promotion
+   * gate, not the proposer. Bounded FIFO.
+   */
+  private hypothesisEdges: Relation[] = [];
+  /**
    * P14 example corpus index: content token -> deck example sentences (from
    * the taught states' `example` fields). Built once per relations-cache
    * build; a chaperone edge corroborated by a curriculum example sentence
@@ -793,8 +801,33 @@ export class TeacherAgent {
   /** Executable rules induced from drills (P2): DSL programs compiled into
    *  first-class operators. Persisted with the learning state. */
   private compiledRules: CompiledRule[] = [];
+  /**
+   * THE REWRITE RULE STORE (R0–R5): the observer's procedures as memories.
+   * Authored decks (Peano naturals, digit strings, signed integers, the
+   * boolean/logic deck) are seeded from code; induced rules are added by
+   * the drill loop and restored from the bootstrap record. Rules are
+   * gradeable, corroborated, denied, and stopped — never deleted.
+   */
+  private readonly ruleStore = new RuleStore([...PEANO_RULES, ...DIGITS_RULES, ...INT_RULES, ...LOGIC_RULES, ...ALG_RULES]);
+  /** Composition rules as a learnable seed set (R4b): the fixed table stays
+   *  the evergreen floor; the world's accepted chains admit new sequences. */
+  private readonly compositionRules = new CompositionRuleStore();
+  /** One-shot ledger of stopped rules (R5) — a rule the world denied twice
+   *  stays stopped across reloads; the record is kept, never re-litigated. */
+  private readonly ruleResolutions = new Set<string>();
+  /** R11: open rule questions — the drill loop raised "what is the rule
+   *  for X?" and a procedure answer is being awaited (concept → drill).
+   *  The chat's teach-reply consumes one entry when the user's text parses
+   *  as a rule for it. */
+  private readonly pendingRuleQuestions = new Map<string, string>();
+  /** R4: the drill loop's induction mode — true routes a memorized drill to
+   *  rewrite-rule synthesis instead of DSL compilation (the A/B arm). */
+  private readonly rewriteInduction: boolean;
   /** The composition PRNG (P5): seeded for determinism, Math.random by default. */
   private readonly compositionRng: () => number;
+  /** M4 (21.2): the arbitration PRNG — a session-seeded stream so behavior
+   *  sampling (Boltzmann at the drive temperature) is reproducible. */
+  private readonly arbitrationRng: () => number = mulberry32(0xd21ce5);
   /** The MDL frequency prior for composition gating (P10): the full deck's
    *  Zipf costs, fixed once per agent — the same prior the operator learner
    *  uses, so generation and operator paths gate chains identically. */
@@ -899,12 +932,20 @@ export class TeacherAgent {
      * Exposed so tests can cross session boundaries deterministically;
      * the app never needs it.
      */
-    episodicSessionGapMs?: number
+    episodicSessionGapMs?: number,
+    /**
+     * R4: rewrite-rule induction mode for the drill loop. When true, a
+     * memorized drill routes to the rewrite engine's rule synthesis (the
+     * A/B arm) instead of DSL compilation. Default false — the shipped
+     * behavior is bit-identical.
+     */
+    rewriteInduction = false
   ) {
     this.persistEvery = Math.max(1, Math.floor(persistEvery));
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
     this.curriculumConfig = curriculumConfig ?? {};
+    this.rewriteInduction = rewriteInduction;
     this.episodic = new EpisodicMemory(episodicSessionGapMs);
     this.compositionRng = compositionSeed !== undefined ? mulberry32(compositionSeed) : Math.random;
     // The operator learner's MDL prior is the FULL frequency deck — token
@@ -962,6 +1003,11 @@ export class TeacherAgent {
    * retention prediction at its elapsed interval — word traces on their
    * per-word FSRS stability/difficulty, other traces on the default curve.
    * `forgettingRate` scales stability (2 forgets half as fast).
+   *
+   * L3 (Phase 19): this is THE one-law application point — the same call
+   * that decays traces also decays the learned WEIGHTS (composition n-grams
+   * toward the floor with pruning + cap; drive weights toward the archetypal
+   * defaults). Weights are memories too.
    */
   applyRetention(now = Date.now()): void {
     const bank = this.session.observer.getMemoryBank();
@@ -975,6 +1021,37 @@ export class TeacherAgent {
       }
     }
     applyRetentionDecay(bank.all(), (traceId) => byTrace.get(traceId) ?? null, now, this.tuning.forgettingRate);
+    this.decayLearnedWeights(now);
+  }
+
+  /**
+   * L3 (19.2/19.3): decay the learned weights under the one law.
+   *   · Composition n-gram weights decay toward the floor when unused
+   *     (fluency fades without practice), prune at the floor (an absent key
+   *     is the fresh prior), and the map is hard-capped (weakest-evict).
+   *   · Learned drive weights drift toward the archetypal defaults when no
+   *     fresh outcome has landed — ancient wins stop dominating.
+   */
+  private decayLearnedWeights(now = Date.now()): void {
+    decayAgedWeights(this.compositionWeights, this.compositionWeightMeta, now);
+    capAgedWeights(this.compositionWeights, this.compositionWeightMeta);
+    for (const key of Object.keys(this.behaviorWeights) as BehaviorOption[]) {
+      const stored = this.behaviorWeights[key];
+      if (stored === undefined) continue;
+      const at = this.behaviorOutcomeAt.get(key);
+      if (at === undefined) {
+        this.behaviorOutcomeAt.set(key, now);
+        continue;
+      }
+      if (now <= at) continue;
+      this.behaviorWeights[key] = decayToward(
+        stored,
+        DEFAULT_BEHAVIOR_WEIGHTS[key],
+        now - at,
+        STABILITY_PRESETS.driveWeightDays
+      );
+      this.behaviorOutcomeAt.set(key, now);
+    }
   }
 
   /**
@@ -1117,6 +1194,23 @@ export class TeacherAgent {
             this.compositionWeights.set(key, value);
           }
         }
+        // L3 (19.2/19.3): adopt the decay clocks when present; a legacy
+        // record without them starts every clock at the first decay sweep.
+        if (typeof learningState.compositionWeightMeta === 'object' && learningState.compositionWeightMeta !== null) {
+          this.compositionWeightMeta.clear();
+          for (const [key, value] of Object.entries(learningState.compositionWeightMeta as Record<string, number>)) {
+            if (Number.isFinite(value)) this.compositionWeightMeta.set(key, value);
+          }
+        }
+        if (typeof learningState.behaviorOutcomeAt === 'object' && learningState.behaviorOutcomeAt !== null) {
+          for (const [key, value] of Object.entries(learningState.behaviorOutcomeAt as Record<string, number>)) {
+            if (Number.isFinite(value)) this.behaviorOutcomeAt.set(key as BehaviorOption, value);
+          }
+        }
+        // Phase 24.3 (additive): calibration evidence survives reloads.
+        if (typeof learningState.calibration === 'object' && learningState.calibration !== null) {
+          this.calibration.restore(learningState.calibration);
+        }
         if (typeof learningState.behaviorWeights === 'object' && learningState.behaviorWeights !== null) {
           this.behaviorWeights = { ...(learningState.behaviorWeights as BehaviorWeights) };
         }
@@ -1138,11 +1232,11 @@ export class TeacherAgent {
           }
         }
         if (typeof learningState.fadeState === 'object' && learningState.fadeState !== null) {
-          const fade = learningState.fadeState as FadeState;
-          if (typeof fade.lambda === 'object' && fade.lambda !== null && typeof fade.agreement === 'object' && fade.agreement !== null) {
-            this.fadeState.agreement = { ...(fade.agreement as FadeState['agreement']) };
-            this.fadeState.lambda = { ...(fade.lambda as FadeState['lambda']) };
-          }
+          // L2 (20.4) MIGRATION: λ is no longer stored — it is derived from
+          // the trust kernel. A legacy record's earned λ is preserved by
+          // seeding equivalent kernel evidence, so teacher-dependence does
+          // NOT reset to scaffolded on upgrade.
+          this.seedLegacyFadeState(learningState.fadeState as { lambda?: Record<string, number> });
         }
         if (typeof learningState.exposureCounts === 'object' && learningState.exposureCounts !== null) {
           this.exposureCounts.clear();
@@ -1179,6 +1273,21 @@ export class TeacherAgent {
               origin: 'chaperone' as const
             }));
         }
+        // M5 (22.5): the standing hypothesis tier (absent on legacy records —
+        // the next relations rebuild re-proposes from the loose extraction).
+        if (Array.isArray(learningState.hypothesisEdges)) {
+          this.hypothesisEdges = (learningState.hypothesisEdges as Array<Partial<Relation>>)
+            .filter((r) => typeof r?.subject === 'string' && typeof r?.predicate === 'string' && typeof r?.object === 'string')
+            .map((r) => ({
+              subject: r.subject as string,
+              predicate: r.predicate as Relation['predicate'],
+              object: r.object as string,
+              source: typeof r.source === 'string' ? r.source : '',
+              origin: (typeof r.origin === 'string' ? r.origin : 'regex') as Relation['origin'],
+              sourceClasses: Array.isArray(r.sourceClasses) ? r.sourceClasses.filter(isSourceClass) : undefined,
+              tier: 'hypothesis' as const
+            }));
+        }
         if (Array.isArray(learningState.compiledRules)) {
           // Executable drill rules survive reloads; malformed entries are
           // dropped loudly-free (a program that cannot parse is not a rule).
@@ -1203,6 +1312,70 @@ export class TeacherAgent {
               instanceBits: typeof r.instanceBits === 'number' ? r.instanceBits : 0
             }));
         }
+        if (Array.isArray(learningState.rewriteRules)) {
+          // R5: LEARNED rewrite rules survive reloads (the authored decks are
+          // code, re-seeded every construction). Malformed rules are dropped.
+          for (const rule of learningState.rewriteRules as Array<Partial<RewriteRule>>) {
+            if (
+              typeof rule?.id === 'string' &&
+              typeof rule?.name === 'string' &&
+              typeof rule?.lhs === 'object' &&
+              rule?.lhs !== null &&
+              typeof rule?.rhs === 'object' &&
+              rule?.rhs !== null
+            ) {
+              try {
+                this.ruleStore.register({
+                  id: rule.id,
+                  name: rule.name,
+                  lhs: rule.lhs as RewriteRule['lhs'],
+                  rhs: rule.rhs as RewriteRule['rhs'],
+                  origin: rule.origin === 'induced' || rule.origin === 'taught' || rule.origin === 'chaperone' || rule.origin === 'consolidated' ? rule.origin : 'induced',
+                  strength: typeof rule.strength === 'number' ? rule.strength : 1,
+                  sourceClasses: Array.isArray(rule.sourceClasses) ? rule.sourceClasses.filter((c) => typeof c === 'string') : [],
+                  bits: typeof rule.bits === 'number' ? rule.bits : 0,
+                  evidence: typeof rule.evidence === 'number' ? rule.evidence : undefined,
+                  schema: rule.schema === 'structural' || rule.schema === 'measure' || rule.schema === 'accessor' || rule.schema === 'search' || rule.schema === 'scalar' ? rule.schema : undefined,
+                  active: rule.active !== false,
+                  createdAt: typeof rule.createdAt === 'number' ? rule.createdAt : 0,
+                  useCount: typeof rule.useCount === 'number' ? rule.useCount : 0,
+                  lastUsedAt: typeof rule.lastUsedAt === 'number' ? rule.lastUsedAt : undefined
+                });
+              } catch {
+                // An unregisterable rule is not a rule — dropped.
+              }
+            }
+          }
+        }
+        if (Array.isArray(learningState.rewriteDenials)) {
+          for (const denial of learningState.rewriteDenials as Array<Partial<DerivationDenial>>) {
+            if (typeof denial?.ruleId === 'string') {
+              this.ruleStore.recordDenial({
+                ruleId: denial.ruleId,
+                input: typeof denial.input === 'string' ? denial.input : undefined,
+                output: typeof denial.output === 'string' ? denial.output : undefined,
+                expected: typeof denial.expected === 'string' ? denial.expected : undefined,
+                evidence: denial.evidence === 'taught' || denial.evidence === 'verified-wrong' ? denial.evidence : 'graded-wrong',
+                at: typeof denial.at === 'number' ? denial.at : 0
+              });
+            }
+          }
+        }
+        if (Array.isArray(learningState.ruleResolutions)) {
+          this.ruleResolutions.clear();
+          for (const id of learningState.ruleResolutions as unknown[]) {
+            if (typeof id === 'string') this.ruleResolutions.add(id);
+          }
+        }
+        if (typeof learningState.rewriteRuleStats === 'object' && learningState.rewriteRuleStats !== null) {
+          for (const [id, stats] of Object.entries(learningState.rewriteRuleStats as Record<string, unknown>)) {
+            const rule = this.ruleStore.get(id);
+            if (rule === undefined || typeof stats !== 'object' || stats === null) continue;
+            const entry = stats as Partial<{ uses: number; lastUsedAt: number }>;
+            if (typeof entry.uses === 'number') rule.useCount = entry.uses;
+            if (typeof entry.lastUsedAt === 'number') rule.lastUsedAt = entry.lastUsedAt;
+          }
+        }
         if (Array.isArray(learningState.answerGrades)) {
           // The grade ledger survives reloads — malformed entries are dropped.
           this.answerGrades = (learningState.answerGrades as Array<Partial<AnswerGradeEntry>>)
@@ -1217,7 +1390,8 @@ export class TeacherAgent {
               edges: Array.isArray(g.edges)
                 ? (g.edges as EdgeRef[]).filter((e) => typeof e?.subject === 'string' && typeof e?.object === 'string')
                 : [],
-              operatorId: typeof g.operatorId === 'string' ? g.operatorId : undefined
+              operatorId: typeof g.operatorId === 'string' ? g.operatorId : undefined,
+              ruleIds: Array.isArray(g.ruleIds) ? g.ruleIds.filter((id): id is string => typeof id === 'string') : undefined
             }));
         }
         if (Array.isArray(learningState.authoredAnswers)) {
@@ -1344,7 +1518,7 @@ export class TeacherAgent {
       if (trace.metadata?.kind !== 'creative') continue;
       const score = typeof trace.metadata.score === 'number' ? trace.metadata.score : 0.7;
       if (score < CREATIVE_REINFORCE_SCORE) continue;
-      updateCompositionWeights(this.compositionWeights, [trace.content], CREATIVE_GRADE_DELTA);
+      bumpAgedWeights(this.compositionWeights, this.compositionWeightMeta, [trace.content], CREATIVE_GRADE_DELTA);
     }
   }
 
@@ -1495,22 +1669,51 @@ export class TeacherAgent {
       const learningState: Record<string, unknown> = {
         vocabularyScheme: BOOTSTRAP_VOCABULARY_SCHEME,
         compositionWeights: Object.fromEntries(this.compositionWeights),
+        // L3 (19.2/19.3): the decay clocks ride the same record (additive —
+        // absent on legacy records, which start their clocks at restore).
+        compositionWeightMeta: Object.fromEntries(this.compositionWeightMeta),
+        behaviorOutcomeAt: Object.fromEntries(this.behaviorOutcomeAt),
+        // Phase 24.3 (additive): the calibration gates' evidence.
+        calibration: this.calibration.snapshot(),
         behaviorWeights: this.behaviorWeights,
         behaviorOutcomes: this.behaviorOutcomes,
         goalHistory: this.goalHistory,
-        fadeState: this.fadeState,
+        // L2 (20.4): fadeState is GONE — λ is derived from the trust kernel,
+        // whose evidence rides the graderReliability snapshot below.
         exposureCounts: Object.fromEntries(this.exposureCounts),
         encounterCounts: Object.fromEntries(this.encounterCounts),
         drillFailures: Object.fromEntries(this.drillFailures),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         relations: this.chaperoneRelations,
+        // M5 (22.5, additive): the standing hypothesis tier survives reloads
+        // so accumulated corroboration can promote across sessions.
+        hypothesisEdges: this.hypothesisEdges,
         compiledRules: this.compiledRules,
         answerGrades: this.answerGrades,
         edgeConfidence: Object.fromEntries(this.edgeConfidence),
         edgeSources: Object.fromEntries(this.edgeSources),
         negations: this.negations,
         resolvedSweepConflicts: [...this.resolvedSweepConflicts],
+        // R5: the rewrite rules are memories — only the LEARNED ones persist
+        // (the authored decks are code; a stale persisted deck would decode
+        // against mismatched primitives). Denials and the one-shot stop
+        // ledger ride with them.
+        rewriteRules: this.ruleStore
+          .all()
+          .filter((rule) => rule.origin !== 'authored')
+          .map((rule) => ({ ...rule })),
+        rewriteDenials: this.ruleStore.allDenials(),
+        ruleResolutions: [...this.ruleResolutions],
+        rewriteRuleStats: Object.fromEntries(
+          this.ruleStore
+            .all()
+            .filter((rule) => rule.useCount > 0 || rule.lastUsedAt !== undefined)
+            .map((rule) => [
+              rule.id,
+              { uses: rule.useCount, lastUsedAt: rule.lastUsedAt ?? rule.createdAt }
+            ])
+        ),
         authoredAnswers: [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
           utterance,
           traceIds: entry.traceIds,
@@ -1564,7 +1767,11 @@ export class TeacherAgent {
    * "initially trained" state in one step instead of hours of UI teaching.
    */
   importBootstrap(record: BootstrapRecord): { restored: number; conversations: number; definitions: number; droppedWords: number; stale: number } {
-    if (record.version !== BOOTSTRAP_VERSION || record.vocabularyScheme !== BOOTSTRAP_VOCABULARY_SCHEME) {
+    if (
+      record.version < BOOTSTRAP_MIN_SUPPORTED_VERSION ||
+      record.version > BOOTSTRAP_VERSION ||
+      record.vocabularyScheme !== BOOTSTRAP_VOCABULARY_SCHEME
+    ) {
       throw new Error('bootstrap vocabulary encoding is incompatible; regenerate it with npm run train');
     }
     const bank = this.session.observer.getMemoryBank();
@@ -1684,7 +1891,8 @@ export class TeacherAgent {
           edges: Array.isArray(g.edges)
             ? g.edges.filter((e) => typeof e?.subject === 'string' && typeof e?.object === 'string')
             : [],
-          operatorId: typeof g.operatorId === 'string' ? g.operatorId : undefined
+          operatorId: typeof g.operatorId === 'string' ? g.operatorId : undefined,
+          ruleIds: Array.isArray(g.ruleIds) ? g.ruleIds.filter((id): id is string => typeof id === 'string') : undefined
         }));
     }
     if (Array.isArray(record.authoredAnswers)) {
@@ -1737,6 +1945,60 @@ export class TeacherAgent {
         )
       );
     }
+    if (Array.isArray(record.rewriteRules)) {
+      // R5: learned rewrite rules survive imports, exactly like reloads.
+      for (const rule of record.rewriteRules as Array<Partial<RewriteRule>>) {
+        if (
+          typeof rule?.id === 'string' &&
+          typeof rule?.name === 'string' &&
+          typeof rule?.lhs === 'object' &&
+          rule?.lhs !== null &&
+          typeof rule?.rhs === 'object' &&
+          rule?.rhs !== null
+        ) {
+          try {
+            this.ruleStore.register({
+              id: rule.id,
+              name: rule.name,
+              lhs: rule.lhs as RewriteRule['lhs'],
+              rhs: rule.rhs as RewriteRule['rhs'],
+              origin: rule.origin === 'induced' || rule.origin === 'taught' || rule.origin === 'chaperone' || rule.origin === 'consolidated' ? rule.origin : 'induced',
+              strength: typeof rule.strength === 'number' ? rule.strength : 1,
+              sourceClasses: Array.isArray(rule.sourceClasses) ? rule.sourceClasses.filter((c) => typeof c === 'string') : [],
+              bits: typeof rule.bits === 'number' ? rule.bits : 0,
+              evidence: typeof rule.evidence === 'number' ? rule.evidence : undefined,
+              schema: rule.schema === 'structural' || rule.schema === 'measure' || rule.schema === 'accessor' || rule.schema === 'search' || rule.schema === 'scalar' ? rule.schema : undefined,
+              active: rule.active !== false,
+              createdAt: typeof rule.createdAt === 'number' ? rule.createdAt : 0,
+              useCount: typeof rule.useCount === 'number' ? rule.useCount : 0,
+              lastUsedAt: typeof rule.lastUsedAt === 'number' ? rule.lastUsedAt : undefined
+            });
+          } catch {
+            // Unregisterable rules are dropped.
+          }
+        }
+      }
+    }
+    if (Array.isArray(record.rewriteDenials)) {
+      for (const denial of record.rewriteDenials as Array<Partial<DerivationDenial>>) {
+        if (typeof denial?.ruleId === 'string') {
+          this.ruleStore.recordDenial({
+            ruleId: denial.ruleId,
+            input: typeof denial.input === 'string' ? denial.input : undefined,
+            output: typeof denial.output === 'string' ? denial.output : undefined,
+            expected: typeof denial.expected === 'string' ? denial.expected : undefined,
+            evidence: denial.evidence === 'taught' || denial.evidence === 'verified-wrong' ? denial.evidence : 'graded-wrong',
+            at: typeof denial.at === 'number' ? denial.at : 0
+          });
+        }
+      }
+    }
+    if (Array.isArray(record.ruleResolutions)) {
+      this.ruleResolutions.clear();
+      for (const id of record.ruleResolutions as unknown[]) {
+        if (typeof id === 'string') this.ruleResolutions.add(id);
+      }
+    }
     this.rebuildLearnedOperators();
     if (record.driveWeights !== undefined) {
       this.behaviorWeights = { ...record.driveWeights } as BehaviorWeights;
@@ -1758,6 +2020,19 @@ export class TeacherAgent {
         this.compositionWeights.clear();
         for (const [key, value] of Object.entries(ls.compositionWeights)) this.compositionWeights.set(key, value);
       }
+      // L3 (19.2/19.3): the decay clocks (absent on legacy records — the
+      // first decay sweep after import starts them).
+      if (typeof ls.compositionWeightMeta === 'object' && ls.compositionWeightMeta !== null) {
+        this.compositionWeightMeta.clear();
+        for (const [key, value] of Object.entries(ls.compositionWeightMeta)) {
+          if (Number.isFinite(value)) this.compositionWeightMeta.set(key, value);
+        }
+      }
+      if (typeof ls.behaviorOutcomeAt === 'object' && ls.behaviorOutcomeAt !== null) {
+        for (const [key, value] of Object.entries(ls.behaviorOutcomeAt)) {
+          if (Number.isFinite(value)) this.behaviorOutcomeAt.set(key as BehaviorOption, value);
+        }
+      }
       if (typeof ls.behaviorOutcomes === 'object' && ls.behaviorOutcomes !== null) {
         for (const option of Object.keys(this.behaviorOutcomes) as BehaviorOption[]) {
           const record2 = ls.behaviorOutcomes[option];
@@ -1766,9 +2041,10 @@ export class TeacherAgent {
           }
         }
       }
-      if (typeof ls.fadeState === 'object' && ls.fadeState !== null && ls.fadeState.agreement != null && ls.fadeState.lambda != null) {
-        this.fadeState.agreement = { ...(ls.fadeState.agreement as FadeState['agreement']) };
-        this.fadeState.lambda = { ...(ls.fadeState.lambda as FadeState['lambda']) };
+      if (typeof ls.fadeState === 'object' && ls.fadeState !== null && ls.fadeState.lambda != null) {
+        // L2 (20.4) MIGRATION: legacy stored λ seeds equivalent kernel
+        // evidence (see restoreFromPersistence).
+        this.seedLegacyFadeState(ls.fadeState as { lambda?: Record<string, number> });
       }
       if (typeof ls.exposureCounts === 'object' && ls.exposureCounts !== null) {
         this.exposureCounts.clear();
@@ -2018,6 +2294,14 @@ export class TeacherAgent {
   grade(word: string, question: QuizAnswer): GradeResult {
     const state = this.requiredState(word);
     const expected = state.word.definition.trim().length > 0 ? state.word.definition : state.word.word;
+    // L1a: the surprise anchor of THIS review — the time since the LAST
+    // review attempt — must be read BEFORE state.lastAskedAt is overwritten
+    // below, or the FSRS update would always see a zero elapsed interval.
+    const retrievalAnchor: { stability: number; lastAskedAt: number | null; taughtAt: number | null } = {
+      stability: state.stability,
+      lastAskedAt: state.lastAskedAt,
+      taughtAt: state.taughtAt
+    };
 
     const top = question.recall;
     const matchedTrace =
@@ -2040,6 +2324,11 @@ export class TeacherAgent {
 
     state.lastAskedAt = Date.now();
     state.lastGrade = verdict;
+    // Phase 24.3 (read-only): the recall-confidence gate's calibration
+    // evidence — the score distribution of identity-true vs false recalls.
+    if (question.recall !== null) {
+      this.calibration.record('quiz-recall', question.recall.score, verdict === 'correct');
+    }
     // P-curriculum: every review outcome enters the persisted history —
     // the repeated-gap signal across sessions (capped like strengthHistory).
     state.reviewHistory.push(verdict);
@@ -2093,18 +2382,33 @@ export class TeacherAgent {
       // itself (the memory that should have been recalled), not the whole
       // bank — gated by a floor so a single slip never erases a practiced
       // word; below the floor the trace decays passively instead.
+      // L1a (Phase 17.5): the weakening is SURPRISE-SCALED — a confidently
+      // wrong recall (high recall score on the wrong trace) weakens more than
+      // a marginal one; a blank answer falls back to the producing trace's
+      // own strength (a strong memory that failed to surface is a larger
+      // surprise than a weak one).
       if (state.traceId !== null) {
         const producing = this.traceOf(state.traceId);
         if (producing !== undefined && producing.strength > QUIZ_WEAKEN_FLOOR) {
-          this.session.observer.getMemoryBank().reinforce(state.traceId, -QUIZ_GRADE_DELTA);
+          const recallScore = question.recall?.score ?? producing.strength;
+          const surprise = clampRange(recallScore, 0, 1);
+          this.session.observer.getMemoryBank().reinforce(state.traceId, -QUIZ_GRADE_DELTA * surprise);
         }
       }
     }
-    // P9 FSRS UPDATE: the review history IS the model's training data. A
-    // correct recall stretches stability (less for hard words) and eases
-    // difficulty; a wrong one collapses stability (hard words keep less) and
-    // raises difficulty. The next review is scheduled when the model predicts
-    // the target retention has been reached — strength < 0.6 is gone.
+    // P9 FSRS UPDATE: the review history IS the model's training data.
+    // L1a (Phase 17): the update is SURPRISE-SCALED — the model's own
+    // retention prediction at review time (reviewRetrievability) is the
+    // surprise signal. A correct recall stretches stability by the classic
+    // e^(−D/8) gain (less for hard words), PLUS an overdue bonus that grows
+    // as the recall happens further past the due date; a wrong one keeps
+    // clamp(1 − R, 0.05, 0.5) of its stability — a crammed lapse (R ≈ 1)
+    // collapses to the floor, an on-time lapse keeps today's 0.1, an overdue
+    // lapse keeps up to half (the forgetting already happened) — and raises
+    // difficulty. The 2026-09 review's inverted multiplier (difficulty
+    // scaling the COLLAPSE upward, punishing easy words hardest) is gone:
+    // difficulty shapes the success gain only, as in FSRS v4. The next
+    // review is scheduled when the model predicts the target retention.
     //
     // GRADER RELIABILITY: the update is weighted by the quiz bucket's
     // feedback weight — when re-grade outcomes and world feedback have shown
@@ -2119,13 +2423,43 @@ export class TeacherAgent {
       provider: 'rule'
     };
     const fsrsWeight = this.reliabilityModel.feedbackWeight(quizCriteria);
+    // L1a: SURPRISE IS SCHEDULE-RELATIVE. The model predicts a word at
+    // target retention R = 0.9 at its due date — that is the scheduled
+    // moment, NOT a surprise. R_eff = R / target therefore reads:
+    //   · R_eff ≈ 1 at the due date — the on-time review, whose success gain
+    //     (e^(κ(1−R_eff)) − 1 ≈ e^0 − 1 ≈ 0... at κ the gain below) and
+    //     lapse keep (≈ 0.5) are calibrated to today's curve;
+    //   · R_eff ≈ 1.11 for a crammed review (R ≈ 1 > target) — clamped to 1:
+    //     an early correct review earns ~no gain and an early lapse keeps the
+    //     0.05 floor — cramming is not rewarded;
+    //   · R_eff < 1 for an OVERDUE review — a correct recall of a word the
+    //     model thought was nearly gone is the genuinely surprising event
+    //     (gain grows), while an overdue lapse keeps MORE stability (the
+    //     forgetting already happened; R was already low).
     if (verdict === 'correct') {
-      const gain = fsrsWeight * FSRS_SUCCESS_GAIN * Math.exp(-state.difficulty / FSRS_DIFFICULTY_SCALE);
+      // Success (17.2): at or before the due date, R_eff = 1 and the gain is
+      // exactly the pre-L1a growth; an OVERDUE correct recall (R_eff < 1)
+      // earns the surprise bonus — rescuing a nearly-forgotten word is the
+      // event that stretches stability most.
+      const retrievalEff = Math.min(reviewRetrievability(retrievalAnchor) / FSRS_TARGET_RETENTION, 1);
+      const gain =
+        fsrsWeight *
+        (1 + FSRS_OVERDUE_BONUS * (1 - retrievalEff)) *
+        Math.exp(-state.difficulty / FSRS_DIFFICULTY_SCALE);
       state.stability = state.stability * (1 + gain);
       state.difficulty = Math.max(1, state.difficulty - 0.1 * fsrsWeight);
     } else {
-      const collapse = 0.2 * (state.difficulty / 10);
-      state.stability = Math.max(0.01, state.stability * (fsrsWeight * collapse + (1 - fsrsWeight)));
+      // Lapse (17.3): keep = clamp(1 − R, 0.05, 0.5) — pure surprise, no
+      // difficulty term (the 2026-09 review's inverted multiplier is gone).
+      //   · crammed lapse (R ≈ 1): the model was ~certain — keeps the 0.05
+      //     floor, the harshest collapse in the system;
+      //   · on-time lapse (R = 0.9): keeps 0.1 — exactly today's
+      //     mid-difficulty behavior, the calibration anchor;
+      //   · overdue lapse (R ≤ 0.5): keeps up to 0.5 — the forgetting
+      //     already happened, the grade adds little information.
+      const retrieval = reviewRetrievability(retrievalAnchor);
+      const keep = clampRange(1 - retrieval, 0.05, 0.5);
+      state.stability = Math.max(0.01, state.stability * (fsrsWeight * keep + (1 - fsrsWeight)));
       state.difficulty = Math.min(10, state.difficulty + 0.4 * fsrsWeight);
     }
     state.lastIntervalDays = dueIntervalDays(state.stability);
@@ -2169,7 +2503,8 @@ export class TeacherAgent {
       verdict,
       traceIds: provenance.traceIds,
       edges: provenance.edges,
-      operatorId: provenance.operatorId
+      operatorId: provenance.operatorId,
+      ruleIds: provenance.ruleIds
     });
     if (this.answerGrades.length > ANSWER_GRADES_CAP) {
       this.answerGrades.splice(0, this.answerGrades.length - ANSWER_GRADES_CAP);
@@ -2730,7 +3065,8 @@ export class TeacherAgent {
   private framesForSubject(subject: string): string[] {
     return framesFor(subject, this.relations(), {
       negations: this.negations,
-      cost: this.compositionCost
+      cost: this.compositionCost,
+      extraRules: this.compositionRules.admitted()
     });
   }
 
@@ -2917,6 +3253,10 @@ export class TeacherAgent {
           !this.hiddenRelationKeys!.has(edgeKey(relation.subject, relation.predicate, relation.object))
       );
     }
+    // M5 (22.2): refresh the HYPOTHESIS tier — loose-extraction edges the
+    // precision graph intentionally drops become standing hypotheses, ready
+    // for corroboration-driven promotion.
+    this.refreshHypothesisEdges(this.relationsCache);
     this.rebuildRelationalHologram();
     return this.relationsCache;
   }
@@ -2982,7 +3322,108 @@ export class TeacherAgent {
     const current = this.edgeSources.get(key) ?? [];
     if (current.includes(sourceClass)) return;
     this.edgeSources.set(key, [...current, sourceClass]);
+    // M5 (22.4): corroboration PROMOTES a standing hypothesis — the second
+    // independent class is exactly the promotion gate.
+    this.promoteHypothesisIfCorroborated(subject, predicate, object);
     this.invalidateRelations();
+  }
+
+  /** M5 (22.2): derive the hypothesis tier from the loose extraction —
+   *  every loose edge whose key is neither asserted, negated, nor already
+   *  hypothesized becomes a standing hypothesis (bounded FIFO). */
+  private refreshHypothesisEdges(asserted: readonly Relation[]): void {
+    // MEASURED (Phase 22, full 20k deck): 1083 loose-only edges over 1053
+    // subjects — the cap holds them all with headroom while staying bounded.
+    const HYPOTHESIS_EDGE_CAP = 2000;
+    const assertedKeys = new Set(asserted.map((r) => edgeKey(r.subject, r.predicate, r.object)));
+    const known = new Set(this.hypothesisEdges.map((r) => edgeKey(r.subject, r.predicate, r.object)));
+    const loose = extractRelations(
+      [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition })),
+      { loose: true }
+    );
+    for (const relation of loose) {
+      const key = edgeKey(relation.subject, relation.predicate, relation.object);
+      if (assertedKeys.has(key) || known.has(key)) continue;
+      if (this.negations.some((n) => n.subject === relation.subject && n.predicate === relation.predicate && n.object === relation.object)) continue;
+      known.add(key);
+      this.hypothesisEdges.push({ ...relation, tier: 'hypothesis' });
+    }
+    if (this.hypothesisEdges.length > HYPOTHESIS_EDGE_CAP) {
+      this.hypothesisEdges.splice(0, this.hypothesisEdges.length - HYPOTHESIS_EDGE_CAP);
+    }
+  }
+
+  /** M5 (22.4): promote a hypothesis whose key has earned ≥ 2 independent
+   *  source classes (its own origin class + the accumulated evidence) into
+   *  the asserted graph (the chaperone store carries adopted edges). */
+  private promoteHypothesisIfCorroborated(subject: string, predicate: string, object: string): void {
+    const index = this.hypothesisEdges.findIndex(
+      (r) => r.subject === subject && r.predicate === predicate && r.object === object
+    );
+    if (index === -1) return;
+    const hypothesis = this.hypothesisEdges[index];
+    const classes = distinctClasses([
+      ...(hypothesis.sourceClasses ?? [sourceClassForOrigin(hypothesis.origin)]),
+      ...(this.edgeSources.get(edgeKey(subject, predicate, object)) ?? [])
+    ]);
+    if (classes.length < 2) return;
+    this.hypothesisEdges.splice(index, 1);
+    const duplicate = this.chaperoneRelations.some(
+      (r) => r.subject === subject && r.predicate === predicate && r.object === object
+    );
+    if (!duplicate) {
+      this.chaperoneRelations.push({ ...hypothesis, tier: 'asserted', sourceClasses: classes });
+    }
+    this.invalidateRelations();
+    this.maybePersist();
+  }
+
+  /** M5 (22.3): the hypothesis tier's read surface (tests + introspection). */
+  hypothesisEdgeList(): readonly Relation[] {
+    return this.hypothesisEdges;
+  }
+
+  /**
+   * M5 (22.3): a HEDGED answer from the hypothesis tier — consulted only
+   * after the asserted graph and operators declined. A hypothesis answers
+   * single-edge relational questions only (never chained — the one-hop rule
+   * is structural: hypotheses never enter walks), always hedged, and is
+   * blocked by the confirmed-false store.
+   */
+  private hypothesisAnswerFor(utterance: string): { response: string; edge: Relation; operator: OperatorResult } | null {
+    const form = questionFormOf(utterance);
+    if (form === null || form.object === undefined) return null;
+    const predicate = form.kind as RelationPredicate;
+    if (!['is-a', 'has-part', 'made-of', 'used-for', 'capable-of', 'opposite-of', 'requires'].includes(predicate)) {
+      return null;
+    }
+    const edge = this.hypothesisEdges.find(
+      (r) => r.subject === form.subject && r.predicate === predicate && r.object === form.object
+    );
+    if (edge === undefined) return null;
+    if (this.negations.some((n) => n.subject === edge.subject && n.predicate === edge.predicate && n.object === edge.object)) {
+      return null;
+    }
+    const response = `I think ${edge.subject} ${predicateVerb(edge.predicate, edge.object)} ${edge.object}, but I have only one source for that.`;
+    const operator = ((): OperatorResult => {
+      switch (edge.predicate) {
+        case 'has-part':
+          return { kind: 'has-part', subject: edge.subject, part: edge.object, via: null, answer: response, score: 0.5 };
+        case 'made-of':
+          return { kind: 'made-of', subject: edge.subject, material: edge.object, answer: response, score: 0.5 };
+        case 'capable-of':
+          return { kind: 'capable-of', subject: edge.subject, action: edge.object, via: null, answer: response, score: 0.5 };
+        case 'used-for':
+          return { kind: 'used-for', subject: edge.subject, purpose: edge.object, answer: response, score: 0.5 };
+        case 'opposite-of':
+          return { kind: 'opposite-of', subject: edge.subject, opposite: edge.object, answer: response, score: 0.5 };
+        case 'requires':
+          return { kind: 'requires', subject: edge.subject, requirement: edge.object, via: null, answer: response, score: 0.5 };
+        default:
+          return { kind: 'is-a', subject: edge.subject, target: edge.object, answer: response, score: 0.5 };
+      }
+    })();
+    return { response, edge, operator };
   }
 
   /** P14: drop a corroborating source class (e.g. the world later rejected
@@ -3194,6 +3635,11 @@ export class TeacherAgent {
     return this.compiledRules.length;
   }
 
+  /** The compiled DSL rules (read view — tests and reports). */
+  compiledRulesView(): CompiledRule[] {
+    return this.compiledRules.map((rule) => ({ ...rule }));
+  }
+
   /**
    * Compile an induced DSL program into a first-class operator. The rule only
    * fires on prompts its own family's matcher fully parses — anything else
@@ -3246,6 +3692,361 @@ export class TeacherAgent {
   /** Number of learned language patterns that have cleared the bar. */
   learnedPatternCount(): number {
     return this.operatorLearner.fireableCount();
+  }
+
+  // ── The rewrite engine (R0–R5): rules as memories ──────────────────────
+
+  /** The rule store — decks + induced rules (read view for tests/CLI). */
+  rewriteRuleStore(): RuleStore {
+    return this.ruleStore;
+  }
+
+  /** R4: the drill loop's induction mode (default false = shipped DSL path). */
+  rewriteInductionEnabled(): boolean {
+    return this.rewriteInduction;
+  }
+
+  /** Register learned rewrite rules (drill induction, taught rules,
+   *  chaperone-supplied) — the store keeps their provenance as-is. */
+  registerLearnedRules(rules: readonly RewriteRule[]): void {
+    for (const rule of rules) this.ruleStore.register(rule);
+  }
+
+  /** @deprecated use registerLearnedRules — kept for existing callers. */
+  registerInducedRules(rules: readonly RewriteRule[]): void {
+    this.registerLearnedRules(rules);
+  }
+
+  /**
+   * R10 — TEACH A RULE: a procedure stated in English is parsed into a
+   * candidate rewrite rule (the bounded grammar of `rules/instruction.ts`)
+   * and must prove itself on the family's deterministic oracle BEFORE
+   * adoption. A taught rule speaks hedged until the world corroborates it.
+   * Returns the outcome with a counterexample on rejection — the observer
+   * explains why the rule failed, it never silently refuses.
+   */
+  teachRewriteRule(text: string, drill: string, options: { origin?: RuleOrigin } = {}): {
+    adopted: boolean;
+    message: string;
+    counterexample?: string;
+    ruleId?: string;
+  } {
+    const spec = taughtRuleSpecFor(drill);
+    if (spec === null) {
+      return {
+        adopted: false,
+        message: 'I do not have a procedure slot for that family yet — I can only take rules for the families I know.'
+      };
+    }
+    const parsed = parseTaughtRule(text, spec, options.origin ?? 'taught');
+    if (parsed === null) {
+      return {
+        adopted: false,
+        message:
+          'I could not parse that as a rule. Try the shape: "to find the gcd of a and b: if b is zero the answer is a; otherwise it is the gcd of b and the remainder of a divided by b."'
+      };
+    }
+    const validation = validateTaughtRule(this.ruleStore, parsed, drill, {
+      baseline: Math.max(0.05, chanceLevel(drill))
+    });
+    if (!validation.ok) {
+      return {
+        adopted: false,
+        counterexample: validation.counterexample,
+        message: `I cannot trust that rule yet. ${validation.counterexample ?? ''}`
+      };
+    }
+    this.registerLearnedRules([parsed]);
+    return {
+      adopted: true,
+      ruleId: parsed.id,
+      message: `Learned. The rule now derives the family's instances; I will say "I think" until it is confirmed.`
+    };
+  }
+
+  /**
+   * Apply the rewrite rules to a fresh prompt (chatAnswer step 2.7). Only
+   * prompts that parse through the authored lifters reach the engine —
+   * unparsed prompts return null and the dispatch falls through untouched.
+   * A prompt that PARSES but cannot derive (stuck, exhausted, or an
+   * undecodable normal form) returns `underivable` — the dispatch treats
+   * it as a grounded computation question and routes it to ASK, never to
+   * the creative layer (a memory-composed answer to a computation request
+   * is a fabrication channel).
+   */
+  private applyRewriteRules(utterance: string):
+    | {
+        kind: 'rewrite';
+        ruleIds: string[];
+        steps: number;
+        answer: string;
+        trace: Array<{ ruleId: string; before: string; after: string }>;
+      }
+    | { kind: 'underivable' }
+    | null {
+    const parsed = parseRewritePrompt(utterance);
+    if (parsed === null) return null;
+    const reduction = reduce(this.ruleStore, parsed.term, { fuel: parsed.fuel });
+    if (reduction.outcome.status !== 'normal') return { kind: 'underivable' };
+    const value = decodeNormalForm(reduction.outcome.term);
+    if (value === null) return { kind: 'underivable' };
+    for (const id of reduction.ruleIds) this.ruleStore.noteUse(id);
+    // P14 applied to rules: an answer derived through an uncorroborated
+    // INDUCED rule speaks hedged — the observer never asserts a procedure
+    // it invented for itself as confidently as one the reviewed deck gave
+    // it, until the world corroborates it.
+    const cited = reduction.ruleIds.map((id) => this.ruleStore.get(id)).filter((r) => r !== undefined);
+    const hedged = cited.some((r) => r.origin !== 'authored' && !r.sourceClasses.includes('world-feedback'));
+    return {
+      kind: 'rewrite',
+      ruleIds: reduction.ruleIds,
+      steps: reduction.steps,
+      answer: hedged ? `I think the answer is ${value}.` : `The answer is ${value}.`,
+      trace: reduction.outcome.status === 'normal' ? reduction.outcome.steps : []
+    };
+  }
+
+  /**
+   * R5 — surgical rule weakening: a wrong grade weakens exactly the cited
+   * rules (the edge convention: ±0.2 scaled by the feedback weight, floored
+   * at 0.1), records the denial, and stops a doubly-denied rule at the
+   * floor — never deleted, the record is kept.
+   */
+  private weakenRule(id: string, weight: number, denial?: Partial<DerivationDenial>): void {
+    const rule = this.ruleStore.get(id);
+    if (rule === undefined) return;
+    this.ruleStore.adjustStrength(id, -RULE_GRADE_DELTA * Math.max(0, Math.min(1, weight)));
+    // REVIEW FIX (Med2): P14 withdrawal symmetry — edges lose their
+    // world-feedback credit on a weak grade; rules must too, or a
+    // once-corroborated rule asserts flatly all the way to the floor.
+    this.ruleStore.removeSourceClass(id, 'world-feedback');
+    this.ruleStore.recordDenial({
+      ruleId: id,
+      input: denial?.input,
+      output: denial?.output,
+      expected: denial?.expected,
+      evidence: 'graded-wrong',
+      at: Date.now()
+    });
+    if (!rule.active) this.ruleResolutions.add(id);
+    this.storeBelief(
+      rule.name,
+      `I thought the rule ${rule.name} derived this answer, but the world says it was wrong.`,
+      'relation-conflict',
+      { ruleId: id, strength: rule.strength },
+      true
+    );
+  }
+
+  /** The stopped-rule ledger (one-shot — never re-litigated). */
+  ruleResolutionsView(): string[] {
+    return [...this.ruleResolutions];
+  }
+
+  /** R11: the drill loop raises a rule question — a procedure answer is
+   *  now being awaited for the family. */
+  notePendingRuleQuestion(concept: string, drill: string): void {
+    this.pendingRuleQuestions.set(drill, concept);
+  }
+
+  /** R11: every open rule question (drivers offer these to a teacher —
+   *  the human in chat, the chaperone later — as questions, never as
+   *  answers). */
+  pendingRuleQuestionsView(): Array<{ concept: string; drill: string }> {
+    return [...this.pendingRuleQuestions.entries()].map(([drill, concept]) => ({ concept, drill }));
+  }
+
+  /**
+   * R11 — CLOSE THE LOOP: a user reply is tried as the answer to an open
+   * rule question. When the reply parses as a procedure for the pending
+   * family it goes through the R10 pipeline: adoption acknowledges and
+   * clears the question; validation failure answers with the
+   * counterexample — the observer says what the rule got wrong, it never
+   * silently refuses. Returns null when no rule question is pending or the
+   * reply does not parse — the normal chat dispatch handles the reply.
+   */
+  tryTeachReply(text: string): { handled: boolean; message: string; adopted: boolean } | null {
+    const pending = this.pendingRuleQuestionsView();
+    if (pending.length === 0) return null;
+    // REVIEW FIX (Med1): the reply is tried against EVERY open question,
+    // not just the FIFO head — a slot-less pending (place-value, lcm) at
+    // the front must not starve an adoptable gcf question behind it.
+    for (const question of pending) {
+      const slot = taughtRuleSpecFor(question.drill);
+      if (slot === null) continue;
+      const parsed = parseTaughtRule(text, slot);
+      if (parsed === null) continue;
+      const outcome = this.teachRewriteRule(text, question.drill);
+      if (outcome.adopted) {
+        this.forgetPendingRuleQuestion(question.drill);
+        return { handled: true, adopted: true, message: outcome.message };
+      }
+      return { handled: true, adopted: false, message: outcome.message };
+    }
+    // A question IS open, but no family's grammar accepted the reply —
+    // say what the observer needs instead of letting the reply fall into
+    // ordinary chat unanswered.
+    const first = pending[0];
+    if (taughtRuleSpecFor(first.drill) === null) {
+      return {
+        handled: true,
+        adopted: false,
+        message:
+          'I am waiting on the rule for ' +
+          first.concept +
+          ', but I do not yet have a procedure slot for that family — I can only take rules for the families I know (gcf today).'
+      };
+    }
+    return {
+      handled: true,
+      adopted: false,
+      message:
+        'I could not parse that as a rule. Try the shape: "to find the gcd of a and b: if b is zero the answer is a; otherwise it is the gcd of b and the remainder of a divided by b."'
+    };
+  }
+
+  /** R11: the rule question was answered — the gap and the pending entry
+   *  are both closed. */
+  forgetPendingRuleQuestion(drill: string): void {
+    const concept = this.pendingRuleQuestions.get(drill);
+    this.pendingRuleQuestions.delete(drill);
+    if (concept !== undefined) this.forgetGap(`what is the rule for ${concept}?`);
+  }
+
+  /**
+   * R16 — DECAY = weaken-toward-hedged, never forget. A learned rule
+   * unused past the horizon loses its world credit: it keeps working but
+   * speaks hedged again until the world re-corroborates it. Authored
+   * decks never decay (architectural values). Never deletes, never stops
+   * — only the denial machinery stops.
+   */
+  decayRuleCorroboration(now = Date.now(), horizonMs = RULE_CORROBORATION_HORIZON_MS): { decayed: string[] } {
+    const decayed: string[] = [];
+    for (const rule of this.ruleStore.all()) {
+      if (rule.origin === 'authored') continue;
+      if (!rule.sourceClasses.includes('world-feedback')) continue;
+      const lastUsed = rule.lastUsedAt ?? rule.createdAt;
+      if (now - lastUsed >= horizonMs) {
+        this.ruleStore.removeSourceClass(rule.id, 'world-feedback');
+        decayed.push(rule.id);
+      }
+    }
+    return { decayed };
+  }
+
+  /**
+   * R16 — CONSOLIDATION (idle maintenance, behavior-preserving): the
+   * learner cleans its own rule shelf.
+   *
+   *  1. STRUCTURAL DEDUPE: learned rules with identical bodies and the
+   *     same head collapse to the cheapest record — use counts and world
+   *     credit transfer to the survivor; the redundant records are
+   *     deactivated (never deleted; the record is the record).
+   *  2. MDL RE-SIMPLIFICATION: for a learned rule whose family has a
+   *     drill slot, re-run induction over fresh instances; a strictly
+   *     cheaper rule set that clears the same held-out bar replaces the
+   *     original under the reserved origin 'consolidated'.
+   *  3. DENIAL COMPACTION: identical denials collapse to their earliest.
+   */
+  consolidateLearnedRules(): {
+    deduped: string[];
+    consolidated: string[];
+    compactedDenials: number;
+  } {
+    const learned = this.ruleStore.all().filter((rule) => rule.origin !== 'authored' && rule.active);
+    const report = { deduped: [] as string[], consolidated: [] as string[], compactedDenials: 0 };
+
+    // 1. Structural dedupe by (name, canonical body).
+    const byBody = new Map<string, RewriteRule[]>();
+    for (const rule of learned) {
+      const key = `${rule.name}\u0000${termToString(rule.rhs)}`;
+      const bucket = byBody.get(key);
+      if (bucket === undefined) byBody.set(key, [rule]);
+      else bucket.push(rule);
+    }
+    for (const bucket of byBody.values()) {
+      if (bucket.length < 2) continue;
+      bucket.sort((a, b) => a.bits - b.bits);
+      const keeper = bucket[0];
+      for (const redundant of bucket.slice(1)) {
+        keeper.useCount += redundant.useCount;
+        if (redundant.lastUsedAt !== undefined && (keeper.lastUsedAt === undefined || redundant.lastUsedAt > keeper.lastUsedAt)) {
+          keeper.lastUsedAt = redundant.lastUsedAt;
+        }
+        for (const sourceClass of redundant.sourceClasses) this.ruleStore.addSourceClass(keeper.id, sourceClass);
+        this.ruleStore.setActive(redundant.id, false);
+        report.deduped.push(redundant.id);
+      }
+    }
+
+    // 2. MDL re-simplification for drill-backed families.
+    for (const rule of this.ruleStore.all()) {
+      if (rule.origin === 'authored' || !rule.active || rule.schema === undefined) continue;
+      const family = drillForRuleName(rule.name);
+      if (family === null) continue;
+      const target = rewriteTargetFor(family);
+      if (target === null || target.schema !== rule.schema) continue;
+      const fresh = generateExercises(family, 'concept', { count: 44, seed: 0x50c11 });
+      const train: InductionInstance[] = [];
+      const test: InductionInstance[] = [];
+      for (const exercise of fresh.slice(0, 22)) {
+        const instance = target.lift(exercise);
+        if (instance !== null) train.push(instance);
+      }
+      for (const exercise of fresh.slice(22)) {
+        const instance = target.lift(exercise);
+        if (instance !== null) test.push(instance);
+      }
+      if (train.length < 6 || test.length < 6) continue;
+      const instanceBits = train.reduce((sum, instance) => sum + termBits(instance.answer), 0);
+      const cheaper = induceRuleSet(this.ruleStore, rule.name, train, {
+        instanceBits,
+        baseline: 0.05,
+        margin: INDUCTION_MARGIN,
+        minHits: MIN_INDUCTION_HITS,
+        schema: rule.schema,
+        fuel: 60_000
+      });
+      if (cheaper === null) continue;
+      const cheaperBits = cheaper.reduce((sum, candidate) => sum + candidate.bits, 0);
+      if (cheaperBits >= rule.bits) continue;
+      if (!validateHeldOut(this.ruleStore, cheaper, test, 0.05, INDUCTION_MARGIN, MIN_INDUCTION_HITS, 60_000)) continue;
+      // REVIEW FIX (M4): fresh ids under the reserved origin — the old
+      // deterministic induced ids would collide in register() and the
+      // origin/bits/body would silently never land.
+      const freshId = (() => {
+        let seq = 0;
+        return (name: string): string => `consolidated-${name}-${seq++}`;
+      })();
+      const consolidated: RewriteRule[] = cheaper.map((candidate) => ({
+        ...candidate,
+        id: freshId(rule.name),
+        origin: 'consolidated' as const,
+        createdAt: Date.now(),
+        useCount: 0,
+        lastUsedAt: undefined
+      }));
+      // REVIEW FIX: the consolidated replacement inherits the old rule's
+      // corroboration and usage — a world-confirmed rule must not flip
+      // back to "I think…" just because its body got cheaper.
+      if (consolidated[0] !== undefined) {
+        for (const sourceClass of rule.sourceClasses) this.ruleStore.addSourceClass(consolidated[0].id, sourceClass);
+        consolidated[0].useCount = rule.useCount;
+        consolidated[0].lastUsedAt = rule.lastUsedAt;
+      }
+      this.ruleStore.setActive(rule.id, false);
+      this.registerLearnedRules(consolidated);
+      report.consolidated.push(rule.id);
+    }
+
+    // 3. Denial compaction.
+    report.compactedDenials = this.ruleStore.compactDenials();
+    return report;
+  }
+
+  /** The composition-rule store (seeds + admitted) for the composer. */
+  compositionRuleStore(): CompositionRuleStore {
+    return this.compositionRules;
   }
 
   /** MDL audit view of the learned-operator library (gains, maturity). */
@@ -3385,7 +4186,9 @@ export class TeacherAgent {
    *  gate excludes EVERY option, answering is the sane default — never a
    *  silent bypass of the gate (chooseBehavior returns null in that case). */
   chooseNext(utterance: string, options: readonly BehaviorOption[]): BehaviorOption {
-    const choice = chooseBehavior(this.drives(utterance), options, this.behaviorWeights, this.availableBehaviors());
+    // M4 (21.2): arbitration explores — Boltzmann sampling at the drive
+    // temperature, on the session-seeded stream (deterministic per seed).
+    const choice = chooseBehavior(this.drives(utterance), options, this.behaviorWeights, this.availableBehaviors(), this.arbitrationRng);
     return choice ?? 'answer';
   }
 
@@ -3411,6 +4214,9 @@ export class TeacherAgent {
     if (win) record.wins += 1;
     else record.losses += 1;
     updateDriveWeight(this.behaviorWeights, option, win);
+    // L3 (19.3): a fresh outcome restarts the drift clock — the weight is in
+    // active use, so it does not decay toward the archetype.
+    this.behaviorOutcomeAt.set(option, Date.now());
     this.maybePersist();
   }
 
@@ -3627,6 +4433,7 @@ export class TeacherAgent {
       edgeStrength: (subject, predicate, object) => this.edgeStrengthOf(subject, predicate, object),
       negationOf: (subject, predicate, object) => this.negationOf(subject, predicate, object),
       compositionCost: this.compositionCost,
+      extraCompositionRules: this.compositionRules.admitted(),
       // The graded distributed-vector fallback (P1): used only when the
       // symbolic graph above is silent — never overrides a grounded edge.
       relationalScore: (subject, predicate, object) =>
@@ -3667,6 +4474,26 @@ export class TeacherAgent {
       });
     }
 
+    // 2.55 M5 (22.3) HYPOTHESIS TIER: the asserted graph and the operators
+    //      declined — a standing hypothesis may answer, HEDGED only, one
+    //      edge deep, blocked by the confirmed-false store. Its provenance
+    //      cites the edge, so a later strong world grade promotes it.
+    const hypothesis = this.hypothesisAnswerFor(resolved);
+    if (hypothesis !== null) {
+      this.workingMemory.note('observer', hypothesis.response);
+      this.noteAnswerMode('operator');
+      return finish({
+        mode: 'operator',
+        response: hypothesis.response,
+        operator: hypothesis.operator,
+        provenance: {
+          traceIds: [],
+          edges: [{ subject: hypothesis.edge.subject, predicate: hypothesis.edge.predicate, object: hypothesis.edge.object }],
+          operatorId: 'hypothesis'
+        }
+      });
+    }
+
     // 2.6 COMPILED RULES: executable programs induced from drills (P2). A
     //     memorized drill becomes a rule that computes fresh prompts of its
     //     family — deterministic computation beats stored instances, exactly
@@ -3682,6 +4509,38 @@ export class TeacherAgent {
         provenance: { traceIds: [], edges: [], operatorId: compiled.ruleId }
       });
     }
+
+    // 2.7 REWRITE RULES (R3a): the observer derives answers by rewriting
+    //     symbols with its rule decks — the same capacity mathematics,
+    //     logic, and chained inference share. Legacy compiled rules shadow
+    //     the engine on shipped records (byte-identical control); this
+    //     layer is the computing path for families the DSL never compiled.
+    //     A prompt that PARSES into the engine's domain but cannot derive
+    //     (no rule for the family yet — gcf before induction) is a grounded
+    //     computation question: it must route to ASK, never to the creative
+    //     layer — composing over a computation request is a fabrication
+    //     channel (the R7 finding: the creative path answered gcf prompts
+    //     from memory on a fresh record).
+    const rewriteProbe = this.applyRewriteRules(resolved);
+    if (rewriteProbe !== null && rewriteProbe.kind === 'rewrite') {
+      this.workingMemory.note('observer', rewriteProbe.answer);
+      this.noteAnswerMode('operator');
+      return finish({
+        mode: 'operator',
+        response: rewriteProbe.answer,
+        operator: rewriteProbe,
+        provenance: {
+          traceIds: [],
+          edges: [],
+          operatorId: 'rewrite',
+          ruleIds: rewriteProbe.ruleIds,
+          derivationSteps: rewriteProbe.steps
+        }
+      });
+    }
+    /** A computation prompt the engine parsed but cannot yet derive —
+     *  treated as a grounded question: ASK, never creative. */
+    const underivableComputation = rewriteProbe !== null;
 
     const meaningCue = meaningCueOf(resolved);
     if (meaningCue !== null) {
@@ -3727,7 +4586,7 @@ export class TeacherAgent {
     // no memory, operator, or relation path supports it — so composing over
     // it would be confident nonsense. Those route to ASK.
     const questionForm = questionFormOf(resolved);
-    const groundedQuestion = questionForm !== null || meaningCue !== null;
+    const groundedQuestion = questionForm !== null || meaningCue !== null || underivableComputation;
     // Creative also needs something KNOWN to seed from — a known content
     // word, or a recall whose CUE is the utterance itself (phatic phrases
     // like "how are you" carry no content words yet are taught exchanges
@@ -3877,10 +4736,25 @@ export class TeacherAgent {
     return this.episodic.recall(utterance, { topK });
   }
 
+  /** Phase 24.3: one gate's calibration drift report (read-only). */
+  calibrationReport(gate: string): CalibrationReport {
+    return this.calibration.report(gate);
+  }
+
+  /** Phase 24.3: every measured calibration gate. */
+  calibrationGates(): string[] {
+    return this.calibration.gateNames();
+  }
+
   /** The learned composition transition weights (read-only — the observer's
    *  tiny language model, exposed for the Phase 7a correlation bench). */
   getCompositionWeights(): TransitionWeights {
     return this.compositionWeights;
+  }
+
+  /** L3 (19.2): the weights' decay clocks (read-only — round-trip gates). */
+  getCompositionWeightMeta(): ReadonlyMap<string, number> {
+    return this.compositionWeightMeta;
   }
 
   /** The stored seed contents most resembling a phrase (for novelty
@@ -4065,7 +4939,7 @@ export class TeacherAgent {
           relations,
           this.compositionRng,
           undefined,
-          { negations: this.negations, cost: this.compositionCost },
+          { negations: this.negations, cost: this.compositionCost, extraRules: this.compositionRules.admitted() },
           this.learnedFrames
         )
       : null;
@@ -4073,7 +4947,8 @@ export class TeacherAgent {
       // The critic already verified the composition in composeGrounded;
       // re-verify against the full graph + negations for the final sentence.
       const verdict = criticize(grounded.sentence, relations, this.negations, {
-        cost: this.compositionCost
+        cost: this.compositionCost,
+        extraRules: this.compositionRules.admitted()
       });
       if (verdict.grounded) {
         // P14: the claims are graph-backed, but single-source claims are
@@ -4156,6 +5031,7 @@ export class TeacherAgent {
     const seedTraceIds = producers.traceIds;
     const citedEdges = producers.edges;
     const templateIds = producers.templateIds ?? [];
+    const citedRules = producers.ruleIds ?? [];
     if (score === null) return false;
     // THE FADING CONTROLLER (Phase 7c): when the student's own composite
     // has proven it can judge (measured agreement ≥ threshold), the reward
@@ -4177,12 +5053,9 @@ export class TeacherAgent {
     }
     const feedbackWeight = Math.max(0, Math.min(1, weight));
     const bank = this.session.observer.getMemoryBank();
-    const rawDelta =
-      score >= CREATIVE_REINFORCE_SCORE
-        ? CREATIVE_GRADE_DELTA
-        : score <= CREATIVE_WEAKEN_SCORE
-          ? -CREATIVE_GRADE_DELTA
-          : 0;
+    // L1b (18.2): the delta is surprise-scaled by the grade's margin beyond
+    // its gate; the BAND (reinforce/weaken/neutral) is unchanged.
+    const rawDelta = creativeGradeDelta(score);
     const delta = rawDelta * feedbackWeight;
     // P5 learned frames: the world's verdict is attributed to the templates
     // the grounded composition used. A strong answer also demonstrates its
@@ -4193,13 +5066,19 @@ export class TeacherAgent {
     if (delta > 0 && templateIds.length > 0 && answer.trim().length > 0) {
       this.learnedFrames.induce(answer, this.relations(), this.negations);
     }
+    // R4b: a cited chain is evidence for its predicate sequence — the
+    // composition-rule store's acceptance baseline is the seeds' own rate.
+    if (citedEdges.length >= 2) {
+      this.compositionRules.observe(citedEdges.map((edge) => edge.predicate), accepted);
+    }
     if (delta === 0) {
       // P7 contract: the ledger records the producers of EVERY graded
       // answer — a mid-grade (0.3–0.7) answer carries no reinforcement but
       // its producers must still be named for surgical repair.
       this.recordAnswerGrade(utterance, 'creative', 'neutral', {
         traceIds: seedTraceIds,
-        edges: citedEdges
+        edges: citedEdges,
+        ruleIds: citedRules.length > 0 ? citedRules : undefined
       });
       this.maybePersist();
       return false;
@@ -4217,7 +5096,7 @@ export class TeacherAgent {
       if (!contents.includes(trace.content)) contents.push(trace.content);
       bank.reinforce(traceId, delta);
     }
-    updateCompositionWeights(this.compositionWeights, contents, delta);
+    bumpAgedWeights(this.compositionWeights, this.compositionWeightMeta, contents, delta);
     // P11: a strongly-graded answer makes its seed traces more useful to keep
     // (grade evidence feeds the bank's retrieval-usefulness pruning).
     if (delta > 0) {
@@ -4241,11 +5120,21 @@ export class TeacherAgent {
       if (delta > 0) this.addEdgeSource(edge.subject, edge.predicate, edge.object, 'world-feedback');
       else if (delta < 0) this.removeEdgeSource(edge.subject, edge.predicate, edge.object, 'world-feedback');
     }
+    // R5: the world's verdict on an answer that DERIVED through rules
+    // credits or weakens exactly those rules — the rule analog of P8's
+    // per-edge confidence. A strong grade corroborates (the hedge lifts);
+    // a weak one weakens, records the denial, and stops a doubly-denied
+    // rule at the floor (never deleted).
+    for (const ruleId of citedRules) {
+      if (delta > 0) this.ruleStore.addSourceClass(ruleId, 'world-feedback');
+      else if (delta < 0) this.weakenRule(ruleId, feedbackWeight);
+    }
     // The P7 grade ledger: this answer's producers (and the edges it cited —
     // consumed by P8's per-edge confidence) are recorded for surgical repair.
     this.recordAnswerGrade(utterance, 'creative', rawDelta > 0 ? 'strong' : rawDelta < 0 ? 'weak' : 'neutral', {
       traceIds: seedTraceIds,
-      edges: citedEdges
+      edges: citedEdges,
+      ruleIds: citedRules.length > 0 ? citedRules : undefined
     });
 
     // Memorize strong answers as creative traces (surprise-gated: only store
@@ -4357,6 +5246,8 @@ export class TeacherAgent {
     const llmBand = gradeBandOf(score);
     const agree = bandsAgree(llmBand, ruleBand);
     this.reliabilityModel.recordAgreement(criteria, agree);
+    // Phase 24.3 (read-only): the creative band gates' calibration evidence.
+    if (ruleBand !== null) this.calibration.record('creative-grade', score, agree);
 
     // Disagreement → schedule the re-grade (the resolution updates the
     // model). The feedback below is applied DAMPED, never withheld.
@@ -4378,16 +5269,20 @@ export class TeacherAgent {
     }
 
     // The grade's own band travels with the authored answer so later world
-    // verdicts (re-ask / retention) can confirm or contradict it.
+    // verdicts (re-ask / retention) can confirm or contradict it — and L2
+    // (20.3): the STUDENT's band travels too, so the same world verdicts
+    // measure the composite judge under the same bucket.
     if (utterance.trim().length > 0) {
       const authored = this.previousAnswerFor(utterance);
       if (authored !== undefined) {
+        const composite = compositeScore(answer, utterance, this.compositionWeights, seedContents).composite;
         this.authoredAnswers.set(utterance.trim().toLowerCase(), {
           traceIds: authored.traceIds,
           at: authored.at,
           score,
           provider,
-          template: criteria.template
+          template: criteria.template,
+          compositeBand: composite > 0 ? gradeBandOf(composite) : null
         });
       }
     }
@@ -4470,13 +5365,14 @@ export class TeacherAgent {
     // outcome history, its handover λ, its exposure).
     const learningState: BootstrapRecord['learningState'] = {
       compositionWeights: Object.fromEntries(this.compositionWeights),
+      // L3 (19.2/19.3): the decay clocks ride the record (additive fields).
+      compositionWeightMeta: Object.fromEntries(this.compositionWeightMeta),
+      behaviorOutcomeAt: Object.fromEntries(this.behaviorOutcomeAt),
       behaviorOutcomes: Object.fromEntries(
         Object.entries(this.behaviorOutcomes).map(([option, record]) => [option, { ...record }])
       ) as Record<string, { wins: number; losses: number }>,
-      fadeState: {
-        agreement: { ...this.fadeState.agreement },
-        lambda: { ...this.fadeState.lambda }
-      },
+      // L2 (20.4): fadeState is GONE — λ derives from the trust kernel; its
+      // evidence rides graderReliability below.
       exposureCounts: Object.fromEntries(this.exposureCounts),
       encounterCounts: Object.fromEntries(this.encounterCounts),
       drillFailures: Object.fromEntries(this.drillFailures),
@@ -4510,6 +5406,15 @@ export class TeacherAgent {
       negations: this.negations.length > 0 ? this.negations : undefined,
       resolvedSweepConflicts:
         this.resolvedSweepConflicts.size > 0 ? [...this.resolvedSweepConflicts] : undefined,
+      rewriteRules:
+        this.ruleStore.all().filter((rule) => rule.origin !== 'authored').length > 0
+          ? this.ruleStore
+              .all()
+              .filter((rule) => rule.origin !== 'authored')
+              .map((rule) => ({ ...rule }))
+          : undefined,
+      rewriteDenials: this.ruleStore.allDenials().length > 0 ? this.ruleStore.allDenials() : undefined,
+      ruleResolutions: this.ruleResolutions.size > 0 ? [...this.ruleResolutions] : undefined,
       authoredAnswers:
         this.authoredAnswers.size > 0
           ? [...this.authoredAnswers.entries()].map(([utterance, entry]) => ({
@@ -4928,7 +5833,7 @@ export class TeacherAgent {
    *  entry so a later world verdict can confirm or contradict the grade
    *  under the ORIGINAL bucket (the reliability model's world-feedback
    *  channel). */
-  private readonly authoredAnswers = new Map<string, { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null }>();
+  private readonly authoredAnswers = new Map<string, { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null; compositeBand?: GradeBand | null }>();
 
   /** Note a creative answer the observer itself produced (the seed traces
    *  it was composed from + when). */
@@ -4939,7 +5844,7 @@ export class TeacherAgent {
   }
 
   /** The answer the observer last gave for an utterance (for re-ask credit). */
-  private previousAnswerFor(utterance: string): { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null } | undefined {
+  private previousAnswerFor(utterance: string): { traceIds: string[]; at: number; score?: number | null; provider?: string | null; template?: string | null; compositeBand?: GradeBand | null } | undefined {
     return this.authoredAnswers.get(utterance.trim().toLowerCase());
   }
 
@@ -4972,6 +5877,16 @@ export class TeacherAgent {
         gradeBandOf(prior.score) !== 'strong'
       );
     }
+    // L2 (20.3): the same world verdict measures the COMPOSITE judge — a
+    // re-ask contradicts a composite that called the answer strong.
+    if (prior.compositeBand !== undefined && prior.compositeBand !== null) {
+      this.reliabilityModel.recordJudgeAgreement(
+        JUDGE_COMPOSITE,
+        this.worldFeedbackCriteria(prior, utterance),
+        prior.compositeBand !== 'strong',
+        WORLD_FEEDBACK_WEIGHT
+      );
+    }
     const bank = this.session.observer.getMemoryBank();
     const contents: string[] = [];
     for (const id of prior.traceIds) {
@@ -4979,11 +5894,13 @@ export class TeacherAgent {
       if (trace !== undefined) contents.push(trace.content);
     }
     if (contents.length > 0) {
-      updateCompositionWeights(this.compositionWeights, contents, -CREATIVE_GRADE_DELTA);
+      // L1b: the re-ask is the world's full-strength weaken — the helper's
+      // weak extreme (creativeGradeDelta(0) = −CREATIVE_GRADE_DELTA).
+      bumpAgedWeights(this.compositionWeights, this.compositionWeightMeta, contents, creativeGradeDelta(0));
     }
     for (const id of prior.traceIds) {
       const trace = bank.get(id);
-      if (trace !== undefined) bank.reinforce(id, -CREATIVE_GRADE_DELTA);
+      if (trace !== undefined) bank.reinforce(id, creativeGradeDelta(0));
     }
     // The gap is recorded by the ask path itself — never double-bump.
   }
@@ -5004,10 +5921,22 @@ export class TeacherAgent {
         this.worldFeedbackCriteria(authored, trace.content),
         gradeBandOf(authored.score) === 'strong'
       );
+      // L2 (20.3): retention confirms a composite that called it strong.
+      if (authored.compositeBand !== undefined && authored.compositeBand !== null) {
+        this.reliabilityModel.recordJudgeAgreement(
+          JUDGE_COMPOSITE,
+          this.worldFeedbackCriteria(authored, trace.content),
+          authored.compositeBand === 'strong',
+          WORLD_FEEDBACK_WEIGHT
+        );
+      }
       break;
     }
-    updateCompositionWeights(this.compositionWeights, [trace.content], CREATIVE_GRADE_DELTA * RETENTION_FRACTION);
-    this.session.observer.getMemoryBank().reinforce(traceId, CREATIVE_GRADE_DELTA * RETENTION_FRACTION);
+    // L1b: retention is the world's slow confirm — the helper's strong
+    // extreme (creativeGradeDelta(1) = +CREATIVE_GRADE_DELTA) × the
+    // retention fraction.
+    bumpAgedWeights(this.compositionWeights, this.compositionWeightMeta, [trace.content], creativeGradeDelta(1) * RETENTION_FRACTION);
+    this.session.observer.getMemoryBank().reinforce(traceId, creativeGradeDelta(1) * RETENTION_FRACTION);
   }
 
   /** How many stored beliefs have been contradicted by experience — the
@@ -5063,24 +5992,57 @@ export class TeacherAgent {
     return available;
   }
 
-  // ── FADING CONTROLLER (Phase 7c): the calibrated handover ────────────────
-  /** Per-class fade state — how much the student's composite weights
-   *  against the teacher's grade, per class, driven by measured agreement
-   *  from the 7a bench. */
-  private readonly fadeState: FadeState = emptyFadeState();
-  /** Teacher-dependence accounting (Phase 7d): when the reward was actually
-   *  consulted the teacher's judgment vs. graded by the student's own
-   *  composite — the dependence rate is the handover's report card. */
-  private readonly teacherConsultations = { consulted: 0, selfGraded: 0 };
+  // ── THE EMERGENT HANDOVER (L2, Phase 20 — replaced the Phase 7c fading
+  // controller): λ is normalized trust from the kernel, not stored state. ──
+  /** Latest measured bench agreement per class (telemetry only — the λ
+   *  evidence is the kernel's, this is the report card's raw number). */
+  private readonly fadeAgreementTelemetry: Record<GradeClass, number | null> = {
+    conversational: null,
+    operator: null,
+    other: null
+  };
+  /** λ-traffic accounting (20.5): the dependence rate is the traffic-
+   *  weighted mean teacher share over graded answers. */
+  private readonly lambdaTraffic = { sum: 0, count: 0 };
 
-  /** Update the controller with a freshly measured agreement (bench). */
+  /** Feed a freshly measured bench agreement (7a Spearman window) into the
+   *  kernel as composite-judge evidence: a window at/above the strong band
+   *  agrees, below it disagrees. The raw value is kept as telemetry. */
   noteFadeAgreement(cls: GradeClass, agreement: number): void {
-    updateFadeState(this.fadeState, cls, agreement);
+    this.fadeAgreementTelemetry[cls] = agreement;
+    this.reliabilityModel.recordJudgeAgreement(JUDGE_COMPOSITE, fadeCriteria(cls), agreement >= GRADE_STRONG_THRESHOLD);
   }
 
-  /** The current per-class λ (read-only). */
+  /** L2 (20.4) MIGRATION: a legacy record's stored per-class λ becomes
+   *  equivalent kernel evidence — 20 samples at the stored agreement rate —
+   *  so an upgraded observer keeps its earned handover instead of resetting
+   *  to scaffolded. (Additive: runs once per restored legacy record; new
+   *  records carry no fadeState.) */
+  private seedLegacyFadeState(fade: { lambda?: Record<string, number> }): void {
+    if (typeof fade.lambda !== 'object' || fade.lambda === null) return;
+    for (const cls of ['conversational', 'operator', 'other'] as const) {
+      const lambda = fade.lambda[cls];
+      if (typeof lambda !== 'number' || !Number.isFinite(lambda) || lambda <= 0) continue;
+      const criteria = fadeCriteria(cls);
+      const mass = 20;
+      const agreeMass = clampRange(lambda, 0, 1) * mass;
+      if (agreeMass > 0) this.reliabilityModel.recordJudgeAgreement(JUDGE_COMPOSITE, criteria, true, agreeMass);
+      if (mass - agreeMass > 0) this.reliabilityModel.recordJudgeAgreement(JUDGE_COMPOSITE, criteria, false, mass - agreeMass);
+    }
+  }
+
+  /** The latest measured bench agreement per class (telemetry). */
+  fadeAgreements(): Record<GradeClass, number | null> {
+    return { ...this.fadeAgreementTelemetry };
+  }
+
+  /** The current per-class λ (read-only) — DERIVED from the trust kernel. */
   fadeLambdas(): Record<GradeClass, number> {
-    return { ...this.fadeState.lambda };
+    return {
+      conversational: this.reliabilityModel.lambdaFor(fadeCriteria('conversational')),
+      operator: this.reliabilityModel.lambdaFor(fadeCriteria('operator')),
+      other: this.reliabilityModel.lambdaFor(fadeCriteria('other'))
+    };
   }
 
   /** Which bootstrap deploy was last imported (generatedAt + word count) —
@@ -5099,40 +6061,48 @@ export class TeacherAgent {
     this.maybePersist();
   }
 
-  /** Teacher-dependence rate: fraction of graded answers that leaned on the
-   *  teacher (λ-effective above the floor) vs self-graded. 0 = fully
-   *  handed-over; 1 = fully scaffolded. */
+  /** Teacher-dependence rate (20.5): the traffic-weighted mean TEACHER SHARE
+   *  (1 − λ) over graded answers. 0 = fully handed-over; 1 = fully
+   *  scaffolded; 0 before any graded traffic. */
   teacherDependenceRate(): number {
-    const total = this.teacherConsultations.consulted + this.teacherConsultations.selfGraded;
-    if (total === 0) return 0;
-    return this.teacherConsultations.consulted / total;
+    if (this.lambdaTraffic.count === 0) return 0;
+    return clampRange(1 - this.lambdaTraffic.sum / this.lambdaTraffic.count, 0, 1);
   }
 
   /** The blended reward for a graded answer: λ·composite + (1−λ)·teacher,
-   *  with the uncertainty fallback consulting the teacher on novel terrain,
-   *  and the consultation accounted for the dependence metric.
+   *  with λ the EMERGENT handover weight (normalized trust, L2). The
+   *  student's composite is also a MEASURED JUDGE (20.3): its band is
+   *  checked against the rule-based grounding band right here, so every
+   *  graded answer feeds the very trust that λ is computed from.
    *
    *  The composite is the student's judgment ON ITS OWN MATERIAL: it must be
    *  computed against the answer's actual SEEDS (the recalled memories the
    *  composition was built from). Grading the answer against itself as its
-   *  own seed collapses novelty to 0 and the composite to 0, silently
-   *  reducing the blend to (1−λ)·teacher — and at λ ≳ 0.57 a strong teacher
-   *  grade then reads as weak, actively unlearning the observer's best
-   *  answers. An echo answer (no novel words beyond its seeds) honestly
-   *  scores novelty 0 and stays teacher-graded; a genuinely composed answer
-   *  earns the student a voice in its own grade. */
+   *  own seed collapses novelty to 0 and the composite to 0, and the
+   *  blendReward guard passes the teacher grade through — the abstention
+   *  path (subsuming the old isUncertain fallback: the composite is
+   *  multiplicative, so fluency 0 ⇒ composite 0 ⇒ teacher grades). */
   fadeReward(utterance: string, answer: string, teacherGrade: number, seeds: readonly string[]): number {
     const cls = classifyUtterance(utterance);
-    const weights = this.compositionWeights;
-    const parts = compositeScore(answer, utterance, weights, seeds).parts;
-    const uncertain = isUncertain(utterance, answer, weights, parts.fluency);
-    const lambda = effectiveLambda(this.fadeState, cls, uncertain);
-    // Dependence accounting: a λ-effective at the uncertainty floor means
-    // the teacher's judgment is doing the grading; above it, the student
-    // weighs in meaningfully.
-    if (lambda <= FADE_FLOOR) this.teacherConsultations.consulted += 1;
-    else this.teacherConsultations.selfGraded += 1;
-    const composite = compositeScore(answer, utterance, weights, seeds).composite;
+    const criteria = fadeCriteria(cls);
+    const { composite } = compositeScore(answer, utterance, this.compositionWeights, seeds);
+    // 20.3: the composite judges — measure it. Only when it HAS an opinion
+    // (composite > 0) and a rule check exists (seeds present): an abstaining
+    // judge earns no evidence either way.
+    if (composite > 0 && seeds.length > 0 && answer.trim().length > 0) {
+      const ruleBand = ruleBandForGrounding(groundingScore(answer, seeds));
+      this.reliabilityModel.recordJudgeAgreement(
+        JUDGE_COMPOSITE,
+        criteria,
+        bandsAgree(gradeBandOf(composite), ruleBand)
+      );
+    }
+    const lambda = this.reliabilityModel.lambdaFor(criteria);
+    // Dependence accounting (20.5): the teacher's share of THIS reward. A
+    // composite with no opinion consults the teacher fully (λ-effective 0).
+    const effective = composite > 0 ? lambda : 0;
+    this.lambdaTraffic.sum += effective;
+    this.lambdaTraffic.count += 1;
     return blendReward(teacherGrade, composite, lambda);
   }
 

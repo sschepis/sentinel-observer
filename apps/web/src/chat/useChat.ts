@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { EdgeRef } from '../teacher/TeacherAgent';
+import type { EdgeRef, TeacherAgent } from '../teacher/TeacherAgent';
 import {
   Chaperone,
   OpenAICompatProvider,
@@ -33,6 +33,13 @@ export interface ChatController {
   selectConversation: (id: string) => void;
   newConversation: () => void;
   removeConversation: (id: string) => void;
+}
+
+/** R11: only the LOCAL teacher closes the ask → told → own loop (the
+ *  remote observer answers on the server; the teach-reply surface lives on
+ *  the local session for now). */
+function isTeachCapable(teacher: ChatTeacher | null): teacher is TeacherAgent {
+  return teacher !== null && typeof (teacher as Partial<TeacherAgent>).tryTeachReply === 'function';
 }
 
 /**
@@ -105,6 +112,9 @@ export function useChat(
         confidence?: number | null;
         score?: number | null;
         feedback?: string | null;
+        derivation?: ConversationMessage['derivation'];
+        ruleIds?: string[];
+        steps?: number;
       },
       conversationId: string
     ) => {
@@ -115,7 +125,10 @@ export function useChat(
         mode: reply.mode,
         confidence: reply.confidence ?? null,
         score: reply.score ?? null,
-        feedback: reply.feedback ?? null
+        feedback: reply.feedback ?? null,
+        derivation: reply.derivation,
+        ruleIds: reply.ruleIds,
+        steps: reply.steps
       });
       sync(conversationId);
     },
@@ -126,7 +139,7 @@ export function useChat(
   const gradeCreative = useCallback(
     async (
       utterance: string,
-      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[]; templateIds: string[] },
+      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[]; templateIds: string[]; ruleIds?: string[] },
       conversationId: string
     ) => {
       if (teacher === null) return;
@@ -159,7 +172,7 @@ export function useChat(
       // the structures the accepted answer demonstrated.
       const graded = await awaitable(
         teacher.gradeCreativeWithReliability(
-          { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds },
+          { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds, ruleIds: reply.ruleIds },
           score,
           utterance,
           reply.sentence,
@@ -202,6 +215,25 @@ export function useChat(
       // switch conversations. Routing by the push-time active conversation
       // would strand the exchange in the wrong thread.
       const conversationId = ensureConversation();
+      // R11: CLOSE THE ASK → TOLD → OWN LOOP. When the observer is waiting
+      // on a rule question ("what is the rule for gcf?") and this reply
+      // parses as the procedure, the R10 pipeline validates and adopts it —
+      // the observer answers with its own summary or the counterexample.
+      // A reply that does not parse falls through to the normal dispatch.
+      // (Local teacher only: the server's observer answers remotely, so the
+      // teach-reply surface lives on the local session for now.)
+      const teachCapable = isTeachCapable(teacher);
+      if (teachCapable) {
+        const taught = await awaitable(teacher.tryTeachReply(utterance));
+        if (taught !== null) {
+          const message = taught.message;
+          speak?.(message);
+          pushExchange(utterance, { text: message }, conversationId);
+          setStatus('');
+          onTeacherChanged();
+          return;
+        }
+      }
       const answer = await awaitable(teacher.chatAnswer(utterance));
       // New episodic facts (user facts, topics, session gaps) flow to the
       // learning stream as "remembers" events.
@@ -215,17 +247,33 @@ export function useChat(
           confidence: answer.confidence,
           seedTraceIds: answer.seedTraceIds,
           edges: answer.provenance.edges,
-          templateIds: answer.templateIds
+          templateIds: answer.templateIds,
+          ruleIds: answer.provenance.ruleIds
         }, conversationId);
         return;
       }
 
       const text = answer.mode === 'decline' ? "I haven't learned that yet." : answer.response;
       if (answer.mode !== 'decline') speak?.(text);
+      // R8: rewrite derivations travel with the message — the chat can
+      // unfold "show your work" (a bounded prefix of the trace: 32 steps
+      // keep the stored conversation small; the whole derivation is
+      // bounded at 200 by the engine anyway).
+      const operator = answer.mode === 'operator' && answer.operator !== null ? answer.operator : null;
+      // The stored trace keeps only what the UI renders (rule + result);
+      // `before` roughly doubles the payload (measured ~3.8 KB per math
+      // exchange at the 32-step cap) and ChatView never shows it.
+      const derivation =
+        operator !== null && operator.kind === 'rewrite'
+          ? operator.trace.slice(0, 32).map((step) => ({ ruleId: step.ruleId, after: step.after }))
+          : undefined;
       pushExchange(utterance, {
         text,
         mode: answer.mode,
-        confidence: answer.mode === 'memorized' ? answer.confidence : null
+        confidence: answer.mode === 'memorized' ? answer.confidence : null,
+        derivation,
+        ruleIds: operator !== null && operator.kind === 'rewrite' ? operator.ruleIds : undefined,
+        steps: operator !== null && operator.kind === 'rewrite' ? operator.steps : undefined
       }, conversationId);
       setStatus('');
       onTeacherChanged();

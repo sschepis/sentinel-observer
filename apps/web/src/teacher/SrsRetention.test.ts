@@ -61,7 +61,7 @@ describe('SRS: FSRS wall-clock forgetting and due-status (P9)', () => {
     expect(apple.status).toBe('due');
     expect(apple.strength!).toBeLessThan(0.6);
     expect(apple.strength!).toBeGreaterThan(0);
-    expect(apple.strength!).toBeCloseTo(retentionProbability(1, 5, 14), 3);
+    expect(apple.strength!).toBeCloseTo(retentionProbability(1, 14), 3);
   });
 
   it('a consolidated word (stability ≥ 30) forgets slowly and stays healthy over days', async () => {

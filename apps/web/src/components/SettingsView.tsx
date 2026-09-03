@@ -13,7 +13,7 @@ import { MAX_CONCURRENCY } from '../teacher/chaperone';
 import {
   MODEL_SETTING_BOUNDS,
   DEFAULT_MODEL_SETTINGS,
-  halfLivesFor,
+  dueHorizonsFor,
   type SettingBound
 } from '../observer/modelSettings';
 
@@ -160,7 +160,7 @@ export function SettingsView({
 
   const { settings, saveSettings } = engine;
   const { model, saveModel } = engine;
-  const halfLives = halfLivesFor(model.forgettingRate);
+  const horizons = dueHorizonsFor(model.forgettingRate);
   const forgettingLabel =
     model.forgettingRate === 1
       ? 'default'
@@ -222,7 +222,7 @@ export function SettingsView({
           <div className="space-y-5">
             <Slider
               label="Forgetting"
-              hint={`A memory loses half its strength after ${halfLives.fresh.toFixed(0)} days unpractised, ${halfLives.practised.toFixed(0)} once practised, ${halfLives.consolidated.toFixed(0)} once consolidated.`}
+              hint={`A word falls due for review after ~${horizons.fresh.toFixed(0)} day${horizons.fresh >= 1.5 ? 's' : ''} freshly taught, ~${horizons.practised.toFixed(0)} days once practised, ~${horizons.consolidated.toFixed(0)} once consolidated.`}
               value={model.forgettingRate}
               display={forgettingLabel}
               bound={MODEL_SETTING_BOUNDS.forgettingRate}

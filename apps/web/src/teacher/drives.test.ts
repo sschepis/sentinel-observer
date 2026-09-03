@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
-import { computeDrives, chooseBehavior, updateDriveWeight, DEFAULT_BEHAVIOR_WEIGHTS, BEHAVIOR_WEIGHT_FLOOR, ARCHETYPAL_BEHAVIORS, type BehaviorWeights } from './drives';
+import { computeDrives, chooseBehavior, updateDriveWeight, behaviorTemperature, DEFAULT_BEHAVIOR_WEIGHTS, BEHAVIOR_WEIGHT_FLOOR, BEHAVIOR_TEMPERATURE_MIN, BEHAVIOR_TEMPERATURE_MAX, ARCHETYPAL_BEHAVIORS, type BehaviorWeights } from './drives';
 import { CONVERSATION_CUE_TOKENS } from './conversation';
 import { DECK_100 } from './decks/en-100';
 import { PRIME_SPACE, deckVocabulary } from './primeSignature';
@@ -73,8 +73,82 @@ describe('learned arbitration (the evaluative gradient)', () => {
   it('a behavior with a large learned weight wins arbitration over its archetypal rival', () => {
     // With curiosity LOW, ask would normally lose to answer... but a strong
     // learned history of successful asks overwhelms the archetypes.
+    // (M4: curiosity carries coefficient 1 — its urgency flows through the
+    // temperature — so the learned weight must clear answer's 2.1 on its own.)
     const drives = computeDrives({ coherence: 0.8, curiosity: 0.1, novelty: 0.1, conservation: 0.1, selfConsistency: 0.8 });
-    expect(chooseBehavior(drives, ['answer', 'ask'], { ask: 2 })).toBe('ask');
+    expect(chooseBehavior(drives, ['answer', 'ask'], { ask: 2.2 })).toBe('ask');
+  });
+});
+
+describe('M4 (Phase 21): drive-temperature arbitration', () => {
+  const mulberry = (seed: number): (() => number) => {
+    let a = seed >>> 0;
+    return () => {
+      a += 0x6d2b79f5;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+
+  it('the temperature is the drive state: cold when calm, hot when curious/novel, clamped', () => {
+    const calm = computeDrives({ coherence: 0.9, curiosity: 0, novelty: 0, conservation: 0.9, selfConsistency: 0.9 });
+    expect(behaviorTemperature(calm)).toBe(BEHAVIOR_TEMPERATURE_MIN);
+    const hot = computeDrives({ coherence: 0, curiosity: 1, novelty: 1, conservation: 0, selfConsistency: 0 });
+    expect(behaviorTemperature(hot)).toBe(BEHAVIOR_TEMPERATURE_MAX);
+    const mid = computeDrives({ coherence: 0, curiosity: 0.5, novelty: 0, conservation: 0, selfConsistency: 0 });
+    expect(behaviorTemperature(mid)).toBeCloseTo(0.3, 10);
+  });
+
+  it('without an rng the choice is the exact argmax (the cold limit — legacy contract)', () => {
+    const curious = computeDrives({ coherence: 0.1, curiosity: 0.9, novelty: 0.1, conservation: 0.1, selfConsistency: 0 });
+    expect(chooseBehavior(curious, ['answer', 'ask', 'compose'])).toBe('ask');
+  });
+
+  it('COLD sampling reproduces the argmax: a clear score gap at T_MIN never flips', () => {
+    const calm = computeDrives({ coherence: 0.9, curiosity: 0, novelty: 0, conservation: 0.1, selfConsistency: 0.9 });
+    const rng = mulberry(7);
+    for (let i = 0; i < 100; i += 1) {
+      expect(chooseBehavior(calm, ['answer', 'ask', 'compose'], {}, undefined, rng)).toBe('answer');
+    }
+  });
+
+  it('HOT sampling explores: non-max options get real probability mass', () => {
+    const hot = computeDrives({ coherence: 0.3, curiosity: 1, novelty: 1, conservation: 0.3, selfConsistency: 0.2 });
+    const rng = mulberry(11);
+    const picks = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      const choice = chooseBehavior(hot, ['answer', 'ask', 'compose', 'practice'], {}, undefined, rng);
+      if (choice !== null) picks.add(choice);
+    }
+    expect(picks.size).toBeGreaterThan(1);
+  });
+
+  it('NO STARVATION: every available behavior is sampled at least once at high temperature', () => {
+    const hot = computeDrives({ coherence: 0.4, curiosity: 1, novelty: 1, conservation: 0.4, selfConsistency: 0.4 });
+    const rng = mulberry(23);
+    const picks = new Set<string>();
+    for (let i = 0; i < 500; i += 1) {
+      const choice = chooseBehavior(hot, ['answer', 'ask', 'compose', 'practice'], {}, undefined, rng);
+      if (choice !== null) picks.add(choice);
+    }
+    expect(picks).toEqual(new Set(['answer', 'ask', 'compose', 'practice']));
+  });
+
+  it('the acquired-set gate holds under sampling: unavailable behaviors are never drawn', () => {
+    const hot = computeDrives({ coherence: 0.2, curiosity: 1, novelty: 1, conservation: 0.2, selfConsistency: 1 });
+    const rng = mulberry(31);
+    for (let i = 0; i < 300; i += 1) {
+      const choice = chooseBehavior(hot, ['answer', 'verify'], { verify: 5 }, undefined, rng);
+      expect(choice).not.toBe('verify');
+    }
+  });
+
+  it('every option unavailable → null, sampled or not', () => {
+    const drives = computeDrives({ coherence: 0.5, curiosity: 0.5, novelty: 0.5, conservation: 0.5, selfConsistency: 0.5 });
+    expect(chooseBehavior(drives, ['verify'], {}, new Set(ARCHETYPAL_BEHAVIORS))).toBeNull();
+    expect(chooseBehavior(drives, ['verify'], {}, new Set(ARCHETYPAL_BEHAVIORS), mulberry(3))).toBeNull();
   });
 });
 

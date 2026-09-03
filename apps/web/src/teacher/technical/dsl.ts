@@ -273,9 +273,53 @@ export function matchArgs(drill: string, prompt: string): DSLValue[] | null {
       const hit = m(new RegExp(`^what is the square root of ${INTEGER}\\??$`, 'i'));
       return hit === null ? null : [num(hit[1])];
     }
+    case 'place-value': {
+      // R12: the digit named in the prompt is unique in the value (the
+      // generator draws distinct digits) — an ambiguous prompt (707, digit
+      // 7) has no parser answer and DECLINES.
+      const hit = m(new RegExp(`^in (\\d+), what is the place value of the digit (\\d)\\??$`, 'i'));
+      if (hit === null) return null;
+      const value = hit[1] ?? '';
+      const digit = hit[2] ?? '';
+      let occurrences = 0;
+      for (const character of value) {
+        if (character === digit) occurrences += 1;
+      }
+      if (occurrences !== 1) return null;
+      return [num(value), num(digit)];
+    }
     case 'rounding': {
       const hit = m(new RegExp(`^round ${INTEGER} to the nearest ${INTEGER}\\.?$`, 'i'));
       return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'word-problem-add': {
+      // R9: template-anchored story parsers — one regex per generated
+      // shape (verify.ts ADD_STORY_TEMPLATES). A story that matches no
+      // template returns null: decline, never guess.
+      const patterns = [
+        /^sam has (\d+) apples and gets (\d+) more\. how many apples does sam have\??$/i,
+        /^mia read (\d+) pages yesterday and (\d+) pages today\. how many pages did she read in all\??$/i,
+        /^a jar holds (\d+) red marbles and (\d+) blue marbles\. how many marbles are in the jar\??$/i,
+        /^leo scored (\d+) points in the first game and (\d+) points in the second\. how many points did he score in total\??$/i
+      ];
+      for (const pattern of patterns) {
+        const hit = m(pattern);
+        if (hit !== null) return [num(hit[1]), num(hit[2])];
+      }
+      return null;
+    }
+    case 'word-problem-mul': {
+      const patterns = [
+        /^there are (\d+) boxes with (\d+) pencils in each box\. how many pencils are there in all\??$/i,
+        /^each of (\d+) shelves holds (\d+) books\. how many books are there\??$/i,
+        /^a pack has (\d+) stickers and ana buys (\d+) packs\. how many stickers does she buy\??$/i,
+        /^there are (\d+) tables and each table seats (\d+) people\. how many people can sit down\??$/i
+      ];
+      for (const pattern of patterns) {
+        const hit = m(pattern);
+        if (hit !== null) return [num(hit[1]), num(hit[2])];
+      }
+      return null;
     }
     case 'convert-length':
     case 'convert-mass':
@@ -315,6 +359,70 @@ export function matchArgs(drill: string, prompt: string): DSLValue[] | null {
         default:
           return null;
       }
+    }
+    case 'solve-x-add': {
+      const hit = m(new RegExp(`^if x \\+ ${INTEGER} = ${INTEGER}, what is x\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'solve-x-mul': {
+      const hit = m(new RegExp(`^if ${INTEGER} \\* x = ${INTEGER}, what is x\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'area': {
+      const hit = m(new RegExp(`^what is the area of a rectangle ${INTEGER} meters by ${INTEGER} meters\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'volume': {
+      const hit = m(new RegExp(`^what is the volume of a box ${INTEGER} by ${INTEGER} by ${INTEGER} meters\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2]), num(hit[3])];
+    }
+    case 'density': {
+      const hit = m(new RegExp(`^what is the density of ${INTEGER} grams filling ${INTEGER} cubic centimeters\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'speed': {
+      const hit = m(new RegExp(`^what is the speed of something going ${INTEGER} meters in ${INTEGER} seconds\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'force': {
+      const hit = m(new RegExp(`^what force accelerates ${INTEGER} kilograms at ${INTEGER} meters per second squared\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'gcf': {
+      const hit = m(new RegExp(`^what is the greatest common factor of ${INTEGER} and ${INTEGER}\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'lcm': {
+      const hit = m(new RegExp(`^what is the least common multiple of ${INTEGER} and ${INTEGER}\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'logic-and': {
+      const hit = m(/^statement a says (.+)\. statement b says (.+)\. is the statement 'a and b' true or false\??$/i);
+      return hit === null ? null : [hit[1], hit[2]];
+    }
+    case 'logic-or': {
+      const hit = m(/^statement a says (.+)\. statement b says (.+)\. is the statement 'a or b' true or false\??$/i);
+      return hit === null ? null : [hit[1], hit[2]];
+    }
+    case 'logic-not': {
+      const hit = m(/^(?:consider|take) the statement: (.+)\. is the (?:negation|opposite) of this statement true or false\??$/i);
+      return hit === null ? null : [hit[1]];
+    }
+    case 'logic-if': {
+      const hit = m(/^if (.+), then (.+)\. (.+)\. (.+)\??$/i);
+      return hit === null ? null : [hit[1], hit[2], hit[3], hit[4]];
+    }
+    case 'syllogism': {
+      const hit = m(/^all (.+) are (.+)\. (.+) is (.+)\. (?:is|must) (.+) (.+)\??$/i);
+      return hit === null ? null : [hit[1], hit[2], hit[3], hit[4], hit[5], hit[6]];
+    }
+    case 'solve-x-add': {
+      const hit = m(new RegExp(`^if x \\+ ${INTEGER} = ${INTEGER}, what is x\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
+    }
+    case 'solve-x-mul': {
+      const hit = m(new RegExp(`^if ${INTEGER} \\* x = ${INTEGER}, what is x\\??$`, 'i'));
+      return hit === null ? null : [num(hit[1]), num(hit[2])];
     }
     case 'area': {
       const hit = m(new RegExp(`^what is the area of a rectangle ${INTEGER} meters by ${INTEGER} meters\\??$`, 'i'));

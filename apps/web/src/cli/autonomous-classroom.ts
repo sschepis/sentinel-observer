@@ -57,6 +57,8 @@ const RESUME = flag('--resume', '');
 const OUT = flag('--out', join(ROOT, 'apps', 'web', 'public', 'bootstrap.json'));
 const NO_DEPLOY = process.argv.includes('--no-deploy');
 const INCLUDE_SCIENCE = process.argv.includes('--science');
+/** R7: rules mode — drills induce rewrite rules with a DSL fallback. */
+const RULES_MODE = process.argv.includes('--rules');
 const CHECKPOINT_DIR = flag('--checkpoint-dir', join(ROOT, 'apps', 'web', 'node_modules', '.cache', 'sentient', 'classroom'));
 const ENDPOINT = process.env.LM_STUDIO_ENDPOINT ?? 'http://localhost:1234/v1';
 
@@ -113,7 +115,8 @@ async function quickBenches(teacher: TeacherAgent): Promise<Record<string, strin
   results.beliefs = String(bank.all().filter((t) => t.metadata?.kind === 'belief').length);
   results.goals = String(teacher.goalList().filter((g) => g.status === 'active').length);
   const lambdas = teacher.fadeLambdas();
-  results.handover = `λ=${lambdas.conversational.toFixed(2)} dep=${teacher.teacherDependenceRate().toFixed(2)}`;
+  const rho = teacher.fadeAgreements().conversational;
+  results.handover = `λ=${lambdas.conversational.toFixed(2)} dep=${teacher.teacherDependenceRate().toFixed(2)} ρ=${rho === null ? '—' : rho.toFixed(2)}`;
   results.traces = String(bank.all().length);
   results.curiosity = `${teacher.gapList().length} gaps, pressure ${teacher.curiosityPressure().toFixed(1)}`;
   return results;
@@ -136,7 +139,20 @@ function humans(ms: number): string {
 async function main(): Promise<void> {
   const session = new ObserverSession(OBSERVER_OPTIONS, 100);
   await session.initialize();
-  const teacher = new TeacherAgent(session, ACTIVE_DECK, new MemoryPersistenceStore(), 1);
+  const teacher = new TeacherAgent(
+    session,
+    ACTIVE_DECK,
+    new MemoryPersistenceStore(),
+    1,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    // R7: rules mode — classroom drills induce rewrite rules (gcf/lcm) with
+    // a DSL fallback for the families the engine does not own.
+    RULES_MODE
+  );
   const started = Date.now();
   const deadline = started + MINUTES * 60_000;
 
@@ -285,6 +301,23 @@ async function main(): Promise<void> {
 
     // CHECKPOINT: the entire teacher, to disk.
     if (Date.now() - lastCheckpoint >= CHECKPOINT_EVERY * 1000) {
+      // R16 maintenance, on the checkpoint cadence: unused learned rules
+      // decay toward hedged (never forget), the shelf is consolidated
+      // (behavior-preserving), then the checkpoint is written.
+      const decayed = teacher.decayRuleCorroboration();
+      if (decayed.decayed.length > 0) {
+        console.log(`[classroom] rule corroboration decayed: ${decayed.decayed.join(', ')}`);
+      }
+      const consolidation = teacher.consolidateLearnedRules();
+      if (
+        consolidation.deduped.length > 0 ||
+        consolidation.consolidated.length > 0 ||
+        consolidation.compactedDenials > 0
+      ) {
+        console.log(
+          `[classroom] consolidated ${consolidation.deduped.length} duplicate(s), ${consolidation.consolidated.length} re-simplified, ${consolidation.compactedDenials} denial(s) compacted`
+        );
+      }
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const path = join(CHECKPOINT_DIR, `checkpoint-${stamp}.json`);
       await writeRecord(teacher, path, 'classroom');

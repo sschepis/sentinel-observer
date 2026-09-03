@@ -32,6 +32,18 @@
  * the accumulated verdict history of the bucket.
  */
 import type { GroundingResult } from './grounding';
+import {
+  TrustKernel,
+  TRUST_PRIOR,
+  TRUST_PSEUDO_COUNT,
+  TRUST_MIN_WEIGHT,
+  JUDGE_LLM,
+  trustCriteriaKey,
+  fusionLambda,
+  type JudgeSnapshot,
+  type TrustBucketStats,
+  type TrustCriteria
+} from './trust';
 
 /** What kind of answer was graded. 'definition' and 'spelling' are the two
  *  quiz directions (recognition expects the definition; production expects
@@ -51,7 +63,7 @@ export type GradeBand = 'strong' | 'mid' | 'weak';
  *  grade), difficulty band (hard words strain any grader), question
  *  template (conversational prompts vs operator questions), and provider
  *  (different models disagree at different rates). */
-export interface GradeCriteria {
+export interface GradeCriteria extends TrustCriteria {
   answerType: AnswerType;
   difficultyBand: DifficultyBand;
   template: string;
@@ -63,15 +75,14 @@ export interface GradeCriteria {
 export const GRADE_STRONG_THRESHOLD = 0.7;
 export const GRADE_WEAK_THRESHOLD = 0.3;
 
-/** Uninformative prior: a grader with no evidence is assumed slightly
- *  better than chance. Estimates below it earn distrust; at or above it,
- *  feedback is applied fully. */
-export const PRIOR_RELIABILITY = 0.65;
+/** Uninformative prior — L2 (Phase 20): defined by the trust kernel and
+ *  aliased here for the existing importers. */
+export const PRIOR_RELIABILITY = TRUST_PRIOR;
 /** Floor of the feedback weight — a distrusted bucket still learns, but a
  *  single overturned grade can never zero out a pathway. */
-export const MIN_FEEDBACK_WEIGHT = 0.1;
+export const MIN_FEEDBACK_WEIGHT = TRUST_MIN_WEIGHT;
 /** Pseudo-count of the Bayesian smoothing — the pull of the prior. */
-export const PSEUDO_COUNT = 4;
+export const PSEUDO_COUNT = TRUST_PSEUDO_COUNT;
 /** A world-feedback sample (a later re-ask or retention) is weaker evidence
  *  than a rule-based check — the world confirms slowly. */
 export const WORLD_FEEDBACK_WEIGHT = 0.25;
@@ -110,15 +121,10 @@ export function bandsAgree(llmBand: GradeBand, ruleBand: GradeBand | null): bool
 
 /** The stable key of a criteria tuple. */
 export function criteriaKey(criteria: GradeCriteria): string {
-  return `${criteria.answerType}\u0000${criteria.difficultyBand}\u0000${criteria.template}\u0000${criteria.provider}`;
+  return trustCriteriaKey(criteria);
 }
 
-interface BucketStats {
-  /** Weighted agreement mass (rule checks count 1, world feedback less). */
-  agree: number;
-  /** Weighted sample mass. */
-  total: number;
-}
+type BucketStats = TrustBucketStats;
 
 export interface RegradeDetail {
   utterance: string;
@@ -154,7 +160,10 @@ export interface ReliabilityEvidence {
   weight: number;
 }
 
-/** The serializable record of the model (persisted with the learning state). */
+/** The serializable record of the model (persisted with the learning state).
+ *  The legacy fields ARE the LLM judge's evidence (kept flat for
+ *  backward-compatibility with every persisted record); `judges` carries the
+ *  other judges of the trust kernel (L2: the student's composite). */
 export interface ReliabilitySnapshot {
   buckets: Record<string, BucketStats>;
   byAnswerType: Record<string, BucketStats>;
@@ -163,25 +172,15 @@ export interface ReliabilitySnapshot {
   byProvider: Record<string, BucketStats>;
   pending: PendingRegrade[];
   history: ResolvedRegrade[];
-}
-
-function bump(stats: BucketStats | undefined, agree: boolean, weight: number): BucketStats {
-  const current = stats ?? { agree: 0, total: 0 };
-  current.agree += agree ? weight : 0;
-  current.total += weight;
-  return current;
-}
-
-function cloneStats(stats: BucketStats): BucketStats {
-  return { agree: stats.agree, total: stats.total };
+  /** L2 (20.2, additive): the non-LLM judges' evidence. */
+  judges?: Record<string, JudgeSnapshot>;
 }
 
 export class GraderReliabilityModel {
-  private readonly buckets = new Map<string, BucketStats>();
-  private readonly byAnswerType = new Map<string, BucketStats>();
-  private readonly byDifficulty = new Map<string, BucketStats>();
-  private readonly byTemplate = new Map<string, BucketStats>();
-  private readonly byProvider = new Map<string, BucketStats>();
+  /** L2 (20.2): the model is a FAÇADE over the trust kernel — its buckets
+   *  ARE the kernel's 'llm' judge. The regrade queue (an LLM-grade workflow)
+   *  stays here. */
+  private readonly kernel = new TrustKernel();
   private readonly pending: PendingRegrade[] = [];
   private readonly history: ResolvedRegrade[] = [];
   private nextRegradeId = 1;
@@ -189,13 +188,7 @@ export class GraderReliabilityModel {
   /** Record whether the LLM grade agreed with a rule-based check (weight 1 —
    *  the sharpest evidence the model gets). */
   recordAgreement(criteria: GradeCriteria, agree: boolean, weight = 1): void {
-    this.buckets.set(criteriaKey(criteria), bump(this.buckets.get(criteriaKey(criteria)), agree, weight));
-    this.byAnswerType.set(criteria.answerType, bump(this.byAnswerType.get(criteria.answerType), agree, weight));
-    this.byDifficulty.set(criteria.difficultyBand, bump(this.byDifficulty.get(criteria.difficultyBand), agree, weight));
-    this.byTemplate.set(criteria.template, bump(this.byTemplate.get(criteria.template), agree, weight));
-    if (criteria.provider.length > 0) {
-      this.byProvider.set(criteria.provider, bump(this.byProvider.get(criteria.provider), agree, weight));
-    }
+    this.kernel.record(JUDGE_LLM, criteria, agree, weight);
   }
 
   /** Record whether a later USER/WORLD verdict confirmed the LLM grade — a
@@ -211,6 +204,23 @@ export class GraderReliabilityModel {
     this.recordAgreement(criteria, agree, weight);
   }
 
+  /** L2 (20.3): record agreement evidence for ANY judge of the kernel (the
+   *  student's composite is the first non-LLM judge). */
+  recordJudgeAgreement(judgeId: string, criteria: GradeCriteria, agree: boolean, weight = 1): void {
+    this.kernel.record(judgeId, criteria, agree, weight);
+  }
+
+  /** L2 (20.4): the emergent handover λ for a bucket — normalized trust of
+   *  the composite against the LLM (see trust.ts fusionLambda). */
+  lambdaFor(criteria: GradeCriteria): number {
+    return fusionLambda(this.kernel, criteria);
+  }
+
+  /** L2: a judge's trust lower bound (benches + introspection). */
+  judgeTrust(judgeId: string, criteria: GradeCriteria): number {
+    return this.kernel.trustLB(judgeId, criteria, judgeId === JUDGE_LLM ? PRIOR_RELIABILITY : 0);
+  }
+
   /**
    * The smoothed reliability estimate of a bucket: a Bayesian posterior per
    * source (full tuple, then each dimension) blended by its sample mass, so
@@ -218,25 +228,7 @@ export class GraderReliabilityModel {
    * prior. Every estimate is pulled toward the prior by PSEUDO_COUNT.
    */
   reliability(criteria: GradeCriteria): number {
-    const parts: Array<BucketStats | undefined> = [
-      this.buckets.get(criteriaKey(criteria)),
-      this.byAnswerType.get(criteria.answerType),
-      this.byDifficulty.get(criteria.difficultyBand),
-      this.byTemplate.get(criteria.template)
-    ];
-    if (criteria.provider.length > 0) parts.push(this.byProvider.get(criteria.provider));
-
-    let numerator = 0;
-    let denominator = 0;
-    for (const stats of parts) {
-      const total = stats?.total ?? 0;
-      const agree = stats?.agree ?? 0;
-      const estimate = (agree + PRIOR_RELIABILITY * PSEUDO_COUNT) / (total + PSEUDO_COUNT);
-      const mass = total + PSEUDO_COUNT;
-      numerator += estimate * mass;
-      denominator += mass;
-    }
-    return denominator === 0 ? PRIOR_RELIABILITY : numerator / denominator;
+    return this.kernel.reliability(JUDGE_LLM, criteria, PRIOR_RELIABILITY);
   }
 
   /**
@@ -246,24 +238,20 @@ export class GraderReliabilityModel {
    * grade bands.
    */
   feedbackWeight(criteria: GradeCriteria): number {
-    const reliability = this.reliability(criteria);
-    if (reliability >= PRIOR_RELIABILITY) return 1;
-    return MIN_FEEDBACK_WEIGHT + (1 - MIN_FEEDBACK_WEIGHT) * (reliability / PRIOR_RELIABILITY);
+    return this.kernel.weight(JUDGE_LLM, criteria, PRIOR_RELIABILITY);
   }
 
   /** The queryable view of a bucket — for the corroboration and curriculum
    *  modules: how many samples, what agreement rate, the reliability, and
    *  the weight they should apply to grade-sourced evidence. */
   evidence(criteria: GradeCriteria): ReliabilityEvidence {
-    const samples = this.buckets.get(criteriaKey(criteria))?.total ?? 0;
-    const agreements = this.buckets.get(criteriaKey(criteria))?.agree ?? 0;
-    const reliability = this.reliability(criteria);
+    const view = this.kernel.evidence(JUDGE_LLM, criteria, PRIOR_RELIABILITY);
     return {
-      samples,
-      agreements,
-      agreementRate: samples === 0 ? 0 : agreements / samples,
-      reliability,
-      weight: this.feedbackWeight(criteria)
+      samples: view.samples,
+      agreements: view.agreements,
+      agreementRate: view.agreementRate,
+      reliability: view.reliability,
+      weight: view.weight
     };
   }
 
@@ -336,19 +324,22 @@ export class GraderReliabilityModel {
     }));
   }
 
-  /** Serialize for persistence (the learning state rides the same record). */
+  /** Serialize for persistence (the learning state rides the same record).
+   *  The LLM judge's evidence keeps the legacy FLAT shape (old records and
+   *  new read each other); other judges ride the additive `judges` field. */
   snapshot(): ReliabilitySnapshot {
-    const toRecord = (map: Map<string, BucketStats>): Record<string, BucketStats> => {
-      const record: Record<string, BucketStats> = {};
-      for (const [key, stats] of map) record[key] = cloneStats(stats);
-      return record;
-    };
+    const llm = this.kernel.judgeSnapshot(JUDGE_LLM);
+    const judges: Record<string, JudgeSnapshot> = {};
+    for (const judgeId of this.kernel.judgeIds()) {
+      if (judgeId === JUDGE_LLM) continue;
+      judges[judgeId] = this.kernel.judgeSnapshot(judgeId);
+    }
     return {
-      buckets: toRecord(this.buckets),
-      byAnswerType: toRecord(this.byAnswerType),
-      byDifficulty: toRecord(this.byDifficulty),
-      byTemplate: toRecord(this.byTemplate),
-      byProvider: toRecord(this.byProvider),
+      buckets: llm.buckets,
+      byAnswerType: llm.byAnswerType,
+      byDifficulty: llm.byDifficulty,
+      byTemplate: llm.byTemplate,
+      byProvider: llm.byProvider,
       pending: this.pending.map((regrade) => ({
         id: regrade.id,
         criteria: { ...regrade.criteria },
@@ -362,7 +353,8 @@ export class GraderReliabilityModel {
         detail: { ...regrade.detail },
         agreed: regrade.agreed,
         resolvedAt: regrade.resolvedAt
-      }))
+      })),
+      ...(Object.keys(judges).length > 0 ? { judges } : {})
     };
   }
 
@@ -370,22 +362,19 @@ export class GraderReliabilityModel {
    *  defensively (the reliability model is advice, never a schema contract). */
   restore(snapshot: Partial<ReliabilitySnapshot> | null | undefined): void {
     if (snapshot === null || snapshot === undefined) return;
-    const adopt = (map: Map<string, BucketStats>, record: unknown): void => {
-      if (typeof record !== 'object' || record === null) return;
-      for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
-        if (typeof value !== 'object' || value === null) continue;
-        const agree = Number((value as BucketStats).agree);
-        const total = Number((value as BucketStats).total);
-        if (Number.isFinite(agree) && Number.isFinite(total) && total > 0 && key.length > 0) {
-          map.set(key, { agree: Math.max(0, agree), total: Math.max(0, total) });
-        }
+    this.kernel.restoreJudge(JUDGE_LLM, {
+      buckets: snapshot.buckets,
+      byAnswerType: snapshot.byAnswerType,
+      byDifficulty: snapshot.byDifficulty,
+      byTemplate: snapshot.byTemplate,
+      byProvider: snapshot.byProvider
+    } as Partial<JudgeSnapshot> as JudgeSnapshot);
+    if (typeof snapshot.judges === 'object' && snapshot.judges !== null) {
+      for (const [judgeId, judgeSnapshot] of Object.entries(snapshot.judges)) {
+        if (judgeId === JUDGE_LLM) continue;
+        this.kernel.restoreJudge(judgeId, judgeSnapshot);
       }
-    };
-    adopt(this.buckets, snapshot.buckets);
-    adopt(this.byAnswerType, snapshot.byAnswerType);
-    adopt(this.byDifficulty, snapshot.byDifficulty);
-    adopt(this.byTemplate, snapshot.byTemplate);
-    adopt(this.byProvider, snapshot.byProvider);
+    }
     if (Array.isArray(snapshot.pending)) {
       for (const regrade of snapshot.pending.slice(-PENDING_REGRADE_CAP)) {
         if (typeof regrade?.id !== 'string' || typeof regrade?.criteria !== 'object' || regrade.criteria === null) continue;
@@ -438,11 +427,7 @@ export class GraderReliabilityModel {
 
   /** Forget everything (tests, or a re-baseline). */
   reset(): void {
-    this.buckets.clear();
-    this.byAnswerType.clear();
-    this.byDifficulty.clear();
-    this.byTemplate.clear();
-    this.byProvider.clear();
+    this.kernel.reset();
     this.pending.length = 0;
     this.history.length = 0;
     this.nextRegradeId = 1;

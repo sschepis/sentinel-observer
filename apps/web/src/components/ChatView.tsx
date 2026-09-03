@@ -26,6 +26,8 @@ const STARTERS = ['hello', 'what is your name?', 'how are you?', 'tell me someth
 
 function ObserverMessage({ message }: { message: ConversationMessage }) {
   const badge = message.mode !== undefined ? MODE_BADGE[message.mode] : null;
+  const [showWork, setShowWork] = useState(false);
+  const derived = message.derivation !== undefined && message.derivation.length > 0;
   return (
     <div className="group flex gap-3">
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-semibold uppercase text-emerald-300">
@@ -39,6 +41,29 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
             {message.confidence != null && <span>confidence {message.confidence.toFixed(2)}</span>}
             {message.score != null && <span>graded {message.score.toFixed(2)}</span>}
           </p>
+        )}
+        {derived && (
+          <button
+            onClick={() => setShowWork((open) => !open)}
+            className="mt-1.5 text-[11px] font-medium text-sky-400/80 transition hover:text-sky-300"
+            aria-expanded={showWork}
+          >
+            {showWork ? 'hide the derivation' : `show the work (${message.steps ?? message.derivation!.length} rewrites)`}
+          </button>
+        )}
+        {derived && showWork && (
+          <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800/80 bg-slate-950/60 p-2.5 font-mono text-[10.5px] leading-relaxed text-slate-400">
+            {message.derivation!.map((step, index) => (
+              <div key={index} className="whitespace-nowrap">
+                <span className="text-slate-600">{index + 1}.</span>{' '}
+                <span className="text-sky-400/80">{step.ruleId}</span>{' '}
+                <span className="text-slate-600">→</span> {step.after}
+              </div>
+            ))}
+            {message.steps !== undefined && message.derivation!.length < message.steps && (
+              <p className="mt-1 text-slate-600">… {message.steps - message.derivation!.length} more steps</p>
+            )}
+          </div>
         )}
         {message.feedback != null && message.feedback.length > 0 && (
           <p className="mt-1.5 border-l-2 border-slate-800 pl-3 text-xs italic text-slate-500">{message.feedback}</p>

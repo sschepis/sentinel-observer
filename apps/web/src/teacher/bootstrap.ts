@@ -2,9 +2,14 @@ import type { SerializedTrace } from '@sschepis/sentient-core';
 import type { WordState, CompiledRule, AnswerGradeEntry } from './TeacherAgent';
 import type { Relation, Negation, SourceClass } from './relations';
 import type { ReliabilitySnapshot } from './reliability';
+import type { RewriteRule, DerivationDenial } from './rules/types';
 import { SEMANTIC_VOCABULARY_SCHEME } from './semanticSignature';
 
-export const BOOTSTRAP_VERSION = 2 as const;
+export const BOOTSTRAP_VERSION = 3 as const;
+/** Records from v2 import unchanged (v3 added optional rewrite-rule fields
+ *  only); anything older is a different vocabulary encoding and is rejected
+ *  loudly rather than decoded against the wrong basis. */
+export const BOOTSTRAP_MIN_SUPPORTED_VERSION = 2 as const;
 export const BOOTSTRAP_VOCABULARY_SCHEME = SEMANTIC_VOCABULARY_SCHEME;
 
 /**
@@ -112,6 +117,17 @@ export interface BootstrapRecord {
    *  resolved. One-shot: a resolved conflict is never re-reported, so the
    *  ledger must survive reloads exactly like the negations it settled. */
   resolvedSweepConflicts?: string[];
+  /** R5: LEARNED rewrite rules (the observer's procedures as memories) —
+   *  authored decks are code and are never persisted; induced/chaperoned
+   *  rules ride the record so a trained observer restores its procedures.
+   *  Restored exactly like reloads; malformed rules are dropped. */
+  rewriteRules?: RewriteRule[];
+  /** R5: the denied-derivation record (the rule analog of negations) —
+   *  independent denials and strength at the floor stop a rule. */
+  rewriteDenials?: DerivationDenial[];
+  /** R5: the one-shot stop ledger — a rule the world denied twice stays
+   *  stopped across reloads (never re-litigated, never deleted). */
+  ruleResolutions?: string[];
   /** Learned arbitration weights (absent = archetypal defaults). */
   driveWeights?: Record<string, number>;
   /** Per-goal-type completion history (absent = no goal experience). */
@@ -122,6 +138,11 @@ export interface BootstrapRecord {
    *  teacher, not just its memory. */
   learningState?: {
     compositionWeights?: Record<string, number>;
+    /** L3 (19.2): per-n-gram use stamps — the weights' decay clocks.
+     *  Additive: absent on legacy records (clocks start at first sweep). */
+    compositionWeightMeta?: Record<string, number>;
+    /** L3 (19.3): per-behavior last-outcome stamps — the drive drift clock. */
+    behaviorOutcomeAt?: Record<string, number>;
     behaviorOutcomes?: Record<string, { wins: number; losses: number }>;
     fadeState?: { agreement: Record<string, number | null>; lambda: Record<string, number> };
     exposureCounts?: Record<string, number>;

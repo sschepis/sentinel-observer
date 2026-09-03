@@ -135,6 +135,15 @@ export interface PrimeActivityOptions {
   learningRate?: number;
   /** When true (default) the blend rate scales with observed coherence. */
   coherenceWeighted?: boolean;
+  /**
+   * How coherence scales the blend rate (L1b, Phase 18.1):
+   *   · 'floor' (default): `alpha = lr · (0.5 + 0.5·coherence)` — the
+   *     legacy curve; even a fully incoherent moment imprints at half rate.
+   *   · 'linear': `alpha = lr · coherence` — an incoherent moment barely
+   *     imprints (the doc's original claim, now literally true): junk
+   *     perturbations no longer overwrite the orientation at half rate.
+   */
+  coherenceWeighting?: 'floor' | 'linear';
 }
 
 /** Raised for an unknown axis name or an out-of-range axis index. */
@@ -443,8 +452,11 @@ export class SedenionMemoryField {
    * contributions are averaged (guarded division).
    *
    * Either way the target is blended into the current orientation with an
-   * exponential moving average whose rate scales with the observed coherence:
-   * an incoherent field barely imprints.
+   * exponential moving average whose rate scales with the observed coherence
+   * (per `coherenceWeighting`): under 'linear' an incoherent field barely
+   * imprints (alpha = lr·coherence → 0 as coherence → 0); under the legacy
+   * 'floor' even a fully incoherent moment imprints at half rate
+   * (alpha = lr·(0.5 + 0.5·coherence)).
    *
    * @returns the blend rate actually applied.
    */
@@ -484,7 +496,9 @@ export class SedenionMemoryField {
     const learningRate = clampRange(options.learningRate ?? 0.2, 0, 1);
     const coherence = Number.isFinite(sample.coherence) ? clampRange(sample.coherence, 0, 1) : 0;
     const weighted = options.coherenceWeighted ?? true;
-    const alpha = clampRange(weighted ? learningRate * (0.5 + 0.5 * coherence) : learningRate, 0, 1);
+    const weighting = options.coherenceWeighting ?? 'floor';
+    const coherenceScale = weighting === 'linear' ? coherence : 0.5 + 0.5 * coherence;
+    const alpha = clampRange(weighted ? learningRate * coherenceScale : learningRate, 0, 1);
     if (alpha === 0) return 0;
 
     for (let i = 0; i < this.width; i++) {

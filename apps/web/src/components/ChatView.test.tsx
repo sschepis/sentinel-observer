@@ -81,4 +81,53 @@ describe('ChatView', () => {
     render(<ChatView chat={chatStub()} ready creativeUnlocked={false} voice={voice} />);
     expect(screen.getByRole('button', { name: 'Compose' }).hasAttribute('disabled')).toBe(true);
   });
+
+  it('R8: unfolds the rewrite derivation ("show the work")', () => {
+    render(
+      <ChatView
+        chat={chatStub({
+          messages: [
+            { id: 1, role: 'user', text: 'what is 7 + 5?', at: 1 },
+            {
+              id: 2,
+              role: 'observer',
+              text: 'The answer is 12.',
+              mode: 'operator',
+              at: 2,
+              steps: 3,
+              derivation: [
+                { ruleId: 'nat.add-s', after: 's(add(s^6, s^5))' },
+                { ruleId: 'nat.add-s', after: 's(s(add(s^5, s^5)))' },
+                { ruleId: 'nat.add-z', after: 's(s(s(s(s(s(s(s(s(s(s(s(z))))))))))))' }
+              ]
+            }
+          ]
+        })}
+        ready
+        creativeUnlocked
+        voice={voice}
+      />
+    );
+    expect(screen.getByText('The answer is 12.')).toBeDefined();
+    expect(screen.getByText('computed')).toBeDefined();
+    const toggle = screen.getByRole('button', { name: /show the work/ });
+    expect(toggle).toBeDefined();
+    fireEvent.click(toggle);
+    expect(screen.getAllByText(/nat.add-s/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1\./).length).toBeGreaterThan(0);
+  });
+
+  it('R8: hides the derivation toggle when the answer did not derive', () => {
+    render(
+      <ChatView
+        chat={chatStub({
+          messages: [{ id: 1, role: 'observer', text: 'I think so.', mode: 'creative', at: 1 }]
+        })}
+        ready
+        creativeUnlocked
+        voice={voice}
+      />
+    );
+    expect(screen.queryByRole('button', { name: /show the work/ })).toBeNull();
+  });
 });

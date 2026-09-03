@@ -1,6 +1,7 @@
 import type { DeckWord } from './deck';
 import { RELATION_PREDICATES, type Relation, type RelationPredicate } from './relations';
 import { isContentWord } from './context';
+import type { TaughtRuleSpec } from './rules/instruction';
 
 /**
  * The Chaperone: an LLM that generates and VALIDATES the content the
@@ -667,6 +668,41 @@ export function validateGeneratedRelation(
 
 export class Chaperone {
   constructor(private readonly provider: ChaperoneProvider) {}
+
+  /**
+   * R14 — propose a RULE (a procedure) for a family the observer cannot
+   * derive. The LLM is a PROPOSER, not a programmer: the prompt demands an
+   * answer in the bounded taught-rule grammar, and the observer's pipeline
+   * (parseTaughtRule → validateTaughtRule) treats the text as untrusted
+   * data — it is never evaluated, only parsed and then empirically
+   * validated against the family's own oracle before adoption.
+   */
+  async proposeRule(options: {
+    spec: TaughtRuleSpec;
+    /** The family's instances as "input -> output" lines. */
+    instances: ReadonlyArray<{ input: string; output: string }>;
+    signal?: AbortSignal;
+  }): Promise<string> {
+    const grammarName = options.spec.name.split('.').pop() ?? options.spec.name;
+    const grammar =
+      `Express the procedure ONLY as ONE sentence in exactly this grammar:\n` +
+      `"to find the ${grammarName} of ${options.spec.args.join(' and ')}: if <arg> is zero the answer is <expr>; ` +
+      `otherwise it is <expr>"\n` +
+      `where <arg> is one of: ${options.spec.args.join(', ')}\n` +
+      `and <expr> is any of: an argument (${options.spec.args.join(', ')}), zero, ` +
+      `"the ${grammarName} of <expr> and <expr>" (recursion), "the remainder of <expr> divided by <expr>", ` +
+      `or "<expr> plus <expr>" / "<expr> times <expr>" / "<expr> minus <expr>".`;
+    const instanceLines = options.instances
+      .slice(0, 12)
+      .map((instance) => `  ${instance.input}  ->  ${instance.output}`)
+      .join('\n');
+    const prompt =
+      `A learner can compute these instances of the function "${grammarName}":\n` +
+      `${instanceLines}\n\n` +
+      `${grammar}\n\n` +
+      `Answer with the single procedure sentence and NOTHING else — no explanation, no markdown, no code fences.`;
+    return this.provider.complete(prompt, { signal: options.signal });
+  }
 
   /**
    * Generate + validate a batch of NEW conversational phrase pairs for the

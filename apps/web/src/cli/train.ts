@@ -57,7 +57,7 @@ import { CLOCK_ANSWER_RE, COLOR_WORDS } from '../teacher/operators';
 import { inheritanceChains } from '../teacher/relations';
 import { claimsRelationalYes, outOfVocabulary, assertsDefinitionOf, negativeTargetsFor, type ProbeAnswer } from '../teacher/adversarial';
 import { isContentWord, tokenizeText, cosineSimilarity } from '../teacher/context';
-import { applyTimeDecay, REVIEW_STRENGTH_THRESHOLD } from '../teacher/TeacherAgent';
+import { REVIEW_STRENGTH_THRESHOLD } from '../teacher/TeacherAgent';
 import { ShardTrainer, mergeRecords } from '../teacher/shardTrainer';
 import { hybridAnswer } from '../teacher/hybrid';
 import { selfSufficiencyClass } from '../teacher/autonomous';
@@ -104,6 +104,8 @@ Flags:
   the command line, where it leaks into shell history and process listings)
   --deck FILE          teach only the words listed in FILE (deck words only)
   --out PATH           output bootstrap record path (default public/bootstrap.json)
+  --rules              R7: construct the trainer in rewrite-induction mode (drill
+                       phases route memorized drills to rewrite-rule synthesis)
 `;
 
 /** Fraction of the deck slice each verify worker handles. */
@@ -306,6 +308,12 @@ interface CliArgs {
   noveltyBench: number;
   benchAll: boolean;
   retentionCheck: string;
+  /** R7: construct the trainer in rewrite-induction mode — the drill loop
+   *  (when a drill phase runs) routes memorized drills to rewrite-rule
+   *  synthesis with a DSL fallback. The word curriculum is rules-agnostic,
+   *  so the exported record is identical; the flag keeps the pipeline
+   *  honest for classroom-driven retrains. */
+  rules: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -337,7 +345,8 @@ function parseArgs(argv: string[]): CliArgs {
     selfSufficiency: 0,
     noveltyBench: 0,
     benchAll: false,
-    retentionCheck: ''
+    retentionCheck: '',
+    rules: false
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -371,6 +380,7 @@ function parseArgs(argv: string[]): CliArgs {
       case '--novelty-bench': args.noveltyBench = Math.max(0, Number(value(flag))); break;
       case '--bench-all': args.benchAll = true; break;
       case '--retention-check': args.retentionCheck = value(flag); break;
+      case '--rules': args.rules = true; break;
       case '--endpoint': args.endpoint = value(flag); break;
       case '--model': args.model = value(flag); break;
       case '--deck': args.deckFile = resolve(process.cwd(), value(flag)); break;
@@ -496,7 +506,7 @@ async function main(): Promise<void> {
   await session.initialize();
   session.observeText(PRIMING_TEXT);
 
-  const teacher = new TeacherAgent(session, ACTIVE_DECK, new MemoryPersistenceStore(), 250, args.settleSteps);
+  const teacher = new TeacherAgent(session, ACTIVE_DECK, new MemoryPersistenceStore(), 250, args.settleSteps, undefined, undefined, undefined, undefined, args.rules);
   const deckWords = deckWordsFor([...ACTIVE_DECK], args);
   const phases: string[] = [];
 
@@ -820,9 +830,10 @@ async function main(): Promise<void> {
   }
 
   // Longitudinal retention simulation: advance the bank through DAYS of
-  // wall-clock decay (the REAL applyTimeDecay) with the scheduled review
-  // loop (words below the review threshold get asked+graded that day), then
-  // report what fraction of the sample stays above the review threshold.
+  // wall-clock decay (the REAL FSRS retention law — teacher.applyRetention)
+  // with the scheduled review loop (words whose dueAt has passed get
+  // asked+graded that day), then report what fraction of the sample stays
+  // above the review threshold.
   if (args.retentionSim > 0) {
     phases.push(`retention sim ${args.retentionSim}d`);
     console.log(`[retention] simulating ${args.retentionSim} days of decay + scheduled reviews…`);
@@ -837,11 +848,23 @@ async function main(): Promise<void> {
     for (let day = 1; day <= args.retentionSim; day += 1) {
       // Advance the clock one day for every trace, then apply the FSRS
       // retention decay (P9): strength IS the model's prediction.
+      // The word-state clocks MUST be shifted on the LIVE states
+      // (teacher.tryState) — listWords() returns snapshots, and mutating
+      // those silently breaks the schedule (words never come due again:
+      // the pre-L1a sim had exactly that bug and reported 0% retention).
+      // L1a additionally requires lastAskedAt/taughtAt to move: the
+      // scheduler is time-sensitive (reviewRetrievability), and shifting
+      // only dueAt would make every lapse read as a crammed lapse and rob
+      // every correct review of its overdue bonus.
       for (const trace of bank.all()) {
         trace.lastAccessAt -= DAY;
       }
-      for (const state of teacher.listWords()) {
-        if (state.dueAt !== null) state.dueAt -= DAY;
+      for (const word of learned) {
+        const live = teacher.tryState(word.word.word);
+        if (live === null || live === undefined) continue;
+        if (live.dueAt !== null) live.dueAt -= DAY;
+        if (live.lastAskedAt !== null) live.lastAskedAt -= DAY;
+        if (live.taughtAt !== null) live.taughtAt -= DAY;
       }
       teacher.applyRetention();
       // Scheduled reviews: words whose FSRS dueAt has passed get practiced.

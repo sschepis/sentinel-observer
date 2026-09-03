@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
-import { TeacherAgent, CREATIVE_REINFORCE_SCORE, CREATIVE_WEAKEN_SCORE } from './TeacherAgent';
+import { TeacherAgent, CREATIVE_REINFORCE_SCORE, CREATIVE_WEAKEN_SCORE, creativeGradeDelta } from './TeacherAgent';
 import { CONVERSATION_DECK, ALL_CONVERSATION_PAIRS, CONVERSATION_CUE_TOKENS, composeCreativeResponse, scoreComposition, updateCompositionWeights } from './conversation';
 import { Chaperone, parseGradeOutcome, parseConversationPairs, validateConversationPair, type ChaperoneProvider, type ConversationPairResult } from './chaperone';
 import { PRIME_SPACE, deckVocabulary } from './primeSignature';
@@ -196,6 +196,19 @@ describe('TeacherAgent conversation (memorized exchanges)', () => {
 
     teacher.creativeGradeFeedback([seedId], 0.5);
     expect(bank.get(seedId)?.strength ?? 0).toBe(before);
+  });
+
+  it('L1b (18.2): the creative delta is surprise-scaled by the margin beyond the gate', () => {
+    // Band edges reproduce the floor (0.25 of the base delta); the extremes
+    // reproduce the pre-L1b full magnitudes; mid-band is exactly 0.
+    expect(creativeGradeDelta(1)).toBeCloseTo(0.05, 10);
+    expect(creativeGradeDelta(0)).toBeCloseTo(-0.05, 10);
+    expect(creativeGradeDelta(CREATIVE_REINFORCE_SCORE)).toBeCloseTo(0.05 * 0.25, 10);
+    expect(creativeGradeDelta(CREATIVE_WEAKEN_SCORE)).toBeCloseTo(-0.05 * 0.25, 10);
+    expect(creativeGradeDelta(0.5)).toBe(0);
+    // Monotone in the margin: a 0.95 moves more than a 0.75.
+    expect(creativeGradeDelta(0.95)).toBeGreaterThan(creativeGradeDelta(0.75));
+    expect(Math.abs(creativeGradeDelta(0.05))).toBeGreaterThan(Math.abs(creativeGradeDelta(0.25)));
   });
 
   it('teaches the full conversation curriculum including the extended deck', () => {

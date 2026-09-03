@@ -14,6 +14,7 @@
     "scale-bench": "tsx src/cli/scale-bench.ts",
     "council-bench": "tsx src/cli/council-bench.ts",
     "drill-bench": "tsx src/cli/drill-bench.ts",
+    "rules-report": "tsx src/cli/rules-report.ts",
     "signature-bench": "tsx src/cli/signature-bench.ts",
     "smf-width-bench": "tsx src/cli/smf-width-bench.ts",
     "p1-relations-bench": "tsx src/cli/p1-relations-bench.ts",

@@ -90,6 +90,10 @@ export type {
   PhaseClusterOptions
 } from './PrimeOscillatorField';
 
+// H6 (Phase 23): Hebbian coupling — the experiment-gated learned coupling.
+export { HebbianCouplingStore, normalizeHebbianOptions } from './HebbianCoupling';
+export type { HebbianOptions, HebbianConfig, HebbianSnapshot } from './HebbianCoupling';
+
 // Sedenion memory field
 export {
   SedenionMemoryField,

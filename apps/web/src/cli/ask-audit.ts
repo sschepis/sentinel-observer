@@ -11,7 +11,8 @@
  *   operator-semantic    paraphrased meaning -> learned word
  *   operator-graph       confident relational answers (no score)
  *   operator-graded      P1 holographic answers (carry a score)
- *   operator-compiled    P2 executable drill rules
+ *   operator-compiled    P2 executable drill rules + the rewrite engine
+ *                       (R3a: families derive through the rule decks)
  *   operator-learned     echo-template patterns
  *   operator-other       yes/no, count, echo, introspection
  *   creative             composed from memory
@@ -57,6 +58,7 @@ function layerOf(answer: ChatAnswer): string {
     const kind = answer.operator?.kind ?? '';
     if (kind === 'clock') return 'clock';
     if (kind === 'compiled-rule') return 'operator-compiled';
+    if (kind === 'rewrite') return 'operator-compiled';
     if (kind === 'learned') return 'operator-learned';
     if (kind === 'definition') return 'operator-definition';
     if (kind === 'semantic-recall') return 'operator-semantic';
