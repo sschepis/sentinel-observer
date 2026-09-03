@@ -10,7 +10,6 @@
  * on TeacherAgentCore.
  */
 import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base';
-import type { TeacherAgent } from '../TeacherAgent';
 import type {
   RecallResult
 } from '@sschepis/sentient-core';
@@ -270,7 +269,14 @@ export function ConversationMixin<TBase extends Constructor<TeacherAgentCore & C
     }
 
     /** The most recent belief about a subject (or null). */
-    latestBelief(about: string): ReturnType<TeacherAgent['beliefsOf']>[number] | null {
+    latestBelief(about: string): {
+      traceId: string;
+      content: string;
+      beliefKind: string;
+      contradicts: boolean;
+      basis: Record<string, unknown>;
+      strength: number;
+    } | null {
       return this.beliefsOf(about)[0] ?? null;
     }
 
