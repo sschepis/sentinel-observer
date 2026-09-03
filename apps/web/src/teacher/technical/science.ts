@@ -252,6 +252,53 @@ const ASTRONOMY = strand('astronomy', [
   ['big bang', 'the scientific model that the universe expanded from an early hot dense state', 'The big bang model explains cosmic expansion and background radiation.', ['universe', 'scientific model'], [isA('scientific model')]]
 ]);
 
+/**
+ * PHYSICS, ADVANCED — thermodynamics, electric fields, quantum physics, and
+ * relativity. Deliberately appended AFTER every other strand so its rows may
+ * depend on any earlier concept (chemistry's atom/electron/neutron, the
+ * astronomy strands, the measurement units). Definitions are learner-English
+ * and every stated claim is physics-stable: classical-mechanics statements
+ * hold at everyday scales, quantum rows describe what measurements show
+ * rather than interpretive baggage, and the relativity rows say only what
+ * the theory asserts about measured time and space.
+ */
+const PHYSICS_ADVANCED = strand('physics', [
+  ['physics', 'the study of matter, energy, and their interactions', 'Physics explains why a ball falls and why a magnet sticks.', ['science'], [isA('science')]],
+  ['classical mechanics', 'the physics of everyday objects, described by the newton laws', 'A bicycle moves according to classical mechanics.', ['physics', 'motion', 'force', 'newton first law'], [isA('physics')]],
+  ['friction', 'a force that opposes the sliding of one surface over another', 'Friction slows a sliding book and warms your hands.', ['force', 'motion']],
+  // ── Thermodynamics ──────────────────────────────────────────────────────
+  ['heat', 'energy that flows from a hotter object or region to a colder one', 'Heat flows from the warm mug into the colder room.', ['energy', 'temperature']],
+  ['thermal energy', 'the energy an object has because its particles are moving', 'A warm cup has more thermal energy than a cold one.', ['heat', 'energy'], [isA('energy')]],
+  ['conduction', 'the transfer of heat through a material by the contact of its particles', 'Conduction warms a metal spoon handle in hot soup.', ['heat', 'particle', 'conductor']],
+  ['convection', 'the transfer of heat by the motion of a fluid such as air or water', 'Convection carries warm air upward from a heater.', ['heat', 'motion', 'matter']],
+  ['thermal radiation', 'energy carried away from a warm object as electromagnetic waves', 'Thermal radiation from the fire warms your face.', ['heat', 'electromagnetic wave'], [isA('electromagnetic wave')]],
+  ['thermal equilibrium', 'the state in which objects in contact have the same temperature and no heat flows between them', 'The tea reaches thermal equilibrium with the room.', ['heat', 'temperature']],
+  ['thermal expansion', 'the increase in the size of a material when its temperature rises', 'Thermal expansion can loosen a tight metal lid under warm water.', ['temperature', 'volume']],
+  ['absolute zero', 'the lowest possible temperature, at which the motion of particles is minimal', 'Nothing can be colder than absolute zero.', ['temperature', 'kelvin']],
+  ['thermodynamics', 'the study of heat, work, temperature, and the flow of energy', 'Thermodynamics explains how a steam engine runs.', ['heat', 'work', 'temperature', 'energy'], [isA('physics')]],
+  ['entropy', 'a measure of how spread out or disordered the energy of a system is', 'Entropy tends to increase when a gas fills a whole room.', ['thermodynamics', 'energy', 'matter']],
+  ['first law of thermodynamics', 'energy is conserved when heat is added to a system or work is done on it', 'The first law of thermodynamics keeps the energy budget of a steam engine.', ['thermodynamics', 'energy', 'heat', 'work'], [isA('scientific law'), { predicate: 'special-case-of', object: 'conservation of energy' }]],
+  ['second law of thermodynamics', 'heat cannot spontaneously flow from a colder body to a hotter one, and entropy tends to increase', 'The second law of thermodynamics explains why a hot drink cools.', ['thermodynamics', 'heat', 'entropy'], [isA('scientific law')]],
+  ['heat engine', 'a device that turns heat into work and rejects some heat as waste', 'A car engine is a heat engine.', ['thermodynamics', 'heat', 'work']],
+  // ── Electric fields ─────────────────────────────────────────────────────
+  ['electric field', 'a region in which an electric charge experiences a force', 'A charged balloon creates an electric field around it.', ['electric charge', 'force']],
+  ['static electricity', 'electric charge that stays on the surface of an object', 'Rubbing a balloon builds up static electricity.', ['electric charge', 'insulator'], [isA('electric charge')]],
+  // ── Quantum physics ─────────────────────────────────────────────────────
+  ['quantum', 'the smallest discrete amount into which a physical quantity such as energy can come', 'Light energy arrives in quanta called photons.', ['photon', 'energy']],
+  ['quantum mechanics', 'the physics of atoms and subatomic particles, in which energy comes in discrete quanta and measurement matters', 'Quantum mechanics describes an electron in an atom.', ['quantum', 'atom', 'electron', 'classical mechanics'], [isA('physics')]],
+  ['quantum state', 'the complete description of a quantum system, such as the state of an electron in an atom', 'Measuring a quantum state changes it.', ['quantum mechanics']],
+  ['superposition', 'the quantum condition of being in a combination of states until a measurement picks one', 'An electron in superposition is not in one definite position.', ['quantum state']],
+  ['wave particle duality', 'the property of quanta such as photons and electrons to behave as both waves and particles', 'Wave particle duality appears in the double-slit experiment.', ['quantum', 'wave', 'particle', 'photon']],
+  ['photoelectric effect', 'the release of electrons from a material when light shines on it', 'The photoelectric effect showed that light arrives in photons.', ['photon', 'electron', 'light']],
+  ['energy level', 'a fixed energy value that an electron in an atom can have', 'An electron jumps between energy levels by absorbing or emitting a photon.', ['electron', 'atom', 'energy', 'photon']],
+  ['quark', 'a fundamental particle that makes up protons and neutrons', 'Up and down quarks build a proton.', ['proton', 'neutron', 'particle'], [isA('particle')]],
+  // ── Relativity ──────────────────────────────────────────────────────────
+  ['space', 'the unbounded three-dimensional extent in which objects and events are located', 'An astronaut moves through the space around Earth.', ['physics', 'matter', 'length']],
+  ['relativity', 'the theory that space and time are linked and are measured differently by observers in relative motion or different gravity', 'Relativity explains why clocks on fast spacecraft run slow.', ['space', 'time', 'motion', 'gravity'], [isA('physics')]],
+  ['spacetime', 'the four-dimensional combination of space and time used to describe events', 'Gravity bends spacetime near a massive body.', ['space', 'time']],
+  ['speed of light', 'the constant speed of light in empty space, about 300 million meters per second', 'Nothing travels faster than the speed of light.', ['light', 'speed', 'meter']]
+]);
+
 /** Science concepts from method through physical, life, Earth, and space science. */
 export const SCIENCE_CONCEPTS: readonly TechnicalConcept[] = [
   ...SCIENTIFIC_PRACTICE,
@@ -259,5 +306,6 @@ export const SCIENCE_CONCEPTS: readonly TechnicalConcept[] = [
   ...CHEMISTRY,
   ...BIOLOGY,
   ...EARTH_SCIENCE,
-  ...ASTRONOMY
+  ...ASTRONOMY,
+  ...PHYSICS_ADVANCED
 ];

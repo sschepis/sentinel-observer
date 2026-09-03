@@ -415,6 +415,27 @@ export const MEASUREMENT_CONCEPTS: readonly TechnicalConcept[] = [
     strand: 'unit',
     dependsOn: ['frequency', 'derived unit']
   },
+  {
+    word: 'ampere',
+    definition: 'the base unit of electric current',
+    example: 'A kettle draws about ten amperes.',
+    strand: 'unit',
+    dependsOn: ['base unit']
+  },
+  {
+    word: 'volt',
+    definition: 'the derived unit of voltage, the energy carried by each unit of electric charge',
+    example: 'A battery provides about nine volts.',
+    strand: 'unit',
+    dependsOn: ['derived unit']
+  },
+  {
+    word: 'ohm',
+    definition: 'the derived unit of electrical resistance',
+    example: 'The wire has a resistance of two ohms.',
+    strand: 'unit',
+    dependsOn: ['derived unit']
+  },
 
   // ── Working with measurements ───────────────────────────────────────────
   {

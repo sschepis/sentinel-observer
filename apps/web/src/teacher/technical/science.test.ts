@@ -53,7 +53,17 @@ describe('the comprehensive science curriculum', () => {
       'red giant',
       'star',
       'light year',
-      'unit'
+      'unit',
+      'classical mechanics',
+      'heat',
+      'entropy',
+      'second law of thermodynamics',
+      'photon',
+      'quantum mechanics',
+      'wave particle duality',
+      'electron',
+      'relativity',
+      'speed of light'
     ]) {
       teacher.teach(word);
     }
@@ -64,7 +74,15 @@ describe('the comprehensive science curriculum', () => {
       'does a cell have a cell membrane',
       'does the earth system have an atmosphere',
       'is a red giant a star',
-      'is a light year a unit'
+      'is a light year a unit',
+      'is classical mechanics a physics',
+      'is quantum mechanics a physics',
+      'is the second law of thermodynamics a scientific law',
+      'is the first law of thermodynamics a scientific law',
+      'is thermal energy an energy',
+      'is thermal radiation an electromagnetic wave',
+      'is a quark a particle',
+      'is relativity a physics'
     ];
     for (const question of questions) {
       const answer = teacher.chatAnswer(question);
@@ -74,6 +92,9 @@ describe('the comprehensive science curriculum', () => {
     const definition = teacher.chatAnswer('what is photosynthesis');
     expect(definition.mode).toBe('operator');
     if (definition.mode === 'operator') expect(definition.response).toContain('light energy');
+    const speed = teacher.chatAnswer('what is the speed of light');
+    expect(speed.mode).toBe('operator');
+    if (speed.mode === 'operator') expect(speed.response).toContain('300 million meters');
     session.dispose();
   }, 30000);
 });
