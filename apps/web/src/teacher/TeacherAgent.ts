@@ -100,6 +100,8 @@ import {
 import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './agent/base';
 import { GoalsMixin } from './agent/goals';
 import { AutoLoopMixin } from './agent/autoloop';
+import { CurriculumMixin } from './agent/curriculum';
+import { OperatorsMixin } from './agent/operators';
 import {
   // Module-scope vocabulary moved to agent/support.ts (public names are
   // re-exported below; the internal ones are imported for the class body).
@@ -203,8 +205,8 @@ export type {
   RetentionReport
 } from './agent/support';
 
-const TeacherAgentComposed = AutoLoopMixin(
-  GoalsMixin(TeacherAgentCore as unknown as Constructor<TeacherAgentCore & CrossFacultyApi>)
+const TeacherAgentComposed = CurriculumMixin(
+  OperatorsMixin(AutoLoopMixin(GoalsMixin(TeacherAgentCore as unknown as Constructor<TeacherAgentCore & CrossFacultyApi>)))
 );
 
 export class TeacherAgent extends TeacherAgentComposed {
@@ -1868,161 +1870,6 @@ export class TeacherAgent extends TeacherAgentComposed {
     return difficultyBandOf(count === 0 ? FSRS_INITIAL_DIFFICULTY : sum / count);
   }
 
-  /** The learned language templates (P5 extension) — audit view for the
-   *  bench/CLI: which structures were induced, admitted, and how the world
-   *  grades them. */
-  learnedTemplateAudit(): ReturnType<LearnedFrameStore['audit']> {
-    return this.learnedFrames.audit();
-  }
-
-  /**
-   * The observer's curiosity: the next word that NEEDS review. P9: the
-   * schedule is the model — a word is due when its FSRS `dueAt` has passed
-   * (the interval that decayed stability to the target retention). P-curriculum:
-   * WITHIN the due pool the queue is ordered by the difficulty-targeted
-   * score (FSRS difficulty + overdue-relative-to-interval + sparse semantic
-   * neighborhood + repeated-gap history + drill weakness), so a hard,
-   * overdue, isolated word with a failure streak is reviewed before a
-   * merely-due one. Untaught words follow (sparse neighborhoods first), so
-   * the loop still feeds new material. Returns null when nothing is due and
-   * nothing is new.
-   */
-  nextReview(): string | null {
-    if (this.curriculumConfig.enabled === false) {
-      return this.legacyNextReview();
-    }
-    return nextCurriculumWord(this.curriculumItems(), this.curriculumContext());
-  }
-
-  /** The pre-curriculum scheduler verbatim: earliest dueAt, tie → lowest
-   *  stability, then the first untaught word. The benchmark control. */
-  protected legacyNextReview(): string | null {
-    const now = Date.now();
-    let bestDue: { word: string; dueAt: number; stability: number } | null = null;
-    let bestNew: string | null = null;
-
-    for (const state of this.states.values()) {
-      if (state.traceId === null) {
-        if (bestNew === null) bestNew = state.word.word;
-        continue;
-      }
-      if (state.dueAt !== null && state.dueAt <= now) {
-        if (
-          bestDue === null ||
-          state.dueAt < bestDue.dueAt ||
-          (state.dueAt === bestDue.dueAt && state.stability < bestDue.stability)
-        ) {
-          bestDue = { word: state.word.word, dueAt: state.dueAt, stability: state.stability };
-        }
-      }
-    }
-    return bestDue !== null ? bestDue.word : bestNew;
-  }
-
-  /** Any learned word, weakest first (manual-quiz fallback when nothing needs review). */
-  nextLearnedWord(): string | null {
-    let best: { word: string; strength: number } | null = null;
-    for (const state of this.states.values()) {
-      if (state.traceId === null) continue;
-      const trace = this.traceOf(state.traceId);
-      if (trace === undefined) continue;
-      if (best === null || trace.strength < best.strength) {
-        best = { word: state.word.word, strength: trace.strength };
-      }
-    }
-    return best?.word ?? null;
-  }
-
-  /** The next word the observer has never been taught — sparse semantic
-   *  neighborhoods first (isolated words have no resonance partners, so
-   *  they need the explicit lesson most). */
-  nextNewWord(): string | null {
-    if (this.curriculumConfig.enabled === false) {
-      for (const state of this.states.values()) {
-        if (state.traceId === null) return state.word.word;
-      }
-      return null;
-    }
-    const fresh = this.curriculumItems().filter((item) => item.traceId === null);
-    return nextCurriculumWord(fresh, this.curriculumContext());
-  }
-
-  /**
-   * The P-curriculum scoring context: the semantic vocabulary over the
-   * teacher's own deck (lazy, cached) plus the persisted drill failures.
-   * `now` is injectable for deterministic scheduling tests.
-   */
-  curriculumContext(now?: number): CurriculumContext {
-    return {
-      vocabulary: this.curriculumVocabulary(),
-      drillFailures: this.drillFailuresSnapshot(),
-      now,
-      weights: this.curriculumConfig.weights
-    };
-  }
-
-  /** The lazy semantic vocabulary over this teacher's deck — the sparsity
-   *  signal's neighborhood graph. Computed once (≈75 ms at the 20k deck). */
-  curriculumVocabulary(): Record<string, number[]> {
-    if (this.curriculumVocabCache === null) {
-      this.curriculumVocabCache = semanticVocabulary(
-        [...this.states.values()].map((state) => ({ word: state.word.word, definition: state.word.definition }))
-      );
-    }
-    return this.curriculumVocabCache;
-  }
-
-  /**
-   * The prioritized lesson queue: due words first (curriculum-scored), then
-   * never-taught words (sparse-first), then healthy learned words when
-   * asked. Read-only — the auto-loop consumes it via nextReview.
-   */
-  curriculumQueue(options: { includeHealthy?: boolean; limit?: number } = {}): ReturnType<typeof rankCurriculum> {
-    return rankCurriculum(this.curriculumItems(), this.curriculumContext(), options);
-  }
-
-  /** The state snapshot the curriculum ranks on (word → string, no refs). */
-  protected curriculumItems(): CurriculumItem[] {
-    return [...this.states.values()].map((state) => ({
-      word: state.word.word,
-      traceId: state.traceId,
-      dueAt: state.dueAt,
-      stability: state.stability,
-      difficulty: state.difficulty,
-      lastIntervalDays: state.lastIntervalDays,
-      reviewHistory: state.reviewHistory
-    }));
-  }
-
-  /**
-   * Record a drill round's verdict — the weak-drill curriculum signal.
-   * A concept that INDUCED (or compiled) a rule is no longer weak; anything
-   * else that keeps failing stays on the queue. Persisted with the learning
-   * state, so weakness survives reloads.
-   */
-  recordDrillResult(concept: string, verdict: 'unlearned' | 'memorized' | 'induced' | 'rule-induced'): void {
-    if (verdict === 'induced' || verdict === 'rule-induced') {
-      this.drillFailures.delete(concept);
-    } else {
-      const failures = (this.drillFailures.get(concept) ?? 0) + 1;
-      this.drillFailures.set(concept, Math.min(failures, 10));
-    }
-    this.maybePersist();
-  }
-
-  /** Consecutive failed drill rounds per concept (read-only). Built on a
-   *  null-prototype record: a concept named 'constructor' must read as its
-   *  own count — or undefined — never as the inherited Object.prototype
-   *  function (which made `clampRange(NaN)` throw inside the curriculum). */
-  drillFailuresSnapshot(): Record<string, number> {
-    return Object.assign(Object.create(null) as Record<string, number>, Object.fromEntries(this.drillFailures));
-  }
-
-  /** The pre-curriculum due-order ranking, for comparison/introspection. */
-  legacyQueue(): ReturnType<typeof rankLegacy> {
-    return rankLegacy(this.curriculumItems());
-  }
-
   /**
    * Teach one conversational exchange: the observer hears the CUE, ticks once
    * so the field imprints the cue's orientation, and stores the RESPONSE as a
@@ -2999,11 +2846,6 @@ export class TeacherAgent extends TeacherAgentComposed {
     return null;
   }
 
-  /** Number of learned language patterns that have cleared the bar. */
-  learnedPatternCount(): number {
-    return this.operatorLearner.fireableCount();
-  }
-
   // ── The rewrite engine (R0–R5): rules as memories ──────────────────────
 
   /** The rule store — decks + induced rules (read view for tests/CLI). */
@@ -3359,11 +3201,6 @@ export class TeacherAgent extends TeacherAgentComposed {
     return this.compositionRules;
   }
 
-  /** MDL audit view of the learned-operator library (gains, maturity). */
-  operatorAuditView() {
-    return this.operatorLearner.audit();
-  }
-
   // ── Drive signals (archetypal resonance targets) ─────────────────────────
 
   /** Curiosity pressure: unanswered gaps + frequently-heard undefined words +
@@ -3533,19 +3370,6 @@ export class TeacherAgent extends TeacherAgentComposed {
   /** Number of stored creative memories (strong answers, incl. hybrid). */
   creativeMemoryCount(): number {
     return this.creativeMemoryIds.size;
-  }
-
-  /**
-   * Rebuild the learned-operator library from the observer's stored creative
-   * memories — memory is the source of truth; the pattern library is a view.
-   */
-  rebuildLearnedOperators(): void {
-    const bank = this.session.observer.getMemoryBank();
-    for (const trace of bank.all()) {
-      if (trace.metadata?.kind !== 'creative' || typeof trace.metadata.uttered !== 'string') continue;
-      const score = typeof trace.metadata.score === 'number' ? trace.metadata.score : 0.7;
-      this.operatorLearner.learn(trace.metadata.uttered, trace.content, score);
-    }
   }
 
   /**
