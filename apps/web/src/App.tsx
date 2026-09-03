@@ -15,6 +15,7 @@ import { OBSERVER_OPTIONS } from './observer/options';
 import { useLearningEngine } from './learning/useLearningEngine';
 import { useChat } from './chat/useChat';
 import { VoiceService, spokenAnswer } from './speech/voice';
+import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './speech/voiceSettings';
 import { fromEpisodicFact } from './learning/events';
 import { RemoteClient, remoteChatTeacher } from './server/client';
 import { useRemoteObserver } from './server/useRemoteObserver';
@@ -129,6 +130,13 @@ export default function App() {
   const [restoreEpoch, setRestoreEpoch] = useState(0);
   const [summaryTick, setSummaryTick] = useState(0);
   const [voice] = useState(() => new VoiceService());
+  // Voice configuration (enable/disable + provider) — persisted to
+  // localStorage; the ElevenLabs key never leaves the browser.
+  const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings>(() => loadVoiceSettings());
+  useEffect(() => {
+    voice.configure(voiceSettings);
+  }, [voice, voiceSettings]);
+
   // W6: a per-session composition seed (P5 determinism). The browser session
   // gets ONE seed for its lifetime, so the same conversation state reproduces
   // the same creative sentence within the session — the PRNG is never the
@@ -167,7 +175,7 @@ export default function App() {
     (text) => {
       // Speak only the first sentence — a recalled trace is "word: definition.
       // example", and reading the whole raw content aloud is a wall of words.
-      if (voice.ttsAvailable) voice.speak(spokenAnswer(text));
+      if (voiceSettings.enabled && voice.ttsAvailable()) voice.speak(spokenAnswer(text));
     },
     // The observer's new long-term memories land in the training stream as
     // "remembers" events — the human sees what it chose to remember.
@@ -526,6 +534,11 @@ export default function App() {
               restoredCount={restored}
               staleCount={staleCount}
               onRecordImported={() => setRestoreEpoch((n) => n + 1)}
+              voiceSettings={voiceSettings}
+              onVoiceSettingsChange={(next) => {
+                setVoiceSettingsState(next);
+                saveVoiceSettings(next);
+              }}
             />
           ))}
       </main>

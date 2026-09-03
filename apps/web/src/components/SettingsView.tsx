@@ -10,6 +10,8 @@ import {
 } from '../teacher/bootstrapLoader';
 import { ChaperoneProgress } from './ChaperoneProgress';
 import { MAX_CONCURRENCY } from '../teacher/chaperone';
+import type { VoiceSettings } from '../speech/voiceSettings';
+import { ELEVENLABS_DEFAULT_VOICE_ID } from '../speech/voiceSettings';
 import {
   MODEL_SETTING_BOUNDS,
   DEFAULT_MODEL_SETTINGS,
@@ -24,6 +26,9 @@ export interface SettingsViewProps {
   restoredCount: number;
   staleCount: number;
   onRecordImported: () => void;
+  /** Voice (TTS) configuration — optional for backwards-compatible stubs. */
+  voiceSettings?: VoiceSettings;
+  onVoiceSettingsChange?: (next: VoiceSettings) => void;
 }
 
 /** Trigger a browser download for a blob. */
@@ -85,14 +90,16 @@ function Slider({
   );
 }
 
-/** Provider configuration, definition backfill, and learning-record I/O. */
+/** Provider configuration, definition backfill, voice, and learning-record I/O. */
 export function SettingsView({
   teacher,
   engine,
   persistenceKind,
   restoredCount,
   staleCount,
-  onRecordImported
+  onRecordImported,
+  voiceSettings,
+  onVoiceSettingsChange
 }: SettingsViewProps) {
   const [recordStatus, setRecordStatus] = useState('');
 
@@ -338,6 +345,81 @@ export function SettingsView({
           </p>
           {recordStatus.length > 0 && <p className="mt-1.5 text-xs text-slate-400">{recordStatus}</p>}
         </Section>
+
+        {voiceSettings !== undefined && onVoiceSettingsChange !== undefined && (
+          <Section
+            title="Voice"
+            hint="Have the observer speak its answers aloud. Browser speech needs no account; ElevenLabs needs an API key, which is stored only in this browser and sent only to ElevenLabs."
+          >
+            <div className="space-y-4">
+              <label className="flex items-center justify-between gap-4">
+                <span className="text-sm text-slate-300">Speak answers aloud</span>
+                <input
+                  type="checkbox"
+                  checked={voiceSettings.enabled}
+                  onChange={(event) => onVoiceSettingsChange({ ...voiceSettings, enabled: event.target.checked })}
+                  aria-label="Speak answers aloud"
+                  className="h-4 w-4 accent-emerald-500"
+                />
+              </label>
+              <div>
+                <p className="text-sm text-slate-300">Voice engine</p>
+                <div className="mt-2 flex gap-2">
+                  {(['browser', 'elevenlabs'] as const).map((provider) => (
+                    <button
+                      key={provider}
+                      onClick={() => onVoiceSettingsChange({ ...voiceSettings, provider })}
+                      className={`rounded-lg border px-3 py-1.5 text-xs transition ${
+                        voiceSettings.provider === provider
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
+                          : 'border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      {provider === 'browser' ? 'Browser speech' : 'ElevenLabs'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {voiceSettings.provider === 'elevenlabs' && (
+                <div className="grid gap-3">
+                  <label className="block">
+                    <span className="text-sm text-slate-300">ElevenLabs API key</span>
+                    <input
+                      type="password"
+                      value={voiceSettings.elevenlabs.apiKey}
+                      onChange={(event) =>
+                        onVoiceSettingsChange({
+                          ...voiceSettings,
+                          elevenlabs: { ...voiceSettings.elevenlabs, apiKey: event.target.value }
+                        })
+                      }
+                      placeholder="elevenlabs api key"
+                      className={`mt-1.5 w-full ${FIELD}`}
+                      autoComplete="off"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Never committed or logged — stored in this browser only.
+                    </span>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm text-slate-300">Voice id</span>
+                    <input
+                      value={voiceSettings.elevenlabs.voiceId}
+                      onChange={(event) =>
+                        onVoiceSettingsChange({
+                          ...voiceSettings,
+                          elevenlabs: { ...voiceSettings.elevenlabs, voiceId: event.target.value }
+                        })
+                      }
+                      placeholder={ELEVENLABS_DEFAULT_VOICE_ID}
+                      className={`mt-1.5 w-full ${FIELD}`}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
       </div>
     </div>
   );
