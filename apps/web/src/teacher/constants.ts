@@ -1041,6 +1041,139 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     line: 98,
     note: '0 = MDL concept synthesis (§9) is OFF (the control); 1 = induced concepts enter the hypothesis tier, answer hedged, promote on corroboration, stop on two world denials.',
     evidence: { sources: ['fuzz', 'chain'], mass: null, note: '§9 hypernym-recovery-bench: recovery 1.00 vs shuffle-chance 0.00 with 0 false-inheritance in asserted speech; the flag gates the tier integration.' }
+  },
+  {
+    name: 'ELABORATION_FLAT_ENTROPY_EPSILON',
+    class: 'tuning',
+    value: 0.01,
+    file: 'apps/web/src/teacher/elaboration.ts',
+    line: 194,
+    note: '§8.1: the frontier stop fires when the candidate next-claim entropy is flat (H̃ ≥ 1 − ε) — nothing left worth saying.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§8 elaboration-bench: 0 fabrications, the stop engages; the epsilon is the flatness tolerance the bench exercises.' }
+  },
+  {
+    name: 'ELABORATION_TRACE_MIN_GRADE',
+    class: 'tuning',
+    value: 0.8,
+    file: 'apps/web/src/teacher/elaboration.ts',
+    line: 201,
+    note: '§8.4: the minimum grade at which an elaboration is stored as a reusable trace (below it the elaboration is not worth re-answering from).',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§8 elaboration-trace-bench: stored elaborations recall on re-ask and decay under the retention law.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_MIN_EVENTS',
+    class: 'tuning',
+    value: 4,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 464,
+    note: '§7.4 (F.4): minimum co-excitation events recorded before the context-bimodality split rule may fire — too few contexts carry no distribution.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: recovers the known sense splits with 0 splits on the monosemous control; the minimum is the anti-fragmentation floor.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_MIN_CLUSTER_EVENTS',
+    class: 'tuning',
+    value: 2,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 467,
+    note: '§7.4 (F.4): minimum events per context cluster before a cluster counts as a reading.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: per-cluster support floor; below it the second reading is noise.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_MIN_MEAN_MARGIN',
+    class: 'tuning',
+    value: 0.5,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 472,
+    note: '§7.4 (F.4): minimum mean top-two margin over the word\'s context recalls — a bimodal read on a clear single sense is a false split.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: the monosemous control produces 0 splits, pinning this floor.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_MIN_BALANCE',
+    class: 'tuning',
+    value: 0.6,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 476,
+    note: '§7.4 (F.4): minimum balance between the two context clusters (min/max share) — a lopsided distribution is one sense plus noise, not two readings.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: split quality vs. the known senses; the control pins the balance floor.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_MAX_PRIME_OVERLAP',
+    class: 'tuning',
+    value: 0.25,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 480,
+    note: '§7.4 (F.4): maximum context-prime overlap between the two clusters for the split to fire — overlapping contexts are not distinct readings.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: distinctness gate between the induced senses.' }
+  },
+  {
+    name: 'CONTEXT_SPLIT_LAPLACE',
+    class: 'tuning',
+    value: 1,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 483,
+    note: '§7.4 (F.4): Laplace smoothing for the context-distribution entropy estimate.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: smoothing constant of the split\'s MDL gain estimate.' }
+  },
+  {
+    name: 'NEAR_DUPLICATE_SMF_COSINE',
+    class: 'tuning',
+    value: 0.95,
+    file: 'apps/web/src/teacher/mergeConsolidation.ts',
+    line: 56,
+    note: '§3.5: the consolidation pass collapses traces whose SMF cosine is at or above this — same-moment (tight-cluster) traces merge, distinct traces never do.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§3.5 merge-consolidation-bench: duplicates → 0 with recall-preserving distinct traces intact.' }
+  },
+  {
+    name: 'SLOW_CONTEXT_FORGETTING_FACTOR',
+    class: 'tuning',
+    value: 0.2346,
+    file: 'packages/sentient-core/src/semantic/SlowContextField.ts',
+    line: 50,
+    note: '§6.2 (E.2): the slow context\'s forgetting factor 19/81 — the retention-law shape the per-turn decay follows.',
+    evidence: { sources: ['fuzz'], mass: null, note: '§6.2 priming-bench: primed resolution up with contamination 0; the shape is the retention law, not a free decay.' }
+  },
+  {
+    name: 'SLOW_CONTEXT_RETENTION_EXPONENT',
+    class: 'tuning',
+    value: -0.5,
+    file: 'packages/sentient-core/src/semantic/SlowContextField.ts',
+    line: 53,
+    note: '§6.2 (E.2): the slow context\'s retention exponent under the one retention law.',
+    evidence: { sources: ['fuzz'], mass: null, note: '§6.2 priming-bench: decay over turns under the retention curve.' }
+  },
+  {
+    name: 'SLOW_CONTEXT_LEARNING_RATE',
+    class: 'tuning',
+    value: 0.5,
+    file: 'packages/sentient-core/src/semantic/SlowContextField.ts',
+    line: 78,
+    note: '§6.2 (E.2): EMA rate at which a turn\'s converged excitation integrates into the slow context.',
+    evidence: { sources: ['fuzz'], mass: null, note: '§6.2 priming-bench: integration rate; the tilt is bounded and contamination-gated.' }
+  },
+  {
+    name: 'MISS_DETECTOR_TOP_TWO_MARGIN',
+    class: 'tuning',
+    value: 0.2,
+    file: 'packages/sentient-core/src/semantic/ShardedMemoryBank.ts',
+    line: 474,
+    note: '§3.6: with the miss detector on, a router distribution whose top-two margin is below this is FLAT — the router does not know where the cue lives, and the bank asks instead of answering from a wrong shard.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§3.6 miss-detector measurement: 0 confident wrong-shard answers on flat-router fuzz distractors (the OFF bank answers all 32).' }
+  },
+  {
+    name: 'MAX_ELABORATION_CLAIMS',
+    class: 'safety',
+    value: 24,
+    file: 'apps/web/src/teacher/elaboration.ts',
+    line: 198,
+    note: '§8: the elaboration fuel budget — the maximum number of expanded claims per elaboration, regardless of the frontier.'
+  },
+  {
+    name: 'MAX_SLOW_CONTEXT_BLEND_WEIGHT',
+    class: 'safety',
+    value: 0.5,
+    file: 'packages/sentient-core/src/semantic/SlowContextField.ts',
+    line: 88,
+    note: '§6.2 (E.2): hard cap on the recall-cue blend weight — the slow context is a direction tilt, never a magnitude override.'
   }
 ] as const;
 
