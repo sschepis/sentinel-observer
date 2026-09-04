@@ -263,40 +263,57 @@ own justification. Do this before any routing change.
 
 ## Phase H — §9 Concept synthesis (MDL abstraction)
 
-- [ ] **H.1 MDL gain over shared edges** (§9.1) — implement
+- [x] **H.1 MDL gain over shared edges** (§9.1) — implement
       `gain(X) = Σ bits(shared edges of members) − bits(edges of X) − Σ bits(m
       is-a X) − bits(name X) − Σ bits(exceptions)` in the existing Zipf-cost
       currency (`mdl.ts`); greedy largest-gain-first (the shell-induction
       procedure). Form X exactly when gain > 0. **Caution §9.4:** the prime
       signatures are addresses, not semantics — synthesis cannot be read off
       them; it lives in the distributed-vector layer (below).
-- [ ] **H.2 Hypothesis-tier lifecycle for induced nodes** (§9.2) — induced
+- [x] **H.2 Hypothesis-tier lifecycle for induced nodes** (§9.2) — induced
       concepts enter the hypothesis tier, answer hedged, promote on
       corroboration, stop on two world denials (never deleted). Reuses the
       existing rule/relation lifecycle (Phase 22 M5).
-- [ ] **H.3 `hypernym-recovery-bench`** (§9.8) — hide known hypernym `is-a`
+- [x] **H.3 `hypernym-recovery-bench`** (§9.8) — hide known hypernym `is-a`
       edges (bird, tool, vehicle…); measure recovery rate, precision (candidate
       discoveries for hand inspection), and false-inheritance rate (0 in
       asserted speech). **Refute:** nodes are gloss-template artifacts → the
       edge distribution is too template-driven.
-- [ ] **H.4 `prototype-bench`** (§9.4 distributed-vector layer) — bundle
+- [x] **H.4 `prototype-bench`** (§9.4 distributed-vector layer) — bundle
       H(robin)+H(sparrow)+H(crow); unbind each role; shared edges recovered
       above the crosstalk floor, idiosyncratic ones rejected. **Pass:** the
       prototype's recovered edge set matches the hypernym's shared edges.
       (Reuses `RelationalHologram` bundle/unbind.)
-- [ ] **H.5 Naming ask + rediscovery/merge** (§9.3) — when an induced node's
+- [x] **H.5 Naming ask + rediscovery/merge** (§9.3) — when an induced node's
       edge set matches no word, emit the naming ask ("…share something I do not
       have a word for…"); bind a human-supplied name; merge an induced node
       whose edge set matches an existing word (record the rediscovery).
       **Bench `naming-ask-bench`:** ask names members + shared edges; binding +
       lifecycle behave under existing rule-lifecycle tests.
-- [ ] **H.6 `field-cluster-bench`** (§9.4, speculative) — with Hebbian coupling
+- [x] **H.6 `field-cluster-bench`** (§9.4, speculative) — with Hebbian coupling
       on, members of a known hypernym phase-lock above field coherence after
       co-teaching; a control (unrelated words, same co-teaching count) does not.
       **Pass:** taught set clusters, control does not. **Refute:** both cluster
       → coupling follows co-teaching, not structure; pursue only the hologram
       path.
 
+
+**Outcomes (this branch):**
+- H.3: recovery 1.00 vs shuffle-chance 0.00 (bird/tool/vehicle all re-invented);
+  1 candidate discovery (the container cluster — real, inspected);
+  false-inheritance 0 in asserted speech, 1 hedged (the ostrich-fly
+  generalization), exceptions blocked penguin/kiwi fly.
+- H.4: PASS — prototype recovers exactly the hypernyms' shared edges above
+  the crosstalk floor (shared ≥ 0.43 vs idiosyncratic ≤ 0.25) and rejects
+  the idiosyncratic ones; a no-shared-structure control recovers nothing.
+- H.5: ask names members + shared edges; binding makes the node answerable
+  (hedged); hedge → corroborate → assert and deny → deny → stop behave
+  under the existing tier; rediscovery merges into the matching word.
+- H.6: REFUTED — taught and control arms are indistinguishable (ΔR ≈ 0.008)
+  and neither sub-population phase-locks above field coherence; the
+  potentiation gate barely opens at this teaching scale. Field-level
+  synthesis is not distinguishable from rehearsal → hologram path only
+  (§9.8).
 ---
 
 ## §10 Cross-cutting / integration
