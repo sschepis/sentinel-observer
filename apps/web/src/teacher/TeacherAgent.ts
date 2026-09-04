@@ -29,6 +29,7 @@ import {
 } from './operators';
 import { deniedFromNegations } from './chain';
 import { classifyRegime } from './cde';
+import { pathEvidence, pathHedgeWord, type PathEvidence } from './pathEvidence';
 import type { SenseSplitConfig } from './senseModel';
 import {
   nextCurriculumWord,
@@ -223,6 +224,10 @@ export class TeacherAgent extends TeacherAgentComposed {
   /** D.2: the settle criterion (constructor option; 'fixed' = the control). */
   private readonly settleCriterion: 'fixed' | 'peak';
 
+  /** C.3 (§4.3): hedge chained answers resting on ONE weak is-a path
+   *  (constructor option; off = the control). */
+  private readonly pathHedging: boolean;
+
   /** D.2 telemetry: the peak criterion's own record of whether it found a
    *  well-defined peak on real cues — the settle-criterion bench reads it to
    *  decide whether the constant stays. */
@@ -288,6 +293,58 @@ export class TeacherAgent extends TeacherAgentComposed {
     if (classifyRegime(scores) === 'clear') return null;
     const named = readings.map((reading) => reading.reading).join(', or as in ');
     return `Do you mean ${form.subject} as in ${named}?`;
+  }
+
+  /**
+   * C.3 (§4.3) BRANCHING ENTROPY ALONG CHAIN WALKS — the hedge a chained
+   * operator answer earns from its PATH evidence, not its single surfaced
+   * edge. The operator layer asserts "Yes" for any path the walk finds
+   * (its P8 hedge reads only the DIRECT edge, so a chained claim through a
+   * weakened hop can still be spoken flatly). This re-reads the claim's
+   * is-a routes: a claim resting on ONE path whose product is below the
+   * threshold — or whose single path carries a weakened edge — is rewritten
+   * with the corroboration hedge words ("Probably, … — it rests on one
+   * source."); multi-path claims keep the operator's assertion. Null when
+   * the flag is off (the control), the claim is not path-backed (graded
+   * fallback, negation, or direct edge), or the paths do not hedge.
+   */
+  private hedgeChainedPathAnswer(operator: NonNullable<OperatorResult>): { answer: string } | null {
+    if (!this.pathHedging) return null;
+    const denied = deniedFromNegations(this.negations);
+    const relations = this.relations();
+    let evidence: PathEvidence | null = null;
+    switch (operator.kind) {
+      case 'is-a':
+        // The graded holographic fallback already speaks its own hedge.
+        if (operator.score !== undefined) return null;
+        evidence = pathEvidence(relations, operator.subject, operator.target, denied);
+        break;
+      case 'has-part':
+      case 'capable-of':
+      case 'has-property':
+      case 'requires':
+        // Only the INHERITED (chained) branch is path evidence; a direct
+        // edge is the operator layer's own single-edge P8 concern.
+        if (operator.via === null || operator.score !== undefined) return null;
+        evidence = pathEvidence(relations, operator.subject, operator.via, denied);
+        break;
+      default:
+        return null;
+    }
+    const word = pathHedgeWord(evidence);
+    if (word === '') return null;
+    // The claim sentence is the operator's own phrasing minus its
+    // assertion prefix — the hedge is presentation, not content.
+    const claim = operator.answer
+      .replace(/^(?:Yes|Probably), /, '')
+      .replace(/^(?:Yes|Probably) — /, '')
+      .replace(/\.$/, '');
+    if (claim === operator.answer) return null; // not an asserted form — never rewrite a "No".
+    const hedged =
+      word === 'Probably'
+        ? `Probably, ${claim} — it rests on one source.`
+        : `I think ${claim} — it rests on one source.`;
+    return { answer: hedged };
   }
 
   constructor(
@@ -362,7 +419,16 @@ export class TeacherAgent extends TeacherAgentComposed {
      * peak is well-defined on real cues (0 fuzz FP, exact recall held).
      * LAST parameter on purpose: every positional call site stays valid.
      */
-    settleCriterion: 'fixed' | 'peak' = 'fixed'
+    settleCriterion: 'fixed' | 'peak' = 'fixed',
+    /**
+     * C.3 (§4.3): hedge chained answers whose claim rests on ONE weak is-a
+     * path — a single route whose product is below the path threshold or
+     * whose single edge was weakened speaks hedged ("Probably, … — it rests
+     * on one source."), while multi-path claims stay asserted. DEFAULT OFF:
+     * every existing behavior stays bit-identical. LAST parameter on
+     * purpose: every positional call site stays valid.
+     */
+    pathHedging = false
   ) {
     super();
     this.session = session;
@@ -370,6 +436,7 @@ export class TeacherAgent extends TeacherAgentComposed {
     this.persistEvery = Math.max(1, Math.floor(persistEvery));
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
     this.settleCriterion = settleCriterion === 'peak' ? 'peak' : 'fixed';
+    this.pathHedging = pathHedging;
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
     this.curriculumConfig = curriculumConfig ?? {};
     this.rewriteInduction = rewriteInduction;
@@ -711,11 +778,16 @@ export class TeacherAgent extends TeacherAgentComposed {
       goalHistory: () => this.goalHistorySnapshot()
     });
     if (operator !== null) {
-      this.workingMemory.note('observer', operator.answer);
+      // C.3 (§4.3): a chained claim resting on ONE weak is-a path is spoken
+      // hedged; multi-path claims keep the operator's assertion (the rewrite
+      // is presentation only — provenance stays the cited edges).
+      const hedgedPath = this.hedgeChainedPathAnswer(operator);
+      const response = hedgedPath?.answer ?? operator.answer;
+      this.workingMemory.note('observer', response);
       this.noteAnswerMode('operator');
       return finish({
         mode: 'operator',
-        response: operator.answer,
+        response,
         operator,
         provenance: {
           traceIds: [],
