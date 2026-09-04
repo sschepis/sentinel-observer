@@ -934,6 +934,32 @@ export const CONSTANTS: readonly ConstantEntry[] = [
       mass: null,
       note: 'Placeholder: cde-bench found NO two-dominant-candidate corpus (measured m₂₃ overlaps between classes, exact [0.008, 0.119] vs. adversarial [0.007, 0.033]); stays permissive until a disambiguation corpus exists.'
     }
+  },
+  {
+    name: 'SLOW_CONTEXT_STABILITY_TURNS',
+    class: 'tuning',
+    value: 2,
+    file: 'apps/web/src/observer/options.ts',
+    line: 30,
+    note: 'Slow context (E.2 §6.2) retention stability in turns — the per-turn decay factor is R(1; S) under the one retention law.',
+    evidence: {
+      sources: ['fuzz', 'llm-grade'],
+      mass: null,
+      note: 'E.2 §6.2 / priming-bench: primed resolution must rise with contamination 0 on fuzz/honesty probes; any probe lost keeps the flag off.'
+    }
+  },
+  {
+    name: 'SLOW_CONTEXT_BLEND_WEIGHT',
+    class: 'tuning',
+    value: 0.15,
+    file: 'apps/web/src/observer/options.ts',
+    line: 32,
+    note: 'Slow context (E.2 §6.2) recall-cue blend weight — a bounded direction tilt (core clamps to [0, 0.5]), never a magnitude override.',
+    evidence: {
+      sources: ['fuzz', 'llm-grade'],
+      mass: null,
+      note: 'E.2 §6.2 / priming-bench: the tilt must raise primed resolution without flipping a single unrelated probe (contamination 0).'
+    }
   }
 ] as const;
 

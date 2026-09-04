@@ -114,6 +114,17 @@ export type {
 export { SignedRandomProjection, mulberry32 } from './SketchProjection';
 export type { SignedRandomProjectionOptions } from './SketchProjection';
 
+// E.2 (§6.2): the slow context field — the second timescale (priming)
+export {
+  SlowContextField,
+  slowContextRetention,
+  SLOW_CONTEXT_DEFAULTS,
+  SLOW_CONTEXT_FORGETTING_FACTOR,
+  SLOW_CONTEXT_RETENTION_EXPONENT,
+  MAX_SLOW_CONTEXT_BLEND_WEIGHT
+} from './SlowContextField';
+export type { SlowContextFieldOptions } from './SlowContextField';
+
 // Relational VSA/HRR binding (role–filler traces for graded inference)
 export { RelationalHologram, fnv1a } from './RelationalHologram';
 export type { RelationalHologramOptions, RoleFillerPair, HologramCandidate } from './RelationalHologram';
@@ -188,7 +199,8 @@ export type {
   SemanticObserverTickEvent,
   SemanticInput,
   MomentCriterion,
-  ClusterMomentCriterionOptions
+  ClusterMomentCriterionOptions,
+  SlowContextOptions
 } from './SemanticObserver';
 
 // Numeric guards
