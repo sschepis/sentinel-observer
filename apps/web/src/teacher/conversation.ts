@@ -301,6 +301,17 @@ export const CONVERSATION_CUE_TOKENS: readonly string[] = [
  * declarable noise, well below confident memory.
  */
 export const CONVERSATION_RECALL_FLOOR = 0.6;
+/**
+ * The floor for an EXACT identity match in the chat's memorized layer: when
+ * the question IS the taught cue (modulo terminal punctuation), the recalled
+ * trace is the exchange itself, so the score's only remaining role is to
+ * reject degenerate near-zero recalls. Short cues ("hello", "hi") at the
+ * 20k-word record drift with session phase state (the phase-order term,
+ * Section 3.1) between ~0.53 and ~0.6 — an absolute bar above that noise
+ * band would make the greeting cues flake across sessions. Unrelated text
+ * cannot reach this path: exact identity is required.
+ */
+export const CONVERSATION_EXACT_RECALL_FLOOR = 0.4;
 /** Fraction of taught pairs recalled at least once needed to unlock creative mode. */
 export const CREATIVE_UNLOCK_THRESHOLD = 0.8;
 

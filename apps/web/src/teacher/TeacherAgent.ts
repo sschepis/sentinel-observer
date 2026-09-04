@@ -439,6 +439,37 @@ export class TeacherAgent extends TeacherAgentComposed {
         memorizedQuery = utterance;
       }
     }
+    const gatePassed =
+      memorized.response !== null &&
+      memorized.confidence !== null &&
+      memorized.cue !== null &&
+      authoritativeRecall(memorized.confidence, memorized.margin ?? 0, memorizedQuery, memorized.cue);
+    if (!gatePassed) {
+      // EXACT-IDENTITY FALLBACK (measured at the 20k-word record): the raw
+      // respond() gate is a separation test, and near-twin cues plus the
+      // word dictionary's own traces can leave the true exchange just
+      // outside its band. When the question IS a taught cue exactly (modulo
+      // terminal punctuation), the exchange itself is the answer — recall it
+      // by identity at the exact-cue floor. Pure read: the field is already
+      // excited by respond() above, so no extra excitation pass.
+      const exact = this.recallExactExchange(resolved);
+      const exactRaw = exact.response === null && resolved !== utterance ? this.recallExactExchange(utterance) : null;
+      const chosen = exact.response !== null ? exact : exactRaw;
+      if (chosen !== null && chosen.response !== null && chosen.confidence !== null && chosen.cue !== null) {
+        this.workingMemory.note('observer', chosen.response);
+        this.noteAnswerMode('memorized');
+        return finish({
+          mode: 'memorized',
+          response: chosen.response,
+          confidence: chosen.confidence,
+          cue: chosen.cue,
+          provenance: {
+            traceIds: chosen.traceId !== null ? [chosen.traceId] : [],
+            edges: []
+          }
+        });
+      }
+    }
     const questionKey = resolved.trim().toLowerCase();
     const cueKey = (memorized.cue ?? '').toLowerCase();
     const cueMatches = matchesCue(questionKey, cueKey);

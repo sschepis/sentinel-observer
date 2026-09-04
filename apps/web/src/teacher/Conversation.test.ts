@@ -26,6 +26,41 @@ const OPTIONS = {
   )
 };
 
+describe('exact-identity exchange recall (20k-record calibration regression)', () => {
+  let session: ObserverSession;
+  let teacher: TeacherAgent;
+
+  beforeEach(async () => {
+    session = new ObserverSession(OPTIONS, 100);
+    await session.initialize();
+    teacher = new TeacherAgent(session, WORD_DECK);
+  });
+
+  afterEach(() => {
+    session.dispose();
+  });
+
+  it('recalls a taught exchange by exact cue identity, modulo terminal punctuation', () => {
+    teacher.teachResponse({ cue: 'how are you', response: 'I am well, thank you.' });
+    teacher.teachResponse({ cue: 'how honest are you', response: 'Fully — I decline before I guess.' });
+
+    const exact = teacher.recallExactExchange('how are you?');
+    expect(exact.response).toBe('I am well, thank you.');
+    expect(exact.cue).toBe('how are you');
+    expect(exact.kind).toBe('conversation');
+    // A near-twin is NOT the exchange the question names.
+    expect(teacher.recallExactExchange('how are you doing').response).toBeNull();
+    expect(teacher.recallExactExchange('how honest are you').response).toBe('Fully — I decline before I guess.');
+  });
+
+  it('chatAnswer speaks the exchange for the exact cue even when the raw gate is marginal', () => {
+    teacher.teachResponse({ cue: 'hello', response: 'Hello! I am learning English.' });
+    const answer = teacher.chatAnswer('hello?');
+    expect(answer.mode).toBe('memorized');
+    if (answer.mode === 'memorized') expect(answer.response).toBe('Hello! I am learning English.');
+  });
+});
+
 describe('TeacherAgent conversation (memorized exchanges)', () => {
   let session: ObserverSession;
   let teacher: TeacherAgent;

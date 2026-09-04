@@ -15,6 +15,7 @@ import type {
 } from '@sschepis/sentient-core';
 import {
   CONVERSATION_RECALL_FLOOR,
+  CONVERSATION_EXACT_RECALL_FLOOR,
   CREATIVE_UNLOCK_THRESHOLD,
   type ConversationPair
 } from '../conversation';
@@ -175,6 +176,56 @@ export function ConversationMixin<TBase extends Constructor<TeacherAgentCore & C
         traceId: best.trace.id,
         cue: matchedCue,
         kind: bestKind
+      };
+    }
+
+    /**
+     * CHAT MEMORIZED LAYER ONLY: recall the taught exchange whose cue IS the
+     * question, exactly (modulo terminal punctuation). respond() stays the
+     * raw, gate-neutral recall that drills and competency measurement
+     * exercise; this lookup carries the chat's identity policy — an exact
+     * cue match is spoken at the exact-cue floor regardless of near-twin
+     * competition, because the recalled trace IS the exchange the question
+     * names.
+     */
+    recallExactExchange(utterance: string): ConversationAnswer {
+      const cue = utterance.trim().toLowerCase().replace(/[?!.]+$/, '');
+      if (cue.length === 0) {
+        return { utterance, response: null, confidence: null, traceId: null, cue: null, kind: null };
+      }
+      // The field is ALREADY excited for the utterance: chatAnswer calls this
+      // immediately after respond(resolved/utterance), whose exciteAndSettle
+      // left the field settled. Recall here is a pure read — an extra
+      // excitation pass would perturb the field and shift every later recall
+      // score (the drill suite's small banks depend on a fixed pass count).
+      const results = this.session.recall(cue, 10);
+      let target: RecallResult | null = null;
+      for (const result of results) {
+        if (result.trace.metadata?.kind !== 'conversation') continue;
+        const resultCue = result.trace.metadata?.cue;
+        if (typeof resultCue === 'string' && resultCue.trim().toLowerCase().replace(/[?!.]+$/, '') === cue) {
+          target = result;
+          break;
+        }
+      }
+      if (target === null || target.score < CONVERSATION_EXACT_RECALL_FLOOR) {
+        return { utterance, response: null, confidence: null, traceId: null, cue: null, kind: null };
+      }
+      let runnerUp = 0;
+      for (const result of results) {
+        if (result.trace.id === target.trace.id) continue;
+        const kind = result.trace.metadata?.kind;
+        if (kind !== 'conversation' && kind !== 'creative') continue;
+        if (result.score > runnerUp) runnerUp = result.score;
+      }
+      return {
+        utterance,
+        response: target.trace.content,
+        confidence: target.score,
+        margin: target.score - runnerUp,
+        traceId: target.trace.id,
+        cue: target.trace.metadata?.cue as string,
+        kind: 'conversation'
       };
     }
 
