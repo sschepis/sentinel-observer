@@ -335,6 +335,54 @@ export class TeacherAgent extends TeacherAgentComposed {
   }
 
   /**
+   * §3.4 (network traces): remember the council's settled agreement in THIS
+   * member's memory — a second-order trace, the network observing its own
+   * agreement. Content = settled answer + cited edges + contributing member
+   * names; metadata kind 'network-agreement' under the exact cue, so the
+   * next identical cue recalls the agreement instead of re-resonating.
+   * Same storage discipline as every other trace: excite with the cue,
+   * then store.
+   */
+  storeNetworkAgreement(cue: string, content: string, details: Record<string, unknown> = {}): string | null {
+    const key = cue.trim().toLowerCase();
+    if (key.length === 0 || content.trim().length === 0) return null;
+    this.session.settleField();
+    this.session.observeText(cue);
+    this.session.observer.tick(0.02);
+    const trace = this.session.storeMemory(content.trim(), {
+      metadata: { kind: 'network-agreement', cue: key, ...details }
+    });
+    if (trace !== null) this.maybePersist();
+    return trace?.id ?? null;
+  }
+
+  /**
+   * §3.4: recall this member's stored network agreement on the exact
+   * utterance (modulo terminal punctuation). Returns the trace content,
+   * recall score, and metadata when the stored cue IS the utterance —
+   * identity-gated like every other exact-cue recall.
+   */
+  recallNetworkAgreement(utterance: string): {
+    content: string;
+    score: number;
+    metadata: Readonly<Record<string, unknown>>;
+  } | null {
+    const cue = utterance.trim().toLowerCase();
+    if (cue.length === 0) return null;
+    this.exciteAndSettle(utterance);
+    const results = this.session.recall(cue, 10);
+    for (const result of results) {
+      const meta = result.trace.metadata;
+      if (meta === undefined || meta.kind !== 'network-agreement' || typeof meta.cue !== 'string') continue;
+      const storedCue = meta.cue.trim().toLowerCase().replace(/[?!.]+$/, '');
+      if (storedCue === cue.replace(/[?!.]+$/, '')) {
+        return { content: result.trace.content, score: result.score, metadata: meta };
+      }
+    }
+    return null;
+  }
+
+  /**
    * The observer's single conversational entry point:
    *   1. memorized exchange (from its conversation memory),
    *   2. deterministic OPERATOR answer (novel questions computed from
