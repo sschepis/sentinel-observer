@@ -11,7 +11,7 @@
  * The forgetting CURVE itself is the one law (retention.ts); this module
  * holds the scheduler's constants and the trace-decay application.
  */
-import { retentionProbability, STABILITY_PRESETS } from './retention';
+import { retentionProbability, effectiveStoreStabilityDays } from './retention';
 import { clampRange, normalizedEntropy, toDistribution } from '@sschepis/sentient-core';
 
 /** Initial stability (days) of a freshly taught word. */
@@ -131,7 +131,10 @@ export function applyRetentionDecay(
   const scale = Math.max(0.01, rate);
   for (const trace of traces) {
     const p = params(trace.id);
-    const stability = p !== null ? Math.max(0.01, p.stability * scale) : STABILITY_PRESETS.nonWordTraceDays;
+    // D.5 (§5.2 row 4): the non-word fallback reads the store's LIVE
+    // stability — its own learned value when the flag is on, the 7-day
+    // preset (the control) otherwise.
+    const stability = p !== null ? Math.max(0.01, p.stability * scale) : effectiveStoreStabilityDays('nonWordTrace');
     const elapsed = Math.max(0, now - trace.lastAccessAt);
     trace.strength = clampRange(retentionProbability(stability, elapsed / DAY), 0.01, 1);
   }

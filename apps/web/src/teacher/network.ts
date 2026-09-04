@@ -30,6 +30,7 @@
 import { TeacherAgent, type EdgeRef } from './TeacherAgent';
 import { tokenizeText, isContentWord } from './context';
 import { readCde, type CdeReading } from './cde';
+import type { TokenCostModel } from './mdl';
 
 export interface CouncilMember {
   name: string;
@@ -103,6 +104,10 @@ export interface NetworkGoal {
    *  true it is never reset — an abandoned goal cannot be re-adopted by a
    *  later abstention (no ping-pong). */
   adopted: boolean;
+  /** The network's ask response the last time it abstained on this target —
+   *  the recurring deficit's cost (D.7 MDL promotion measures against it).
+   *  '' when unknown (the canonical ask is the fallback). */
+  lastAsk: string;
 }
 
 /** The council's learned goal-type preference (Phase 6d) — which kinds of
@@ -252,6 +257,36 @@ function candidateDistributionCde(verdicts: readonly CouncilMemberVerdict[]): Cd
  *  revised by resonance outcomes rather than assigned by construction. */
 export type NetworkTrust = Record<string, number>;
 
+/** Uniform token cost of the MDL goal criterion when no frequency model is
+ *  supplied (mirrors the operator learner's DEFAULT_TOKEN_COST — 10 bits). */
+const GOAL_UNIFORM_TOKEN_BITS = 10;
+
+/** The canonical ask whose cost a goal is measured against when the network
+ *  never recorded the ask response (the composed-deficit path's fallback). */
+const CANONICAL_ASK = 'I do not know.';
+
+/**
+ * D.7 (§5.2 row 8): the MDL gain of promoting a recurring deficit as a
+ * goal — the same criterion as operators. The deficit has recurred
+ * `misses` times; the FIRST abstention revealed it (and cost its ask
+ * anyway), every later one is an ask the goal would have prevented, so the
+ * savings are (misses − 1) × the ask's bit cost, and the cost is the bits
+ * needed to encode the goal itself (its target utterance). A goal earns its
+ * place exactly when the gain is positive — a goal that saves more asks
+ * than it costs.
+ */
+export function goalPromotionGain(
+  goal: { target: string; misses: number; lastAsk?: string },
+  cost: TokenCostModel | null = null
+): number {
+  const bitsOf = (text: string): number =>
+    cost !== null ? cost.costOfText(text) : tokenizeText(text).length * GOAL_UNIFORM_TOKEN_BITS;
+  const askText = goal.lastAsk !== undefined && goal.lastAsk.trim().length > 0 ? goal.lastAsk : CANONICAL_ASK;
+  const askBits = bitsOf(askText);
+  const targetBits = bitsOf(goal.target);
+  return (goal.misses - 1) * askBits - targetBits;
+}
+
 export class ObserverNetwork {
   /** Per-member learned trust — wins in the agreeing cluster raise it;
    *  contributing to a failed/abstained outcome lowers it. */
@@ -262,6 +297,13 @@ export class ObserverNetwork {
   private readonly goalPreference: NetworkGoalPreference = { completed: {}, abandoned: {} };
   /** Recurring abstention promotion threshold (misses before a goal forms). */
   private readonly goalMissThreshold: number;
+  /** D.7 (§5.2 row 8): when true, promotion uses the deficit's MDL gain as a
+   *  goal (positive gain) instead of the fixed miss threshold — the
+   *  threshold stays the CONTROL while this flag is off. */
+  private readonly goalPromotionMdl: boolean;
+  /** The token cost model the MDL promotion measures asks and goals in
+   *  (null = uniform 10 bits/token, the operator learner's default). */
+  private readonly goalCost: TokenCostModel | null;
   /** §4.5: gate agreement on the cited-edge signal when ≥2 members cite
    *  edges, instead of token overlap. Both signals are always computed;
    *  this flag only selects which one gates. */
@@ -277,12 +319,16 @@ export class ObserverNetwork {
     private readonly trustGain = 0.2,
     private readonly trustPenalty = 0.1,
     goalMissThreshold = 2,
-    useEdgeAgreement = true
+    useEdgeAgreement = true,
+    goalPromotionMdl = false,
+    goalCost: TokenCostModel | null = null
   ) {
     if (members.length < 2) throw new Error('ObserverNetwork requires at least 2 members');
     for (const member of members) this.trust[member.name] = 0.5;
     this.goalMissThreshold = Math.max(1, goalMissThreshold);
     this.useEdgeAgreement = useEdgeAgreement;
+    this.goalPromotionMdl = goalPromotionMdl;
+    this.goalCost = goalCost;
   }
 
   /** The learned trust per member (read-only snapshot). */
@@ -337,17 +383,29 @@ export class ObserverNetwork {
     return recorded;
   }
 
-  private registerAbstention(utterance: string, grounded: boolean): void {
+  private registerAbstention(utterance: string, grounded: boolean, askText = ''): void {
     const existing = this.goals.get(utterance);
     if (existing !== undefined) {
       existing.misses += 1;
+      if (askText.trim().length > 0) existing.lastAsk = askText;
       return;
     }
     // Only count when the network was NOT grounded — a grounded answer means
     // the council knows it, so there is no deficit to form a goal over.
     if (!grounded) {
-      this.goals.set(utterance, { target: utterance, misses: 1, active: false, adopted: false });
+      this.goals.set(utterance, { target: utterance, misses: 1, active: false, adopted: false, lastAsk: askText });
     }
+  }
+
+  /** Whether a goal is promoted to the active shared curriculum: with the
+   *  D.7 flag on, when its MDL gain as a goal is positive (a goal that saves
+   *  more asks than it costs); otherwise when its misses reach the fixed
+   *  threshold (the control). */
+  private shouldPromote(goal: NetworkGoal): boolean {
+    if (this.goalPromotionMdl) {
+      return goalPromotionGain(goal, this.goalCost) > 0;
+    }
+    return goal.misses >= this.goalMissThreshold;
   }
 
   /** The council learned a gap: if every member can now answer it, the
@@ -472,10 +530,10 @@ export class ObserverNetwork {
       // utterance — collective curiosity becomes collective curriculum.
       // (A unanimous ask is BY DEFINITION not grounded — pass false or the
       // goal would never be created, the exact scenario this branch exists
-      // for.)
-      this.registerAbstention(utterance, false);
+      // for. The ask response travels with the goal as its recurring cost.)
+      this.registerAbstention(utterance, false, verdicts[0].response);
       const goal = this.goals.get(utterance);
-      if (goal !== undefined && goal.misses >= this.goalMissThreshold && !goal.adopted) {
+      if (goal !== undefined && this.shouldPromote(goal) && !goal.adopted) {
         goal.adopted = true;
         goal.active = true;
       }
@@ -544,7 +602,7 @@ export class ObserverNetwork {
       // formed goal. (Resolution — the goal actually being ANSWERABLE — is
       // credited as a success separately when a grounded answer appears.)
       const goal = this.goals.get(utterance);
-      if (goal !== undefined && goal.misses >= this.goalMissThreshold && !goal.adopted) {
+      if (goal !== undefined && this.shouldPromote(goal) && !goal.adopted) {
         goal.adopted = true;
         goal.active = true;
       }
@@ -718,7 +776,7 @@ export class ObserverNetwork {
       } else {
         this.registerAbstention(utterance, false);
         const goal = this.goals.get(utterance);
-        if (goal !== undefined && goal.misses >= this.goalMissThreshold && !goal.adopted) {
+        if (goal !== undefined && this.shouldPromote(goal) && !goal.adopted) {
           goal.adopted = true;
           goal.active = true;
         }
