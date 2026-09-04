@@ -3,10 +3,12 @@
  */
 import { describe, it, expect } from '@jest/globals';
 import {
+  CDE_TOP_K_KS,
   candidateDistribution,
   classifyRegime,
   normalizedEntropy,
   readCde,
+  topKEntropy,
   topTwoMargin,
   topTwoThreeMargin
 } from './cde';
@@ -60,6 +62,43 @@ describe('normalizedEntropy', () => {
     expect(normalizedEntropy([0.9, 0.1])).toBeCloseTo(0.469, 2);
     // p = [0.51, 0.49]: H̃ ≈ 0.999.
     expect(normalizedEntropy([0.51, 0.49])).toBeCloseTo(1, 2);
+  });
+});
+
+describe('topKEntropy', () => {
+  it('reads the retained top-k slice, renormalized', () => {
+    // Top two hold the mass: H̃₂ over [0.8, 0.4] renormalized = [2/3, 1/3].
+    const h2 = topKEntropy([0.8, 0.4, 0.001, 0.001, 0.001, 0.001], 2);
+    expect(h2).toBeCloseTo(normalizedEntropy([0.8, 0.4]));
+  });
+
+  it('equals the full-set H̃ when the list is no longer than k', () => {
+    const scores = [0.9, 0.08, 0.02];
+    expect(topKEntropy(scores, 3)).toBeCloseTo(normalizedEntropy(scores));
+    expect(topKEntropy(scores, 8)).toBeCloseTo(normalizedEntropy(scores));
+  });
+
+  it('is 0 with fewer than two candidates', () => {
+    expect(topKEntropy([0.8], 2)).toBe(0);
+    expect(topKEntropy([], 2)).toBe(0);
+  });
+
+  it('separates a dominant head from a flat head on a long tail', () => {
+    // Full-set H̃ saturates near 1 for both (the tail carries the mass, as the
+    // bench's k≈100–750 recall lists do), but the top-5 shape differs: one
+    // dominant candidate vs. five tied ones.
+    const tail = new Array<number>(500).fill(0.02);
+    const dominantFull = normalizedEntropy([0.9, 0.5, 0.2, 0.1, 0.05, ...tail]);
+    const dominant = topKEntropy([0.9, 0.5, 0.2, 0.1, 0.05, ...tail], 5);
+    const flat = topKEntropy([0.9, 0.9, 0.9, 0.9, 0.9, ...tail], 5);
+    expect(dominantFull).toBeGreaterThan(0.9); // the full-set reading saturates
+    expect(flat).toBeCloseTo(1);
+    expect(dominant).toBeLessThan(flat); // the retained top-5 separates
+  });
+
+  it('covers every supported slice size', () => {
+    expect(CDE_TOP_K_KS).toEqual([2, 3, 5, 8]);
+    for (const k of CDE_TOP_K_KS) expect(Number.isFinite(topKEntropy([0.9, 0.5, 0.2, 0.1, 0.05, 0.01, 0.01, 0.01], k))).toBe(true);
   });
 });
 
@@ -133,5 +172,12 @@ describe('readCde', () => {
     expect(reading.topTwoMargin).toBeCloseTo(topTwoMargin([0.9, 0.08, 0.02]));
     expect(reading.topTwoThreeMargin).toBeCloseTo(topTwoThreeMargin([0.9, 0.08, 0.02]));
     expect(reading.regime).toBe('clear');
+  });
+
+  it('carries H̃_k over every retained slice', () => {
+    const reading = readCde([0.9, 0.08, 0.02]);
+    for (const k of CDE_TOP_K_KS) {
+      expect(reading.topKEntropy[k]).toBeCloseTo(topKEntropy([0.9, 0.08, 0.02], k));
+    }
   });
 });

@@ -21,8 +21,10 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
-import { normalizedEntropy, readCde } from './cde';
+import { CDE_TOP_K_KS, normalizedEntropy, readCde, topKEntropy, topTwoMargin, topTwoThreeMargin } from './cde';
+import { storeSurprise } from './fsrs';
 import { isAPaths, isATypeOf } from './chain';
+import type { IsAPath } from './chain';
 import { ObserverNetwork } from './network';
 import { CONVERSATION_DECK, CONVERSATION_CUE_TOKENS } from './conversation';
 import { PRIME_SPACE, deckVocabulary } from './primeSignature';
@@ -72,6 +74,36 @@ function auc(positive: readonly number[], negative: readonly number[]): number {
   return rank / (positive.length * negative.length);
 }
 
+/** Pearson correlation over paired samples. */
+function pearson(xs: readonly number[], ys: readonly number[]): number {
+  if (xs.length !== ys.length || xs.length < 2) return Number.NaN;
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (let i = 0; i < n; i += 1) {
+    sxx += (xs[i] - mx) ** 2;
+    syy += (ys[i] - my) ** 2;
+    sxy += (xs[i] - mx) * (ys[i] - my);
+  }
+  const denom = Math.sqrt(sxx * syy);
+  return denom === 0 ? 0 : sxy / denom;
+}
+
+/** Every instrument variant the fuzz bench scores. */
+const FUZZ_VARIANTS: Readonly<Record<string, (scores: readonly number[]) => number>> = {
+  'top score': (scores) => scores[0] ?? 0,
+  '1 - H̃ (full)': (scores) => 1 - normalizedEntropy(scores),
+  '1 - H̃₂': (scores) => 1 - topKEntropy(scores, 2),
+  '1 - H̃₃': (scores) => 1 - topKEntropy(scores, 3),
+  '1 - H̃₅': (scores) => 1 - topKEntropy(scores, 5),
+  '1 - H̃₈': (scores) => 1 - topKEntropy(scores, 8),
+  'm (top-two margin)': topTwoMargin,
+  'm₂₃ (second-third)': topTwoThreeMargin
+};
+
 describe('cde-bench: candidate-distribution entropy instrumentation (Phase A)', () => {
   let session: ObserverSession;
   let teacher: TeacherAgent;
@@ -118,11 +150,13 @@ describe('cde-bench: candidate-distribution entropy instrumentation (Phase A)', 
     console.log(`  recall H̃ range [${minH.toFixed(3)}, ${maxH.toFixed(3)}]`);
   });
 
-  it('fuzz: reports AUC of H̃ vs. top score on true-match / distractor pairs', () => {
-    const exactTop: number[] = [];
-    const exactConfidence: number[] = []; // 1 - H̃: higher = more concentrated
-    const distractorTop: number[] = [];
-    const distractorConfidence: number[] = [];
+  it('fuzz: reports AUC of every instrument variant vs. the top score', () => {
+    const exactByVariant = new Map<string, number[]>();
+    const distractorByVariant = new Map<string, number[]>();
+    for (const name of Object.keys(FUZZ_VARIANTS)) {
+      exactByVariant.set(name, []);
+      distractorByVariant.set(name, []);
+    }
     for (const pair of CONVERSATION_DECK) {
       teacher.exciteAndSettle(pair.cue);
       const exact = session.recall(pair.cue, BIG_K).map((r) => r.score);
@@ -131,30 +165,31 @@ describe('cde-bench: candidate-distribution entropy instrumentation (Phase A)', 
       const swapped = tokens.join(' ');
       teacher.exciteAndSettle(swapped);
       const distractor = session.recall(swapped, BIG_K).map((r) => r.score);
-
-      exactTop.push(exact[0] ?? 0);
-      exactConfidence.push(1 - normalizedEntropy(exact));
-      distractorTop.push(distractor[0] ?? 0);
-      distractorConfidence.push(1 - normalizedEntropy(distractor));
+      for (const [name, measure] of Object.entries(FUZZ_VARIANTS)) {
+        exactByVariant.get(name)!.push(measure(exact));
+        distractorByVariant.get(name)!.push(measure(distractor));
+      }
     }
-    const aucTop = auc(exactTop, distractorTop);
-    const aucEntropy = auc(exactConfidence, distractorConfidence);
-    const meanExactH = exactConfidence.map((c) => 1 - c).reduce((a, b) => a + b, 0) / exactConfidence.length;
-    const meanDistractorH = distractorConfidence.map((c) => 1 - c).reduce((a, b) => a + b, 0) / distractorConfidence.length;
+    const table: Array<{ name: string; value: number }> = [];
+    for (const [name] of Object.entries(FUZZ_VARIANTS)) {
+      const value = auc(exactByVariant.get(name)!, distractorByVariant.get(name)!);
+      table.push({ name, value });
+    }
+    table.sort((a, b) => b.value - a.value);
+    const aucTop = table.find((row) => row.name === 'top score')!.value;
     // eslint-disable-next-line no-console
-    console.log(
-      `\nCDE fuzz: ${exactTop.length} true-match / ${distractorTop.length} distractor pairs` +
-        `\n  AUC(top score) = ${aucTop.toFixed(3)}` +
-        `\n  AUC(1 - H̃)    = ${aucEntropy.toFixed(3)}` +
-        `\n  mean H̃ true-match ${meanExactH.toFixed(3)} vs distractor ${meanDistractorH.toFixed(3)}` +
-        `\n  H̃ adds discrimination over top score: ${aucEntropy > aucTop ? 'YES' : 'no'}`
-    );
-    expect(Number.isFinite(aucTop)).toBe(true);
-    expect(Number.isFinite(aucEntropy)).toBe(true);
-    expect(aucTop).toBeGreaterThanOrEqual(0);
-    expect(aucTop).toBeLessThanOrEqual(1);
-    expect(aucEntropy).toBeGreaterThanOrEqual(0);
-    expect(aucEntropy).toBeLessThanOrEqual(1);
+    console.log('\nCDE fuzz AUC per variant (true-match vs. distractor):');
+    for (const row of table) {
+      // eslint-disable-next-line no-console
+      console.log(`  ${row.name.padEnd(22)} AUC=${row.value.toFixed(3)}${row.name === 'top score' ? ' (reference)' : ''}`);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`  any variant beats the top score: ${table.some((row) => row.value > aucTop) ? 'YES' : 'no'}`);
+    for (const row of table) {
+      expect(Number.isFinite(row.value)).toBe(true);
+      expect(row.value).toBeGreaterThanOrEqual(0);
+      expect(row.value).toBeLessThanOrEqual(1);
+    }
   });
 
   it('chain: path entropy over is-a paths (multi-route support vs. single route)', () => {
@@ -207,6 +242,132 @@ describe('cde-bench: candidate-distribution entropy instrumentation (Phase A)', 
     }
     // eslint-disable-next-line no-console
     console.log(`  multi-route "robin->animal" H̃=${animalEntropy.toFixed(3)} vs single-route "robin->bird" H̃=${birdEntropy.toFixed(3)}`);
+  });
+
+  it('chain: §4.3 corruption — path mass vs. single-path strength at predicting correctness', () => {
+    // Deterministic graph: leaves with varied route redundancy to 'animal'.
+    const e = (subject: string, object: string, strength: number): Relation => ({
+      subject,
+      predicate: 'is-a',
+      object,
+      source: '',
+      origin: 'authored',
+      strength
+    });
+    const GRAPH: Relation[] = [
+      e('robin', 'bird', 1), e('bird', 'animal', 1), e('robin', 'animal', 0.5),
+      e('sparrow', 'bird', 1), e('sparrow', 'animal', 0.7),
+      e('dog', 'mammal', 1), e('mammal', 'animal', 1), e('dog', 'animal', 0.3),
+      e('cat', 'mammal', 1), e('cat', 'animal', 0.85),
+      e('horse', 'mammal', 0.9),
+      e('trout', 'fish', 1), e('fish', 'animal', 1), e('trout', 'vertebrate', 0.9),
+      e('vertebrate', 'animal', 1), e('fish', 'vertebrate', 0.8), e('trout', 'animal', 0.45),
+      e('salmon', 'fish', 1), e('salmon', 'vertebrate', 0.9),
+      e('penguin', 'bird', 1),
+      e('hen', 'bird', 1), e('hen', 'farm', 1), e('farm', 'animal', 0.2),
+      e('snake', 'reptile', 0.4), e('reptile', 'animal', 0.5), e('snake', 'animal', 0.35),
+      e('lamb', 'sheep', 0.9), e('sheep', 'animal', 1), e('sheep', 'mammal', 1), e('lamb', 'mammal', 0.1),
+      e('goat', 'mammal', 0.3),
+      e('frog', 'amphibian', 0.9), e('amphibian', 'animal', 0.9), e('frog', 'animal', 0.8)
+    ];
+    const probes = [
+      'robin', 'sparrow', 'dog', 'cat', 'horse', 'trout', 'salmon', 'penguin',
+      'hen', 'snake', 'lamb', 'goat', 'frog'
+    ];
+    const corruptStrongestEdge = (paths: readonly IsAPath[]): Relation[] => {
+      let bestPath: IsAPath | null = null;
+      for (const path of paths) {
+        if (bestPath === null || path.strength > bestPath.strength) bestPath = path;
+      }
+      if (bestPath === null) return [...GRAPH];
+      let strongest: { subject: string; object: string; strength: number } | null = null;
+      for (let i = 0; i + 1 < bestPath.nodes.length; i += 1) {
+        let best = -Infinity;
+        for (const relation of GRAPH) {
+          if (relation.subject === bestPath.nodes[i] && relation.object === bestPath.nodes[i + 1]) {
+            best = Math.max(best, relation.strength ?? 1);
+          }
+        }
+        if (strongest === null || best > strongest.strength) {
+          strongest = { subject: bestPath.nodes[i], object: bestPath.nodes[i + 1], strength: best };
+        }
+      }
+      if (strongest === null) return [...GRAPH];
+      return GRAPH.filter(
+        (relation) => !(relation.subject === strongest!.subject && relation.object === strongest!.object)
+      );
+    };
+    const rows: Array<{ probe: string; single: number; mass: number; entropy: number; flipped: boolean }> = [];
+    for (const subject of probes) {
+      const paths = isAPaths(GRAPH, subject, 'animal');
+      const strengths = paths.map((p) => p.strength);
+      const single = strengths.length > 0 ? Math.max(...strengths) : 0;
+      const mass = strengths.reduce((a, b) => a + b, 0);
+      const entropy = normalizedEntropy(strengths);
+      const corrupted = corruptStrongestEdge(paths);
+      const stillCorrect = isATypeOf(corrupted, subject, 'animal');
+      rows.push({ probe: `${subject}->animal`, single, mass, entropy, flipped: !stillCorrect });
+    }
+    // eslint-disable-next-line no-console
+    console.log('\nCDE chain §4.3 corruption (strongest edge removed):');
+    for (const row of rows) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `  ${row.probe.padEnd(16)} single=${row.single.toFixed(2)} mass=${row.mass.toFixed(2)} H̃=${row.entropy.toFixed(2)} -> ${row.flipped ? 'FLIPPED' : 'survived'}`
+      );
+    }
+    const survived = rows.filter((r) => !r.flipped);
+    const flipped = rows.filter((r) => r.flipped);
+    expect(survived.length).toBeGreaterThan(0);
+    expect(flipped.length).toBeGreaterThan(0);
+    const aucMass = auc(survived.map((r) => r.mass), flipped.map((r) => r.mass));
+    const aucSingle = auc(survived.map((r) => r.single), flipped.map((r) => r.single));
+    // eslint-disable-next-line no-console
+    console.log(
+      `  AUC(path mass) = ${aucMass.toFixed(3)} vs AUC(single-path strength) = ${aucSingle.toFixed(3)}` +
+        `\n  path mass predicts post-corruption correctness better: ${aucMass > aucSingle ? 'YES' : 'no'}`
+    );
+    expect(Number.isFinite(aucMass)).toBe(true);
+    expect(Number.isFinite(aucSingle)).toBe(true);
+    // On this designed graph the single-path strength cannot distinguish a
+    // lone strong route from one backed by a second route — the mass can.
+    expect(aucMass).toBeGreaterThan(aucSingle);
+  });
+
+  it('§2.3 agreement: store-time surprise correlates with the pre-store recall candidate entropy', async () => {
+    const agreeSession = new ObserverSession(options(), 100);
+    await agreeSession.initialize();
+    const agreeTeacher = new TeacherAgent(agreeSession, DECK);
+    const surprises: number[] = [];
+    const entropies: number[] = [];
+    const topKSamples = new Map<number, number[]>([[2, []], [3, []], [5, []], [8, []]]);
+    for (const entry of DECK) {
+      // The storage gate's own pre-store recall (agent/wordloop.ts teach):
+      // settle, observe the word, tick once, then recall the cue BEFORE storing.
+      agreeSession.settleField();
+      agreeSession.observeText(entry.word);
+      agreeSession.observer.tick(0.02);
+      const cueScores = agreeSession
+        .recall(entry.word, 5)
+        .filter((result) => result.trace.metadata?.kind === undefined)
+        .map((result) => result.score);
+      surprises.push(storeSurprise(cueScores));
+      entropies.push(normalizedEntropy(cueScores));
+      for (const k of CDE_TOP_K_KS) topKSamples.get(k)!.push(topKEntropy(cueScores, k));
+      agreeTeacher.teach(entry.word);
+    }
+    agreeSession.dispose();
+    const r = pearson(surprises, entropies);
+    // eslint-disable-next-line no-console
+    console.log(`\nCDE §2.3 agreement (${surprises.length} stores): r(surprise, H̃) = ${r.toFixed(3)}`);
+    for (const k of CDE_TOP_K_KS) {
+      // eslint-disable-next-line no-console
+      console.log(`  r(surprise, H̃_${k}) = ${pearson(surprises, topKSamples.get(k)!).toFixed(3)}`);
+    }
+    expect(Number.isFinite(r)).toBe(true);
+    // The agreement check §2.3 promises: a field measure (store-time surprise)
+    // and the decision measure (candidate entropy) must track each other.
+    expect(r).toBeGreaterThanOrEqual(0.3);
   });
 
   it('council: reports the candidate-entropy reading over member confidences', async () => {

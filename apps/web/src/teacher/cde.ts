@@ -7,12 +7,22 @@
  *
  *   p_i = s_i / Σ_j s_j          (non-negative scores, normalized)
  *   H̃   = −Σ p_i log p_i / log k   (normalized entropy in [0, 1])
+ *   H̃_k = H̃ over the retained top-k (k ∈ {2, 3, 5, 8})
  *   m    = (s₁ − s₂) / s₁          (top-two margin)
  *   m₂₃  = (s₂ − s₃) / s₂          (second-to-third margin)
  *
  * H̃ is k-normalized so it is comparable across decision points with different
  * candidate counts. Neither H̃ nor the margins require a temperature or any new
  * constant — p is a normalization of scores the system already has.
+ *
+ * H̃_k (top-k entropy) is the k-robust variant: when a decision point admits a
+ * long tail of near-zero candidates (the recall prefilter admits k ≈ 100–750),
+ * the full-set H̃ saturates near 1 for every cue — the tail's contribution to
+ * the denominator log k washes out the shape of the head. H̃_k reads only the
+ * retained top-k candidates, which is also exactly the slice the §2.2
+ * disambiguating ask can NAME ("Do you mean X or Y?" needs the top two, and
+ * nothing more). §2.2 regime 2 is "only possible if the top-k is retained":
+ * H̃_k is the regime-2 reading of the distribution.
  *
  * ROUTING RULE (§2.2). Three regimes, with boundaries that §5 proposes to
  * CALIBRATE rather than fix:
@@ -21,11 +31,22 @@
  *     that names both top candidates.
  *   · FLAT H̃ (no dominant candidate)          → ask plainly, as today.
  *
- * The regime thresholds are therefore exposed as parameters with placeholder
- * defaults; they are TUNING CONSTANTS (§5) and are meant to be replaced by
- * calibrated values from `cde-bench` (the same bench-first discipline every
- * other threshold went through). Nothing in this module routes on the regime;
- * it only computes the reading.
+ * MEASURED OUTCOME (cde-bench, Phase A): the routing rule FAILED its §2.4
+ * gate and is NOT built. On the fuzz bench the full-set H̃ is pure noise
+ * (AUC 0.510 — k-normalization over the 100–750-candidate tail saturates it
+ * near 1 for every cue) and the top-k / margin variants, while carrying
+ * signal, all sit BELOW the top score (best: AUC(1 − H̃₃) = 0.779 vs.
+ * AUC(top) = 0.912). Per §11 ("the instrument may be empty"), the
+ * disambiguating-ask routing must not be built from this instrument; each
+ * downstream use needs its own bench. The margins DO separate the clear and
+ * flat classes (adversarial m ≤ 0.044 vs. exact recall m ≥ 0.293) — that
+ * separation calibrated the regime thresholds below — but regime labels are
+ * measurement only: nothing in this module (or the system) routes on them.
+ *
+ * The regime thresholds are TUNING CONSTANTS (§5): `topTwoMargin` is
+ * calibrated from `cde-bench`; `topTwoThreeMargin` stays a placeholder until
+ * a two-dominant-candidate corpus exists. Nothing in this module routes on
+ * the regime; it only computes the reading.
  */
 
 /** The normalized candidate distribution p_i = s_i / Σ s_j. Non-negative scores
@@ -56,6 +77,39 @@ export function normalizedEntropy(scores: readonly number[]): number {
     entropy -= pi * Math.log2(pi);
   }
   return entropy / Math.log2(k);
+}
+
+/** The top-k slices the retained-candidate reading of §2.2 covers. */
+export const CDE_TOP_K_KS = [2, 3, 5, 8] as const;
+
+/** One of the retained-candidate slice sizes. */
+export type CdeTopK = (typeof CDE_TOP_K_KS)[number];
+
+/** H̃_k over every supported slice, keyed by the slice size. */
+export type CdeTopKEntropies = Readonly<Record<CdeTopK, number>>;
+
+/**
+ * The top-k candidate entropy H̃_k: the normalized entropy over the RETAINED
+ * top-k candidates only (p renormalized over those k), in [0, 1]. The
+ * full-set H̃ saturates near 1 on long tails; this reads the shape of the
+ * head — the part of the distribution the routing rule can act on (the
+ * disambiguating ask names exactly the top two). k ≥ 2; fewer candidates
+ * than k are read as-is (the retained slice is the whole list), and fewer
+ * than two candidates is 0 (fully concentrated).
+ */
+export function topKEntropy(scores: readonly number[], k: number): number {
+  const kept = Math.min(k, scores.length);
+  if (kept < 2) return 0;
+  const sorted = [...scores].sort((a, b) => b - a);
+  return normalizedEntropy(sorted.slice(0, kept));
+}
+
+/** H̃_k for every supported slice size, in one pass. */
+export function topKEntropies(scores: readonly number[]): CdeTopKEntropies {
+  const sorted = [...scores].sort((a, b) => b - a);
+  const result = {} as Record<CdeTopK, number>;
+  for (const k of CDE_TOP_K_KS) result[k] = topKEntropy(sorted, k);
+  return result;
 }
 
 /**
@@ -93,6 +147,8 @@ export type CdeRegime = 'clear' | 'disambiguate' | 'flat';
 export interface CdeReading {
   /** H̃, the normalized candidate entropy in [0, 1]. */
   entropy: number;
+  /** H̃_k over the retained top-k candidates for every supported k. */
+  topKEntropy: CdeTopKEntropies;
   /** m = (s₁ − s₂)/s₁, the top-two margin in [0, 1]. */
   topTwoMargin: number;
   /** m₂₃ = (s₂ − s₃)/s₂, the second-to-third margin in [0, 1]. */
@@ -113,14 +169,31 @@ export interface CdeRegimeThresholds {
 }
 
 /**
- * PLACEHOLDER boundaries — tuning constants to be calibrated by `cde-bench`
- * (§2.4 / §5.2), not fixed. They are deliberately permissive so the
- * instrumentation phase logs readings without routing on them; the calibrated
- * values replace these only after the bench shows the instrument adds
- * discrimination.
+ * REGIME boundaries (§5.2 tuning constants), calibrated where `cde-bench`
+ * showed a class separation and left as placeholders where it did not.
+ *
+ *   · topTwoMargin = 0.17 — CALIBRATED (cde-bench, 2026-09): the flat class
+ *     (adversarial probes: "is a bird a quargle", "is snow a vehicle", …)
+ *     measured m ∈ [0.011, 0.044] and the clear class (unambiguous exact
+ *     deck-word recalls) measured m ∈ [0.293, 0.436]. The gap (0.044, 0.293)
+ *     is non-empty; the threshold sits at its midpoint. Ambiguous cues ('the',
+ *     near-tie conversation cues) fall at or below the flat ceiling, which is
+ *     exactly where they belong.
+ *   · topTwoThreeMargin = 0.2 — PLACEHOLDER: no two-dominant-candidate corpus
+ *     exists in the bench (measured m₂₃ overlaps between the classes:
+ *     exact [0.008, 0.119] vs. adversarial [0.007, 0.033]); the value is
+ *     deliberately permissive until a disambiguation corpus exists.
+ *
+ * PHASE A REFUTATION (§2.4 / §11): on the fuzz bench no instrument variant
+ * beats the top score outside noise (AUC(top) = 0.912 vs. best variant
+ * AUC(1 − H̃₃) = 0.779; AUC(1 − H̃) = 0.510 is pure noise). The candidate
+ * distribution therefore carries nothing the top score does not, and the
+ * §2.2 disambiguating-ask ROUTING MUST NOT BE BUILT from this instrument.
+ * These thresholds classify regimes for MEASUREMENT ONLY (the council and
+ * frontier readings); nothing routes on them.
  */
 export const CDE_REGIME_DEFAULTS: CdeRegimeThresholds = {
-  topTwoMargin: 0.2,
+  topTwoMargin: 0.17,
   topTwoThreeMargin: 0.2
 };
 
@@ -159,6 +232,7 @@ export function readCde(
 ): CdeReading {
   return {
     entropy: normalizedEntropy(scores),
+    topKEntropy: topKEntropies(scores),
     topTwoMargin: topTwoMargin(scores),
     topTwoThreeMargin: topTwoThreeMargin(scores),
     k: scores.length,

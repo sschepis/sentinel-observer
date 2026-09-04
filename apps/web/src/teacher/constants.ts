@@ -848,6 +848,32 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     line: 39,
     note: 'Grounding threshold — below this a composition reads as echoing seeds.',
     evidence: { sources: ['fuzz'], mass: null, note: 'The fabrication threshold the grounding bench reads.' }
+  },
+  {
+    name: 'CDE_REGIME_TOP_TWO_MARGIN',
+    class: 'tuning',
+    value: 0.17,
+    file: 'apps/web/src/teacher/cde.ts',
+    line: 196,
+    note: 'Candidate-distribution regime threshold: m ≥ this reads clear (one dominant candidate).',
+    evidence: {
+      sources: ['fuzz', 'adversarial'],
+      mass: 16,
+      note: 'Calibrated from cde-bench: flat class (adversarial probes) m ∈ [0.011, 0.044], clear class (exact deck recall) m ∈ [0.293, 0.436]; threshold = gap midpoint. Regime labels are measurement only — Phase A refuted the routing (no variant beats the top score on fuzz AUC).'
+    }
+  },
+  {
+    name: 'CDE_REGIME_TOP_TWO_THREE_MARGIN',
+    class: 'tuning',
+    value: 0.2,
+    file: 'apps/web/src/teacher/cde.ts',
+    line: 197,
+    note: 'Candidate-distribution regime threshold: m₂₃ ≥ this reads disambiguate (two dominant candidates).',
+    evidence: {
+      sources: ['fuzz', 'adversarial'],
+      mass: null,
+      note: 'Placeholder: cde-bench found NO two-dominant-candidate corpus (measured m₂₃ overlaps between classes, exact [0.008, 0.119] vs. adversarial [0.007, 0.033]); stays permissive until a disambiguation corpus exists.'
+    }
   }
 ] as const;
 
