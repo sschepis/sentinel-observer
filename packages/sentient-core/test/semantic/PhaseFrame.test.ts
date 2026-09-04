@@ -15,7 +15,8 @@
  *
  * WHAT IS MEASURED HERE (unit level; the teacher-level sibling AUC bench is
  * apps/web/src/teacher/phaseFrameBenchmark.test.ts):
- *   1. OFF IS THE CONTROL: default-off trajectories are bit-identical to the
+ *   1. CONTROL PINNING: the 'proximity' arm (explicit since the §4.2 DROP
+ *      execution moved the default to 'off') is bit-identical to the
  *      pre-experiment engine, even when the new metadata is stored.
  *   2. Time-invariance: a drift-advanced re-cue of the SAME moment scores
  *      ~1 in the co-rotating frame at every elapsed time, while the raw
@@ -81,9 +82,13 @@ const PRIMES = [3, 5, 7];
 const OMEGAS = [0.4, 0.9, 1.6];
 
 describe('PhaseFrame: co-rotating phase comparison (compact bank)', () => {
-  it('OFF is the control: default-off trajectories are bit-identical with and without the frame metadata', () => {
-    const plain = new CompactMemoryBank();
-    const metadated = new CompactMemoryBank();
+  it("'proximity' is the pre-experiment control: bit-identical with and without the frame metadata (the default is now 'off')", () => {
+    // The production default has moved to `phaseTerm: 'off'` (the §4.2 DROP
+    // verdict, executed in PhaseTermArms.test.ts), so the control is pinned
+    // EXPLICITLY here — the raw-frame blend must stay bit-identical to the
+    // pre-experiment engine whether or not the frame metadata is stored.
+    const plain = new CompactMemoryBank({ phaseTerm: 'proximity' });
+    const metadated = new CompactMemoryBank({ phaseTerm: 'proximity' });
     const phases = [1.0, 1.15, 5.5];
     const amplitudes = [0.7, 0.7, 0.7];
     plain.store('lock-a', orientation(1), PRIMES, { amplitudes, phases });
@@ -421,14 +426,14 @@ describe('PhaseFrame: the observer captures the clock and frequencies', () => {
     observer.dispose();
   });
 
-  it('the default arm is bit-identical to an explicitly-off coRotatingPhases arm', async () => {
+  it("the default arm is bit-identical to an explicitly-off phaseTerm arm", async () => {
     const run = async (withExplicitOff: boolean): Promise<number[]> => {
       const observer = new SemanticObserver({
         kernel,
         primeCount: 16,
         gridSize: 32,
         memoryMode: 'compact',
-        ...(withExplicitOff ? { memoryBankOptions: { coRotatingPhases: false } } : {})
+        ...(withExplicitOff ? { memoryBankOptions: { phaseTerm: 'off' as const } } : {})
       });
       await observer.initialize();
       for (const word of ['resonance', 'coherence', 'consciousness']) {
