@@ -49,8 +49,8 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
-import { claimsRelationalYes } from './adversarial';
-import { PRIME_SPACE, deckVocabulary } from './primeSignature';
+import { claimsRelationalYes, negativeTargetsFor } from './adversarial';
+import { PRIME_SPACE, deckVocabulary, primeSignature, sensePrimeSignature } from './primeSignature';
 import { BOOTSTRAP_VERSION, BOOTSTRAP_VOCABULARY_SCHEME, type BootstrapRecord } from './bootstrap';
 import {
   isAParentsOf,
@@ -58,6 +58,17 @@ import {
   crossSenseProbesFor,
   isAQuestion
 } from './polysemyProbes';
+import {
+  assignSenses,
+  mergedGraphFor,
+  reservedSignatureKeys,
+  senseGroupsFor,
+  senseVocabulary,
+  signatureKey,
+  splitRelationsBySense
+} from './senseModel';
+import { isATypeOf } from './chain';
+import { classifyRegime } from './cde';
 import type { Relation } from './relations';
 import type { DeckWord } from './deck';
 
@@ -226,5 +237,211 @@ describe('polysemy probe set — measured reproduction of §7.1', () => {
     expect(confidentYes).toBe(exposed.length); // one confident Yes per word = its own definitional sense
     expect(hedgedYes).toBe(exposed.length); // one hedged "Probably" per word = the cross (chaperone) sense
     expect(crossSenseConfidentYes).toBe(0);
+  });
+});
+
+// ── F.2 SENSE SPLIT (§7.2) — pure sense-model predicates ───────────────────
+describe('sense model (§7.2 signature-per-sense) predicates', () => {
+  it('senseGroupsFor clusters is-a parents into readings, definitional first', () => {
+    const groups = senseGroupsFor(RELATIONS, 'bank');
+    expect(groups.map((g) => g.key)).toEqual(['bank#1', 'bank#2']);
+    expect(groups[0].parents).toEqual(['institution']);
+    expect(groups[0].reading).toBe('a financial institution');
+    expect(groups[1].parents).toEqual(['slope']);
+    expect(groups[1].reading).toBe('sloping land beside water');
+    // 'bat' → animal and mammal: mammal is-a animal → ONE reading, no split.
+    expect(senseGroupsFor(RELATIONS, 'bat')).toEqual([]);
+    // 'robin' → a single parent → no split.
+    expect(senseGroupsFor(RELATIONS, 'robin')).toEqual([]);
+  });
+
+  it('assignSenses mints deterministic, distinct, in-basis sense signatures and leaves legacy word signatures byte-identical', () => {
+    const legacy = primeSignature('bank');
+    const first = assignSenses(RELATIONS, PRIME_SPACE);
+    const second = assignSenses(RELATIONS, PRIME_SPACE);
+    // Determinism: the same graph mints the same assignment, twice.
+    expect(first.signatures['bank#1']).toEqual(second.signatures['bank#1']);
+    expect(first.signatures['bank#2']).toEqual(second.signatures['bank#2']);
+    // Each sense's signature: 4 distinct in-basis primes, distinct from the
+    // other sense's and from the surface word's LEGACY signature.
+    for (const key of ['bank#1', 'bank#2']) {
+      const signature = first.signatures[key];
+      expect(signature).toHaveLength(4);
+      expect(new Set(signature).size).toBe(4);
+      for (const prime of signature) expect(PRIME_SPACE).toContain(prime);
+      expect(signatureKey(signature)).not.toBe(signatureKey(legacy));
+    }
+    expect(signatureKey(first.signatures['bank#1'])).not.toBe(signatureKey(first.signatures['bank#2']));
+    expect(sensePrimeSignature('bank', 1)).not.toEqual(primeSignature('bank'));
+    // The surface union excites BOTH senses' primes exactly once each.
+    expect(first.surfaceUnions['bank']).toEqual([
+      ...first.signatures['bank#1'],
+      ...first.signatures['bank#2']
+    ]);
+  });
+
+  it('senseVocabulary layers the union and sense keys without touching other entries', () => {
+    const base = deckVocabulary(DECK, PRIME_SPACE);
+    const assignment = assignSenses(RELATIONS, PRIME_SPACE);
+    const deployed = senseVocabulary(base, assignment);
+    expect(deployed['bank']).toEqual(assignment.surfaceUnions['bank']);
+    expect(deployed['bank#1']).toEqual(assignment.signatures['bank#1']);
+    expect(deployed['bank#2']).toEqual(assignment.signatures['bank#2']);
+    // Non-split words keep their legacy entries byte-identical.
+    for (const entry of DECK) {
+      if (entry.word !== 'bank') expect(deployed[entry.word]).toEqual(base[entry.word]);
+    }
+  });
+
+  it('splitRelationsBySense moves edges onto sense nodes and never crosses senses', () => {
+    const assignment = assignSenses(RELATIONS, PRIME_SPACE);
+    const split = splitRelationsBySense(RELATIONS, assignment);
+    // No edge remains on the surface word.
+    expect(split.some((r) => r.subject === 'bank')).toBe(false);
+    // The definitional is-a edge lives on bank#1, the chaperone edge on bank#2.
+    expect(split.some((r) => r.subject === 'bank#1' && r.predicate === 'is-a' && r.object === 'institution')).toBe(true);
+    expect(split.some((r) => r.subject === 'bank#2' && r.predicate === 'is-a' && r.object === 'slope')).toBe(true);
+    // Chain walks run over sense nodes and cannot cross senses.
+    expect(isATypeOf(split, 'bank#1', 'institution')).toBe(true);
+    expect(isATypeOf(split, 'bank#2', 'slope')).toBe(true);
+    expect(isATypeOf(split, 'bank#1', 'slope')).toBe(false);
+    expect(isATypeOf(split, 'bank#2', 'institution')).toBe(false);
+    expect(isATypeOf(split, 'bank', 'institution')).toBe(false);
+    // Non-split words pass through untouched.
+    expect(split.filter((r) => r.subject === 'robin')).toEqual(
+      RELATIONS.filter((r) => r.subject === 'robin')
+    );
+  });
+
+  it('the negative-target selector computes closure per sense', () => {
+    const assignment = assignSenses(RELATIONS, PRIME_SPACE);
+    const split = splitRelationsBySense(RELATIONS, assignment);
+    const readings = assignment.readingsOf.get('bank') ?? [];
+    const negatives = negativeTargetsFor(
+      'bank',
+      split,
+      ['institution', 'building', 'slope', 'season', 'sound'],
+      100,
+      readings.map((r) => ({ key: r.key }))
+    );
+    // Each sense's closure excludes its own is-a parents: 'institution' via
+    // bank#1, 'building' via its ancestor chain, 'slope' via bank#2.
+    expect(negatives).not.toContain('institution');
+    expect(negatives).not.toContain('building');
+    expect(negatives).not.toContain('slope');
+    expect(negatives).toContain('season');
+    expect(negatives).toContain('sound');
+  });
+});
+
+// ── F.2 SENSE SPLIT — the measured after-split reproduction ────────────────
+describe('sense split (§7.2/F.2) — after-split measurement', () => {
+  let session: ObserverSession;
+  let teacher: TeacherAgent;
+
+  beforeAll(async () => {
+    const baseVocabulary = deckVocabulary(DECK, PRIME_SPACE);
+    // The same merged graph the teacher derives (regex + authored + chaperone),
+    // minted against the deployed vocabulary so session and teacher agree.
+    const assignment = assignSenses(
+      mergedGraphFor(
+        DECK.map((d) => ({ word: d.word, definition: d.definition })),
+        new Set(DECK.map((d) => d.word)),
+        CHAPERONE_SENSES
+      ),
+      PRIME_SPACE,
+      reservedSignatureKeys(baseVocabulary)
+    );
+    session = new ObserverSession(
+      { ...setupOptions(), vocabulary: senseVocabulary(baseVocabulary, assignment) },
+      100
+    );
+    await session.initialize();
+    teacher = new TeacherAgent(session, DECK, null, 1, 0, 7, undefined, undefined, undefined, false, { assignment });
+    // Split-era teaching order: the chaperone senses arrive BEFORE teaching,
+    // so teach stores one trace PER SENSE.
+    const record: BootstrapRecord = {
+      version: BOOTSTRAP_VERSION,
+      vocabularyScheme: BOOTSTRAP_VOCABULARY_SCHEME,
+      deck: 'polysemy-probe',
+      generatedAt: new Date().toISOString(),
+      source: { words: DECK.map((d) => d.word), conversation: false, definitionsFilled: true },
+      traces: [],
+      wordStates: [],
+      definitions: DECK.map((d) => ({ word: d.word, definition: d.definition, example: d.example })),
+      relations: CHAPERONE_SENSES.map((r) => ({ ...r }))
+    };
+    teacher.importBootstrap(record);
+    for (const entry of DECK) teacher.teach(entry.word);
+  }, 120000);
+
+  afterAll(() => {
+    session.dispose();
+  });
+
+  it('the graph lives on sense nodes and the unsplit view stays available', () => {
+    const relations = teacher.relations();
+    const unsplit = teacher.unsplitRelations();
+    // The served graph has no surface-word edges for the split word...
+    expect(relations.some((r) => r.subject === 'bank')).toBe(false);
+    expect(relations.some((r) => r.subject === 'bank#1' && r.object === 'institution')).toBe(true);
+    expect(relations.some((r) => r.subject === 'bank#2' && r.object === 'slope')).toBe(true);
+    // ...and the unsplit view still carries the merged surface edges.
+    expect(unsplit.some((r) => r.subject === 'bank' && r.object === 'institution')).toBe(true);
+    expect(unsplit.some((r) => r.subject === 'bank' && r.object === 'slope')).toBe(true);
+  });
+
+  it('recall over the sense candidates is not a single clear winner — the §2 instrument routes the ask', () => {
+    // The instrument reads the MOMENT (excite + settle), the same discipline
+    // the disambiguation routing uses before recall.
+    teacher.exciteAndSettle('bank');
+    const scores = session.recall('bank', 5).map((result) => result.score);
+    // eslint-disable-next-line no-console
+    console.log(`SENSE SPLIT — recall over 'bank' candidates: [${scores.map((s) => s.toFixed(3)).join(', ')}]`);
+    // The routing fires the disambiguating ask unless ONE candidate clearly
+    // dominates. At this 64-prime / 18-word scale the candidate distribution
+    // reads 'flat' (no prime-prefilter discrimination — every trace shares
+    // the whole basis); a bimodal sense distribution reads 'disambiguate'
+    // (cde.test.ts). Either way the observer asks, naming both readings —
+    // never answering from the merged graph.
+    expect(['disambiguate', 'flat']).toContain(classifyRegime(scores));
+  });
+
+  it('the same probes produce 0 confident cross-sense answers, with a disambiguating ask', () => {
+    const relations = teacher.unsplitRelations();
+    const exposed = wordsWithUnrelatedIsAParents(relations);
+
+    let confidentYes = 0;
+    let crossSenseConfidentYes = 0;
+    let disambiguatingAsks = 0;
+    for (const word of exposed) {
+      for (const parent of isAParentsOf(relations, word)) {
+        const origin = relations.find(
+          (r) => r.subject === word && r.predicate === 'is-a' && r.object === parent
+        )?.origin;
+        const probe = isAQuestion(word, parent);
+        const answer = teacher.chatAnswer(probe);
+        if (claimsRelationalYes(answer)) {
+          confidentYes += 1;
+          if (origin !== 'regex') crossSenseConfidentYes += 1;
+        }
+        const spoken = 'response' in answer ? answer.response : '';
+        if (answer.mode === 'ask' && /^Do you mean /.test(spoken)) disambiguatingAsks += 1;
+        // eslint-disable-next-line no-console
+        console.log(`  ${probe.padEnd(34)} [${origin ?? '?'}] -> [${answer.mode}] ${spoken}`);
+      }
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `SENSE SPLIT — confident "Yes" ${confidentYes}, CONFIDENT cross-sense "Yes" ${crossSenseConfidentYes}, disambiguating asks ${disambiguatingAsks}`
+    );
+
+    // THE AFTER-SPLIT FINDING (§7.5): 0 confident cross-sense answers, and
+    // the disambiguating ask names both readings where context is absent.
+    expect(exposed.length).toBe(6);
+    expect(confidentYes).toBe(0);
+    expect(crossSenseConfidentYes).toBe(0);
+    expect(disambiguatingAsks).toBe(12);
   });
 });

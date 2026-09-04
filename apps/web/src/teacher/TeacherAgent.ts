@@ -28,6 +28,8 @@ import {
   type OperatorResult
 } from './operators';
 import { deniedFromNegations } from './chain';
+import { classifyRegime } from './cde';
+import type { SenseSplitConfig } from './senseModel';
 import {
   nextCurriculumWord,
   rankCurriculum,
@@ -223,6 +225,33 @@ export class TeacherAgent extends TeacherAgentComposed {
     }
   }
 
+  /**
+   * F.2 SENSE SPLIT (§7.2): the disambiguating ask for a bare surface word
+   * that carries several taught senses. The §2 instrument (cde.ts) reads
+   * the recall over the sense candidates: one dominant candidate ('clear')
+   * falls through to the normal answer path; a bimodal distribution
+   * ('disambiguate') or a flat one asks which sense, naming both readings
+   * ("Do you mean bank as in a financial institution, or as in sloping
+   * land beside a body of water?"). Null when the split is off, the
+   * utterance has no relational subject, or the subject is not sense-split.
+   */
+  protected senseDisambiguationAsk(utterance: string): string | null {
+    if (!this.senseSplit) return null;
+    const form = questionFormOf(utterance);
+    if (form === null || form.subject === undefined) return null;
+    const readings = this.senseAssignment().readingsOf.get(form.subject);
+    if (readings === undefined || readings.length < 2) return null;
+    // The §2 instrument reads the MOMENT, not a settled field: excite the
+    // bare surface word (the union of its senses' primes) and settle to
+    // agreement first — exactly the recallMemories discipline — so the
+    // candidate scores are the converged moment's.
+    this.exciteAndSettle(form.subject);
+    const scores = this.session.recall(form.subject, 5).map((result) => result.score);
+    if (classifyRegime(scores) === 'clear') return null;
+    const named = readings.map((reading) => reading.reading).join(', or as in ');
+    return `Do you mean ${form.subject} as in ${named}?`;
+  }
+
   constructor(
     session: ObserverSession,
     deck: readonly DeckWord[],
@@ -272,7 +301,20 @@ export class TeacherAgent extends TeacherAgentComposed {
      * A/B arm) instead of DSL compilation. Default false — the shipped
      * behavior is bit-identical.
      */
-    rewriteInduction = false
+    rewriteInduction = false,
+    /**
+     * F.2 SENSE SPLIT (§7.2): with `true`, every word whose relation graph
+     * carries is-a parents in unrelated closures gets one sense node per
+     * distinct reading (bank#1, bank#2) — definitions, edges, and traces
+     * live on the sense, chain walks cannot cross senses, and a bare
+     * surface word whose sense recall is not clearly ONE candidate asks
+     * which sense instead of answering from the merged graph. DEFAULT OFF:
+     * every existing behavior stays bit-identical. An object form may carry
+     * `{ assignment }` — a pre-minted assignment the caller has already
+     * baked into the session vocabulary (`senseVocabulary`), so the two
+     * agree by construction.
+     */
+    senseSplit: boolean | SenseSplitConfig = false
   ) {
     super();
     this.session = session;
@@ -282,6 +324,11 @@ export class TeacherAgent extends TeacherAgentComposed {
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
     this.curriculumConfig = curriculumConfig ?? {};
     this.rewriteInduction = rewriteInduction;
+    this.senseSplit = senseSplit === true || (typeof senseSplit === 'object' && senseSplit !== null);
+    this.senseAssignmentOverride =
+      typeof senseSplit === 'object' && senseSplit !== null && senseSplit.assignment !== undefined
+        ? senseSplit.assignment
+        : null;
     this.episodic = new EpisodicMemory(episodicSessionGapMs);
     this.compositionRng = compositionSeed !== undefined ? mulberry32(compositionSeed) : Math.random;
     // The operator learner's MDL prior is the FULL frequency deck — token
@@ -514,6 +561,18 @@ export class TeacherAgent extends TeacherAgentComposed {
         operator: { kind: 'compiled-rule', concept: subject, drill: 'negation', answer: response },
         provenance: { traceIds: [], edges: [{ subject, predicate, object }], operatorId: 'negation' }
       });
+    }
+
+    // 1.75 SENSE SPLIT (§7.2): a bare surface word with several taught
+    //     senses is ambiguous. The §2 instrument reads the recall over the
+    //     sense candidates; unless one candidate clearly dominates, the
+    //     observer asks which sense — naming both readings — instead of
+    //     answering from the merged graph.
+    const senseAsk = this.senseDisambiguationAsk(resolved);
+    if (senseAsk !== null) {
+      this.workingMemory.note('observer', senseAsk);
+      this.noteAnswerMode('ask');
+      return finish({ mode: 'ask', response: senseAsk, provenance: EMPTY_PROVENANCE });
     }
 
     // 2. Operators: answer novel questions from memory deterministically.

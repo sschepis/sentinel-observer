@@ -18,6 +18,7 @@ import {
   productionCue,
   recognitionCue
 } from '../deck';
+import type { SenseReading } from '../senseModel';
 import {
   dueIntervalDays,
   decayToward,
@@ -257,6 +258,15 @@ export function WordLoopMixin<TBase extends Constructor<TeacherAgentCore & Cross
         this.session.observer.getMemoryBank().reinforce(state.traceId, 0.1);
         return { word: state.word, traceId: state.traceId, note: 'already in memory — reinforced' };
       }
+      // F.2 SENSE SPLIT (§7.2): a polysemous word teaches ONE TRACE PER
+      // SENSE — the definition and the trace live on the sense, never on
+      // the merged surface word.
+      if (this.senseSplit) {
+        const readings = this.senseAssignment().readingsOf.get(word);
+        if (readings !== undefined && readings.length >= 2) {
+          return this.teachSenses(word, readings);
+        }
+      }
       const lesson = lessonText(state.word);
 
       this.session.settleField();
@@ -288,6 +298,99 @@ export function WordLoopMixin<TBase extends Constructor<TeacherAgentCore & Cross
         return { word: state.word, traceId: trace.id, note: 'stored in the observer\'s memory' };
       }
       return { word: state.word, traceId: null, note: 'field was quiescent — nothing stored' };
+    }
+
+    /**
+     * F.2 SENSE SPLIT (§7.2) — teach one trace PER SENSE. The surface word
+     * excites the union of its senses' primes (the split-amplitude entry in
+     * the session vocabulary); each SENSE is then taught like any word, with
+     * its OWN four-prime signature at the standard lesson weight, so the
+     * sense traces are distinct memories of distinct readings. The lesson
+     * content lives on the sense — reading #1 carries the word's own
+     * definition, the other readings the gloss their is-a edge supplied.
+     * The word's WordState binds to the PRIMARY sense trace (the
+     * curriculum/FSRS machinery is untouched); the other sense traces are
+     * recoverable through their `kind: 'sense'` metadata.
+     */
+    protected teachSenses(word: string, readings: readonly SenseReading[]): TeachResult {
+      const state = this.requiredState(word);
+      const assignment = this.senseAssignment();
+      let primaryId: string | null = null;
+      for (const reading of readings) {
+        const signature = assignment.signatures[reading.key] ?? [];
+        if (signature.length === 0) continue;
+        this.session.settleField();
+        this.session.observer.processInput(signature, 0.5);
+        this.session.observer.tick(0.02);
+        const definition = reading.index === 1 ? state.word.definition : reading.reading;
+        const example = reading.index === 1 ? state.word.example : '';
+        const lesson = lessonText({ word: reading.key, definition, example });
+        const trace = this.session.storeMemory(lesson, {
+          metadata: { kind: 'sense', surface: word, senseKey: reading.key, index: reading.index }
+        });
+        if (trace !== null && primaryId === null) primaryId = trace.id;
+      }
+      if (primaryId === null) {
+        return { word: state.word, traceId: null, note: 'field was quiescent — nothing stored' };
+      }
+      // Store-time surprise seeds the FSRS curve exactly like the legacy
+      // path; the sense traces carry kind metadata, so the word-only cue
+      // filter excludes them from the bank's own prediction.
+      const cueScores = this.session
+        .recall(word, 5)
+        .filter((result) => result.trace.metadata?.kind === undefined)
+        .map((result) => result.score);
+      const surprise = storeSurprise(cueScores);
+      state.traceId = primaryId;
+      state.taughtAt = Date.now();
+      state.stability = surpriseInitialStability(surprise);
+      state.difficulty = FSRS_INITIAL_DIFFICULTY;
+      state.dueAt = Date.now();
+      state.lastIntervalDays = null;
+      this.maybePersist();
+      return { word: state.word, traceId: primaryId, note: `stored ${readings.length} sense traces in the observer's memory` };
+    }
+
+    /**
+     * F.2: ensure one sense trace per reading exists for a word — the
+     * split-deployment step for a record restored under the MERGED era
+     * (the shipped record's word traces live on the surface word, so the
+     * bench re-teaches the senses). Idempotent: reads the bank's `kind:
+     * 'sense'` traces and stores only what is missing. Returns the count
+     * of sense traces stored.
+     */
+    ensureSenseTraces(word: string): number {
+      const readings = this.senseAssignment().readingsOf.get(word);
+      if (readings === undefined || readings.length < 2) return 0;
+      const bank = this.session.observer.getMemoryBank();
+      const existing = new Set(
+        bank
+          .all()
+          .filter((trace) => trace.metadata?.kind === 'sense' && trace.metadata.surface === word)
+          .map((trace) => String(trace.metadata.senseKey ?? ''))
+      );
+      const assignment = this.senseAssignment();
+      let stored = 0;
+      for (const reading of readings) {
+        if (existing.has(reading.key)) continue;
+        const signature = assignment.signatures[reading.key] ?? [];
+        if (signature.length === 0) continue;
+        this.session.settleField();
+        this.session.observer.processInput(signature, 0.5);
+        this.session.observer.tick(0.02);
+        const state = this.tryState(word);
+        const definition = reading.index === 1 && state !== null ? state.word.definition : reading.reading;
+        const example = reading.index === 1 && state !== null ? state.word.example : '';
+        const lesson = lessonText({ word: reading.key, definition, example });
+        const trace = this.session.storeMemory(lesson, {
+          metadata: { kind: 'sense', surface: word, senseKey: reading.key, index: reading.index }
+        });
+        if (trace !== null) {
+          existing.add(reading.key);
+          stored += 1;
+        }
+      }
+      return stored;
     }
 
     /**

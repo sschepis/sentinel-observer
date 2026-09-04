@@ -75,6 +75,26 @@ export function primeSignature(word: string, primeSpace: readonly number[] = PRI
 }
 
 /**
+ * F.2 SENSE SIGNATURES (§7.2) — one four-prime signature per SENSE of a
+ * polysemous surface word (bank#1, bank#2). Derived from a keyed string that
+ * includes the sense index, so the surface word's own signature — and every
+ * legacy vocabulary entry — stays byte-identical. `salt` escalates for
+ * collision-avoidance exactly like the deck builder's salts, so a caller
+ * that reserves existing signatures can mint unique sense signatures.
+ */
+export function sensePrimeSignature(
+  word: string,
+  senseIndex: number,
+  primeSpace: readonly number[] = PRIME_SPACE,
+  salt = 0
+): number[] {
+  const key = salt === 0
+    ? `sense:${senseIndex}:${word.toLowerCase()}`
+    : `${salt}:sense:${senseIndex}:${word.toLowerCase()}`;
+  return primeSignature(key, primeSpace);
+}
+
+/**
  * Vocabulary table for a deck: word -> its prime signature.
  *
  * Collision-aware: when two words hash to the same signature, the later

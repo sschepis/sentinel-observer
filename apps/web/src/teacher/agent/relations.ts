@@ -43,15 +43,6 @@ import {
   RelationalHologram
 } from '@sschepis/sentient-core';
 import {
-  technicalRelations
-} from '../technical';
-import {
-  SUPPLEMENTAL_RELATIONS
-} from '../decks/relationSupplements';
-import {
-  GROUNDED_FACTS_RELATIONS
-} from '../decks/groundedFacts';
-import {
   tokenizeText,
   singularize
 } from '../context';
@@ -60,6 +51,14 @@ import {
   edgeKey,
   READING_WORD_BUDGET
 } from './support';
+import {
+  authoredRelationPool,
+  assignSenses,
+  splitRelationsBySense,
+  signatureKey,
+  type SenseAssignment
+} from '../senseModel';
+import { PRIME_SPACE } from '../primeSignature';
 
 export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
   return class RelationsFaculty extends Base {
@@ -69,6 +68,8 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      *  corpus index — it is derived from the taught states like the graph. */
     invalidateRelations(): void {
       this.relationsCache = null;
+      this.unsplitRelationsCache = null;
+      this.senseAssignmentCache = null;
       this.exampleIndex = null;
     }
 
@@ -77,14 +78,12 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      * grounded-facts supplements, filtered to words the observer knows (memory
      * is the source of truth for what exists) and with the curriculum-only
      * 'special-case-of' folded into 'is-a' so inheritance walks it. Shared by
-     * relations() and applyRelations() so both merge the identical pool.
+     * relations() and applyRelations() so both merge the identical pool —
+     * and by senseModel.ts so an externally-minted sense assignment matches
+     * the graph the teacher derives.
      */
     protected authoredRelationPool(): Relation[] {
-      return [...technicalRelations(), ...SUPPLEMENTAL_RELATIONS, ...GROUNDED_FACTS_RELATIONS]
-        .filter((relation) => this.knownWords.has(relation.subject) && this.knownWords.has(relation.object))
-        .map((relation): Relation => relation.predicate === 'special-case-of'
-          ? { ...relation, predicate: 'is-a' }
-          : relation);
+      return authoredRelationPool(this.knownWords);
     }
 
     /**
@@ -254,12 +253,17 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      * ingredients. The confidence overlay and hidden-edge gate are applied
      * here so every caller (fresh read or post-ingest reseed) derives the
      * graph identically.
+     *
+     * F.2 SENSE SPLIT: with the flag on, the merged (surface-word) graph is
+     * kept as the UNSPlit view and the served graph is REWRITTEN so edges
+     * live on sense nodes — the hologram below then binds the split graph
+     * too, and chain walks run over sense nodes without crossing senses.
      */
     protected buildRelationsCache(extracted: readonly Relation[], authored: readonly Relation[]): Relation[] {
       // Provenance priority on ties: regex > authored > chaperone. Chaperone
       // edges that CONFLICTED with a regex edge were already diverted to
       // beliefs in applyRelations, so what lands here is agreed or new.
-      this.relationsCache = mergeRelations(extracted, authored, this.chaperoneRelations)
+      let merged = mergeRelations(extracted, authored, this.chaperoneRelations)
         // P14: corroboration rides the derived graph — every edge carries its
         // source classes (its origin class + the accumulated independent
         // evidence: agreeing chaperone edges, mined conversation evidence,
@@ -282,11 +286,15 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // P12 held-out gate: hidden edges leave the SYMBOLIC graph only — the
       // loose hologram below still binds them, so graded recovery works.
       if (this.hiddenRelationKeys !== null && this.hiddenRelationKeys.size > 0) {
-        this.relationsCache = this.relationsCache.filter(
+        merged = merged.filter(
           (relation) =>
             !this.hiddenRelationKeys!.has(edgeKey(relation.subject, relation.predicate, relation.object))
         );
       }
+      this.unsplitRelationsCache = merged;
+      this.relationsCache = this.senseSplit
+        ? splitRelationsBySense(merged, this.senseAssignmentFor(merged))
+        : merged;
       // M5 (22.2): refresh the HYPOTHESIS tier — loose-extraction edges the
       // precision graph intentionally drops become standing hypotheses, ready
       // for corroboration-driven promotion.
@@ -295,15 +303,54 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       return this.relationsCache;
     }
 
+    /**
+     * F.2: the sense assignment the split runs on — the caller's override
+     * when one was minted (the bench pre-builds the session vocabulary from
+     * the SAME assignment so the two agree by construction), else derived
+     * from the unsplit graph with the bank's stored signatures reserved
+     * (a sense node never shares its four-prime set with a stored trace).
+     */
+    protected senseAssignmentFor(unsplit: readonly Relation[]): SenseAssignment {
+      if (this.senseAssignmentOverride !== null) return this.senseAssignmentOverride;
+      if (this.senseAssignmentCache === null) {
+        const reserved = new Set<string>();
+        for (const trace of this.session.observer.getMemoryBank().all()) {
+          if (trace.primes.length > 0) reserved.add(signatureKey(trace.primes));
+        }
+        this.senseAssignmentCache = assignSenses(unsplit, PRIME_SPACE, reserved);
+      }
+      return this.senseAssignmentCache;
+    }
+
+    /** The sense assignment this agent splits on (override or derived). */
+    senseAssignment(): SenseAssignment {
+      this.ensureRelationsBuilt();
+      return this.senseAssignmentFor(this.unsplitRelationsCache as Relation[]);
+    }
+
     /** Typed edges decomposed from the deck definitions (is-a, has-part, ...). */
     relations(): Relation[] {
+      this.ensureRelationsBuilt();
+      return this.relationsCache as Relation[];
+    }
+
+    /** The UNSPlit relation graph — the surface-word view the pre-split
+     *  observer held, and the measurement surface the polysemy probe bench
+     *  derives its exposed population from. */
+    unsplitRelations(): Relation[] {
+      this.ensureRelationsBuilt();
+      return this.unsplitRelationsCache as Relation[];
+    }
+
+    /** Build the relation caches lazily (both the served view and the
+     *  unsplit view are populated by the one build). */
+    protected ensureRelationsBuilt(): void {
       if (this.relationsCache === null) {
         const extracted = extractRelations(
           [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
         );
-        return this.buildRelationsCache(extracted, this.authoredRelationPool());
+        this.buildRelationsCache(extracted, this.authoredRelationPool());
       }
-      return this.relationsCache;
     }
 
     /**
@@ -379,6 +426,10 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
         const key = edgeKey(relation.subject, relation.predicate, relation.object);
         if (assertedKeys.has(key) || known.has(key)) continue;
         if (this.negations.some((n) => n.subject === relation.subject && n.predicate === relation.predicate && n.object === relation.object)) continue;
+        // F.2: with the sense split on, edges of sense-split words live on
+        // sense nodes — a surface-word hypothesis would re-merge the senses
+        // the split just separated.
+        if (this.senseSplit && this.senseAssignment().readingsOf.has(relation.subject)) continue;
         known.add(key);
         this.hypothesisEdges.push({ ...relation, tier: 'hypothesis' });
       }

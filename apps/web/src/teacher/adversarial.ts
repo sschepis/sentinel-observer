@@ -87,17 +87,28 @@ export function assertsDefinitionOf(response: string, subject: string): boolean 
  * words that are NOT the subject, NOT in its is-a closure (is-a would
  * truthfully answer yes), NOT known parts of its closure (has-part would
  * truthfully answer yes), and NOT its made-of materials.
+ *
+ * SENSE SPLIT (§7.2 / F.2): when `senses` is provided (the subject's sense
+ * nodes over a split graph), the closure is computed PER SENSE — the union
+ * of each sense node's own is-a closure — instead of the merged surface
+ * closure. The excluded set is the same union the merged closure produced
+ * (every parent belongs to SOME sense), but it is now justified per sense:
+ * a cross-sense parent is still excluded because its OWN sense truthfully
+ * answers yes, so the selector never probes a truthful claim.
  */
 export function negativeTargetsFor(
   subject: string,
   relations: readonly Relation[],
   deckContentWords: readonly string[],
-  count: number
+  count: number,
+  senses?: readonly { key: string }[]
 ): string[] {
   // Transitive is-a closure via a work queue — a snapshot loop would only
   // walk one level and let ancestors leak into the negative pool.
   const closure = new Set<string>([subject]);
-  const queue = [subject];
+  const roots = senses !== undefined && senses.length > 0 ? senses.map((s) => s.key) : [subject];
+  const queue = [...roots];
+  for (const root of roots) closure.add(root);
   while (queue.length > 0) {
     const word = queue.pop() as string;
     for (const relation of relations) {

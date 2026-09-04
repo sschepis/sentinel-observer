@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * POLYSEMY BENCH (§7.1 / §7.5) — size the cross-sense fabrication path.
+ * POLYSEMY BENCH (§7.1 / §7.5, Phase F.1/F.2) — size the cross-sense
+ * fabrication path, BEFORE and AFTER the sense split.
  *
  * §7.1 proposes that a word whose relation graph carries is-a parents from
  * more than one sense (e.g. 'bank' → institution AND slope) can answer
@@ -12,8 +13,17 @@
  * available (`public/bootstrap.json`), and falls back to a small, local deck
  * of real polysemous words when it is not. The probe set is DERIVED from the
  * relation graph (wordsWithUnrelatedIsAParents / crossSenseProbesFor), never
- * hand-written. The printed count of confident cross-sense "Yes" answers is
- * the size of the exposure.
+ * hand-written. Two passes run in one invocation:
+ *
+ *   1. BEFORE (§7.1, the merged-sense era) — the default teacher. The
+ *      printed count of confident cross-sense "Yes" answers is the size of
+ *      the exposure.
+ *   2. AFTER (§7.2, senseSplit ON) — each reading gets its own sense node
+ *      with its own four-prime signature; the surface word excites the
+ *      union at split amplitude; the same probes must produce 0 confident
+ *      cross-sense answers, with a disambiguating ask where context is
+ *      absent (the §2 instrument: recall over the sense candidates is
+ *      bimodal → 'disambiguate').
  *
  * Usage: npx tsx src/cli/polysemy-bench.ts [record.json]
  */
@@ -31,6 +41,13 @@ import {
   isAParentsOf,
   isAQuestion
 } from '../teacher/polysemyProbes';
+import {
+  assignSenses,
+  mergedGraphFor,
+  reservedSignatureKeys,
+  senseVocabulary,
+  type SenseAssignment
+} from '../teacher/senseModel';
 import type { Relation } from '../teacher/relations';
 import type { DeckWord } from '../teacher/deck';
 
@@ -65,25 +82,43 @@ const LOCAL_CHAPERONE_SENSES: readonly Relation[] = [
   { subject: 'crane', predicate: 'is-a', object: 'machine', source: 'a machine that lifts and moves heavy things', origin: 'chaperone' }
 ];
 
-/**
- * The measurement itself: derive the probe set from the graph, run every
- * cross-sense probe through chatAnswer, and classify each answer as a
- * confident "Yes" (the exposure) or hedged. A parent is a CROSS-SENSE parent
- * when its origin is not 'regex' (i.e. the word's definitional gloss) — those
- * are the "other senses" §7.1 is about (chaperone-supplied edges, plus any
- * authored supplement that lands in an unrelated closure).
- */
-function measure(teacher: TeacherAgent): {
+const LOCAL_BOOTSTRAP_RECORD: BootstrapRecord = {
+  version: BOOTSTRAP_VERSION,
+  vocabularyScheme: BOOTSTRAP_VOCABULARY_SCHEME,
+  deck: 'polysemy-probe',
+  generatedAt: new Date().toISOString(),
+  source: { words: LOCAL_DECK.map((d) => d.word), conversation: false, definitionsFilled: true },
+  traces: [],
+  wordStates: [],
+  definitions: LOCAL_DECK.map((d) => ({ word: d.word, definition: d.definition, example: d.example })),
+  relations: LOCAL_CHAPERONE_SENSES.map((r) => ({ ...r }))
+};
+
+interface Measurement {
   exposed: string[];
   crossSenseConfidentYes: number;
   confidentlyMultiSense: string[];
-} {
-  const relations = teacher.relations();
+  disambiguatingAsks: number;
+  confidentYesTotal: number;
+}
+
+/**
+ * The measurement itself: derive the probe set from the UNSPlit graph (the
+ * surface-word view both eras share), run every cross-sense probe through
+ * chatAnswer, and classify each answer as a confident "Yes" (the exposure),
+ * a hedged answer, or a disambiguating ask. A parent is a CROSS-SENSE
+ * parent when its origin is not 'regex' (i.e. the word's definitional
+ * gloss) — those are the "other senses" §7.1 is about.
+ */
+function measure(teacher: TeacherAgent, title: string): Measurement {
+  const relations = teacher.unsplitRelations();
   const exposed = wordsWithUnrelatedIsAParents(relations);
 
   let crossSenseConfidentYes = 0;
+  let disambiguatingAsks = 0;
+  let confidentYesTotal = 0;
   const confidentlyMultiSense: string[] = [];
-  const rows: string[] = [];
+  console.log(`\n-- ${title} --`);
   for (const word of exposed) {
     const parents = isAParentsOf(relations, word);
     let wordConfident = 0;
@@ -96,62 +131,119 @@ function measure(teacher: TeacherAgent): {
       const confident = claimsRelationalYes(answer);
       if (confident) {
         wordConfident += 1;
+        confidentYesTotal += 1;
         if (origin !== 'regex') crossSenseConfidentYes += 1;
       }
       const spoken = 'response' in answer ? answer.response : '';
-      rows.push(`${probe.padEnd(34)} [${origin ?? '?'}] -> [${answer.mode}] ${spoken}`);
+      if (answer.mode === 'ask' && /^Do you mean /.test(spoken)) disambiguatingAsks += 1;
+      console.log(`  ${probe.padEnd(34)} [${origin ?? '?'}] -> [${answer.mode}] ${spoken}`);
     }
     if (wordConfident >= 2) confidentlyMultiSense.push(word);
   }
-  for (const row of rows) console.log(`  ${row}`);
-  return { exposed, crossSenseConfidentYes, confidentlyMultiSense };
+  return { exposed, crossSenseConfidentYes, confidentlyMultiSense, disambiguatingAsks, confidentYesTotal };
+}
+
+function report(measurement: Measurement, split: boolean): void {
+  console.log(`\nwords with unrelated is-a parents: ${measurement.exposed.length}`);
+  if (split) {
+    console.log(`confident cross-sense "Yes" answers after the sense split: ${measurement.crossSenseConfidentYes}`);
+    console.log(`confident "Yes" answers total (all senses): ${measurement.confidentYesTotal}`);
+    console.log(`disambiguating asks (context absent): ${measurement.disambiguatingAsks}`);
+    console.log(`words confidently asserted under TWO unrelated senses: ${measurement.confidentlyMultiSense.length}${measurement.confidentlyMultiSense.length > 0 ? ` — ${measurement.confidentlyMultiSense.join(', ')}` : ''}`);
+    console.log(`\n§7.2 after-split: ${measurement.crossSenseConfidentYes === 0 ? 'PASS — 0 confident cross-sense answers' : `FAIL — exposure remains ${measurement.crossSenseConfidentYes}`}`);
+  } else {
+    console.log(`confident cross-sense "Yes" answers (size of the exposure): ${measurement.crossSenseConfidentYes}`);
+    console.log(`words confidently asserted under TWO unrelated senses: ${measurement.confidentlyMultiSense.length}${measurement.confidentlyMultiSense.length > 0 ? ` — ${measurement.confidentlyMultiSense.join(', ')}` : ''}`);
+    console.log(`\n§7.1: ${measurement.crossSenseConfidentYes === 0 ? 'NOT confirmed — the merged-sense path is hedged, not confident, for this record' : `CONFIRMED — exposure size ${measurement.crossSenseConfidentYes}`}`);
+  }
+}
+
+/** The after-split assignment, minted over the same merged graph the
+ *  teacher derives and reserved against the deployed vocabulary — so the
+ *  session vocabulary and the teacher's split agree by construction. */
+function assignmentFor(relations: readonly Relation[], vocabulary: Readonly<Record<string, readonly number[]>>): SenseAssignment {
+  return assignSenses(relations, PRIME_SPACE, reservedSignatureKeys(vocabulary));
 }
 
 async function benchShippedRecord(path: string): Promise<void> {
   console.log(`\n=== ${path} — full shipped record ===`);
   const record = JSON.parse(readFileSync(path, 'utf8')) as BootstrapRecord;
-  const session = new ObserverSession(OBSERVER_OPTIONS, 100);
-  await session.initialize();
-  const teacher = new TeacherAgent(session, ACTIVE_DECK, null, 1, 0, 7);
-  const imported = teacher.importBootstrap(record);
-  console.log(`restored ${imported.restored} traces, ${imported.definitions} definitions`);
 
-  const { exposed, crossSenseConfidentYes, confidentlyMultiSense } = measure(teacher);
-  console.log(`\nwords with unrelated is-a parents: ${exposed.length}`);
-  console.log(`confident cross-sense "Yes" answers (size of the exposure): ${crossSenseConfidentYes}`);
-  console.log(`words confidently asserted under TWO unrelated senses: ${confidentlyMultiSense.length}${confidentlyMultiSense.length > 0 ? ` — ${confidentlyMultiSense.join(', ')}` : ''}`);
-  console.log(`\n§7.1: ${crossSenseConfidentYes === 0 ? 'NOT confirmed — the merged-sense path is hedged, not confident, for this record' : `CONFIRMED — exposure size ${crossSenseConfidentYes}`}`);
-  session.dispose();
+  // ── BEFORE: the merged-sense era (§7.1 exposure) ────────────────────────
+  {
+    const session = new ObserverSession(OBSERVER_OPTIONS, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, ACTIVE_DECK, null, 1, 0, 7);
+    const imported = teacher.importBootstrap(record);
+    console.log(`restored ${imported.restored} traces, ${imported.definitions} definitions`);
+    report(measure(teacher, 'BEFORE sense split (§7.1 merged-sense era)'), false);
+    session.dispose();
+  }
+
+  // ── AFTER: the sense split (§7.2, senseSplit ON) ─────────────────────────
+  {
+    const known = new Set(ACTIVE_DECK.map((entry) => entry.word));
+    const assignment = assignmentFor(
+      mergedGraphFor(record.definitions, known, record.relations ?? []),
+      OBSERVER_OPTIONS.vocabulary
+    );
+    const session = new ObserverSession(
+      { ...OBSERVER_OPTIONS, vocabulary: senseVocabulary(OBSERVER_OPTIONS.vocabulary, assignment) },
+      100
+    );
+    await session.initialize();
+    const teacher = new TeacherAgent(session, ACTIVE_DECK, null, 1, 0, 7, undefined, undefined, undefined, false, { assignment });
+    teacher.importBootstrap(record);
+    // Split deployment over a merged-era record: re-teach one trace PER SENSE
+    // for the exposed words (the record's word traces live on the surface).
+    const exposed = wordsWithUnrelatedIsAParents(mergedGraphFor(record.definitions, known, record.relations ?? []));
+    let stored = 0;
+    for (const word of exposed) stored += teacher.ensureSenseTraces(word);
+    console.log(`split deployment: ${stored} sense traces re-taught over ${exposed.length} exposed words`);
+    report(measure(teacher, 'AFTER sense split (§7.2 senseSplit ON)'), true);
+    session.dispose();
+  }
 }
 
 async function benchLocalDeck(): Promise<void> {
   console.log('\n=== local polysemous deck reproduction (no shipped record) ===');
-  const session = new ObserverSession(
-    { primeCount: 64, gridSize: 128, memoryMode: 'compact', smfWidth: 128, vocabulary: deckVocabulary(LOCAL_DECK, PRIME_SPACE) },
-    100
+  const localGraph = mergedGraphFor(
+    LOCAL_DECK.map((d) => ({ word: d.word, definition: d.definition })),
+    new Set(LOCAL_DECK.map((d) => d.word)),
+    LOCAL_CHAPERONE_SENSES
   );
-  await session.initialize();
-  const teacher = new TeacherAgent(session, LOCAL_DECK);
-  for (const entry of LOCAL_DECK) teacher.teach(entry.word);
-  const record: BootstrapRecord = {
-    version: BOOTSTRAP_VERSION,
-    vocabularyScheme: BOOTSTRAP_VOCABULARY_SCHEME,
-    deck: 'polysemy-probe',
-    generatedAt: new Date().toISOString(),
-    source: { words: LOCAL_DECK.map((d) => d.word), conversation: false, definitionsFilled: true },
-    traces: [],
-    wordStates: [],
-    definitions: LOCAL_DECK.map((d) => ({ word: d.word, definition: d.definition, example: d.example })),
-    relations: LOCAL_CHAPERONE_SENSES.map((r) => ({ ...r }))
-  };
-  teacher.importBootstrap(record);
 
-  const { exposed, crossSenseConfidentYes, confidentlyMultiSense } = measure(teacher);
-  console.log(`\nwords with unrelated is-a parents: ${exposed.length}`);
-  console.log(`confident cross-sense "Yes" answers (size of the exposure): ${crossSenseConfidentYes}`);
-  console.log(`words confidently asserted under TWO unrelated senses: ${confidentlyMultiSense.length}${confidentlyMultiSense.length > 0 ? ` — ${confidentlyMultiSense.join(', ')}` : ''}`);
-  console.log(`\n§7.1: ${crossSenseConfidentYes === 0 ? 'NOT confirmed — the merged-sense path is hedged, not confident' : `CONFIRMED — exposure size ${crossSenseConfidentYes}`}`);
-  session.dispose();
+  // ── BEFORE: the merged-sense era (§7.1 exposure) ────────────────────────
+  {
+    const session = new ObserverSession(
+      { primeCount: 64, gridSize: 128, memoryMode: 'compact', smfWidth: 128, vocabulary: deckVocabulary(LOCAL_DECK, PRIME_SPACE) },
+      100
+    );
+    await session.initialize();
+    const teacher = new TeacherAgent(session, LOCAL_DECK);
+    for (const entry of LOCAL_DECK) teacher.teach(entry.word);
+    teacher.importBootstrap(LOCAL_BOOTSTRAP_RECORD);
+    report(measure(teacher, 'BEFORE sense split (§7.1 merged-sense era)'), false);
+    session.dispose();
+  }
+
+  // ── AFTER: the sense split (§7.2, senseSplit ON) ─────────────────────────
+  {
+    const baseVocabulary = deckVocabulary(LOCAL_DECK, PRIME_SPACE);
+    const assignment = assignmentFor(localGraph, baseVocabulary);
+    const session = new ObserverSession(
+      { primeCount: 64, gridSize: 128, memoryMode: 'compact', smfWidth: 128, vocabulary: senseVocabulary(baseVocabulary, assignment) },
+      100
+    );
+    await session.initialize();
+    const teacher = new TeacherAgent(session, LOCAL_DECK, null, 1, 0, 7, undefined, undefined, undefined, false, { assignment });
+    // Import the chaperone senses FIRST so teach sees the split and stores
+    // one trace per sense (the split-era teaching order).
+    teacher.importBootstrap(LOCAL_BOOTSTRAP_RECORD);
+    for (const entry of LOCAL_DECK) teacher.teach(entry.word);
+    report(measure(teacher, 'AFTER sense split (§7.2 senseSplit ON)'), true);
+    session.dispose();
+  }
 }
 
 async function main(): Promise<void> {
