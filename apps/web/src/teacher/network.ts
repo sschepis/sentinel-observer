@@ -11,6 +11,15 @@
  * fields settle, and they answer again. Rounds continue until the responses
  * resonate (max pairwise agreement) or the cavity stops narrowing.
  *
+ * §4.5: agreement is measured over the CITED EDGE SETS of grounded answers
+ * (Jaccard over the P6 provenance edges) alongside token overlap; when at
+ * least two members cite edges, the edge signal gates agreement and the
+ * resonance rounds stop when the edge distribution's entropy stops falling.
+ * §3.4: a settled answer is stored as a network-agreement trace (settled
+ * answer + cited edges + contributing members) via a member teacher's
+ * memory, so the next identical cue recalls the council's own prior
+ * agreement with rounds = 0.
+ *
  * Network honesty: a grounded answer (memorized/operator — computed from a
  * member's own memory) is accepted from ANY single member — specialization
  * means one domain expert answers where the others abstain. Creative
@@ -18,7 +27,7 @@
  * members (collective composition); with no agreement, an abstaining member
  * makes the network ask. The network never fabricates a consensus.
  */
-import { TeacherAgent } from './TeacherAgent';
+import { TeacherAgent, type EdgeRef } from './TeacherAgent';
 import { tokenizeText, isContentWord } from './context';
 import { readCde, type CdeReading } from './cde';
 
@@ -32,6 +41,12 @@ export interface CouncilMemberVerdict {
   mode: string;
   response: string;
   confidence: number | null;
+  /**
+   * §4.5: the typed edges this answer cited (from ChatAnswer provenance).
+   * Grounded answers (memorized/operator) carry their cited edges; composed
+   * (creative) and ask answers cite none — visibly weaker agreement evidence.
+   */
+  citedEdges: EdgeRef[];
 }
 
 export interface CouncilResult {
@@ -50,6 +65,21 @@ export interface CouncilResult {
   contributors: string[];
   /** Entropy at round 0 (before any resonance). */
   entropyRoundZero: number;
+  /** §4.5: max pairwise Jaccard agreement over the members' cited-edge
+   *  sets (0..1). Computed alongside the token agreement; empty edge sets
+   *  are skipped, so composed answers cannot raise it. */
+  edgeAgreement: number;
+  /** §4.5: true when at least two members cited edges — the edge signal
+   *  gated this outcome instead of the token signal. */
+  edgeGated: boolean;
+  /** §4.5: Shannon entropy (bits) of the cited-edge distribution at the
+   *  final round — the edge-based version of the black-body meter. */
+  edgeEntropy: number;
+  /** Edge-distribution entropy at round 0 (before any resonance). */
+  edgeEntropyRoundZero: number;
+  /** §3.4: true when this result was recalled from a stored
+   *  network-agreement trace instead of a live council round. */
+  recalledFromTrace?: boolean;
   /**
    * §2 candidate-distribution entropy over the members' answers — H̃, the
    * top-two margin, and the regime, read from each member's answer
@@ -102,8 +132,13 @@ function responseEntropy(responses: readonly string[]): number {
   return total === 0 ? 0 : entropy;
 }
 
+/** The stable identity key of a cited edge (same scheme as P8). */
+export function edgeKeyOf(edge: EdgeRef): string {
+  return `${edge.subject}\u0000${edge.predicate}\u0000${edge.object}`;
+}
+
 /** Max pairwise token-overlap agreement across the members' responses. */
-function maxPairwiseAgreement(verdicts: readonly CouncilMemberVerdict[]): number {
+export function maxPairwiseTokenAgreement(verdicts: readonly CouncilMemberVerdict[]): number {
   let best = 0;
   for (let i = 0; i < verdicts.length; i += 1) {
     for (let j = i + 1; j < verdicts.length; j += 1) {
@@ -116,6 +151,84 @@ function maxPairwiseAgreement(verdicts: readonly CouncilMemberVerdict[]): number
     }
   }
   return best;
+}
+
+/**
+ * §4.5: max pairwise Jaccard agreement over the members' cited-edge sets.
+ * Two grounded answers agree when they cite the SAME edges — token strings
+ * are irrelevant. Pairs where either member cites no edges are skipped: a
+ * composed answer (no edges) is weaker evidence and cannot raise the score.
+ */
+export function maxPairwiseEdgeAgreement(verdicts: readonly CouncilMemberVerdict[]): number {
+  let best = 0;
+  for (let i = 0; i < verdicts.length; i += 1) {
+    for (let j = i + 1; j < verdicts.length; j += 1) {
+      const a = new Set(verdicts[i].citedEdges.map(edgeKeyOf));
+      const b = new Set(verdicts[j].citedEdges.map(edgeKeyOf));
+      if (a.size === 0 || b.size === 0) continue;
+      let intersection = 0;
+      for (const key of a) if (b.has(key)) intersection += 1;
+      const union = a.size + b.size - intersection;
+      best = Math.max(best, union === 0 ? 0 : intersection / union);
+    }
+  }
+  return best;
+}
+
+/** How many members cited at least one edge (the §4.5 gate condition). */
+export function edgeCitingMembers(verdicts: readonly CouncilMemberVerdict[]): number {
+  return verdicts.filter((v) => v.citedEdges.length > 0).length;
+}
+
+/** §4.5: Shannon entropy (bits) of the cited-edge distribution across the
+ *  members' answers — the edge-based version of the response-entropy meter.
+ *  An agreeing council concentrates its citations; disagreement spreads them. */
+export function edgeDistributionEntropy(verdicts: readonly CouncilMemberVerdict[]): number {
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const verdict of verdicts) {
+    for (const edge of verdict.citedEdges) {
+      const key = edgeKeyOf(edge);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      total += 1;
+    }
+  }
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / total;
+    entropy -= p * Math.log2(p);
+  }
+  return total === 0 ? 0 : entropy;
+}
+
+/** The two agreement signals read together: token overlap and cited-edge
+ *  Jaccard, plus whether the edge signal is live (≥2 members cite edges). */
+export interface AgreementReading {
+  /** Max pairwise token-overlap agreement (the pre-§4.5 signal). */
+  token: number;
+  /** Max pairwise Jaccard agreement over cited-edge sets. */
+  edge: number;
+  /** True when at least two members cited edges. */
+  edgeGated: boolean;
+  /** How many members cited at least one edge. */
+  edgeCiting: number;
+}
+
+export function agreementReading(verdicts: readonly CouncilMemberVerdict[]): AgreementReading {
+  const edgeCiting = edgeCitingMembers(verdicts);
+  return {
+    token: maxPairwiseTokenAgreement(verdicts),
+    edge: maxPairwiseEdgeAgreement(verdicts),
+    edgeGated: edgeCiting >= 2,
+    edgeCiting
+  };
+}
+
+/** The agreement signal that gates this round: the cited-edge Jaccard when
+ *  at least two members cite edges, else the token overlap (both are kept;
+ *  edges are preferred when present). */
+export function gatedAgreement(reading: AgreementReading, useEdgeAgreement: boolean): number {
+  return useEdgeAgreement && reading.edgeGated ? reading.edge : reading.token;
 }
 
 const GROUNDED_MODES = new Set(['memorized', 'operator']);
@@ -149,6 +262,13 @@ export class ObserverNetwork {
   private readonly goalPreference: NetworkGoalPreference = { completed: {}, abandoned: {} };
   /** Recurring abstention promotion threshold (misses before a goal forms). */
   private readonly goalMissThreshold: number;
+  /** §4.5: gate agreement on the cited-edge signal when ≥2 members cite
+   *  edges, instead of token overlap. Both signals are always computed;
+   *  this flag only selects which one gates. */
+  private readonly useEdgeAgreement: boolean;
+  /** §3.4: cue keys whose settled agreement is already stored as a
+   *  network-agreement trace (in-session dedup of second-order traces). */
+  private readonly storedAgreementCues = new Set<string>();
 
   constructor(
     private readonly members: CouncilMember[],
@@ -156,11 +276,13 @@ export class ObserverNetwork {
     private readonly agreementThreshold = 0.6,
     private readonly trustGain = 0.2,
     private readonly trustPenalty = 0.1,
-    goalMissThreshold = 2
+    goalMissThreshold = 2,
+    useEdgeAgreement = true
   ) {
     if (members.length < 2) throw new Error('ObserverNetwork requires at least 2 members');
     for (const member of members) this.trust[member.name] = 0.5;
     this.goalMissThreshold = Math.max(1, goalMissThreshold);
+    this.useEdgeAgreement = useEdgeAgreement;
   }
 
   /** The learned trust per member (read-only snapshot). */
@@ -251,11 +373,19 @@ export class ObserverNetwork {
   private askAll(utterance: string): CouncilMemberVerdict[] {
     return this.members.map((member) => {
       const answer = member.teacher.chatAnswer(utterance);
+      // §4.5: grounded answers carry the edges they cited (P6 provenance);
+      // composed (creative) and ask answers cite none — composed agreement
+      // is weaker evidence than grounded agreement, by construction.
+      const citedEdges =
+        answer.mode === 'memorized' || answer.mode === 'operator'
+          ? (answer.provenance.edges ?? [])
+          : [];
       return {
         name: member.name,
         mode: answer.mode,
         response: 'response' in answer ? (answer.response ?? answer.mode) : `(${answer.mode})`,
-        confidence: 'confidence' in answer ? answer.confidence ?? null : null
+        confidence: 'confidence' in answer ? answer.confidence ?? null : null,
+        citedEdges
       };
     });
   }
@@ -277,9 +407,18 @@ export class ObserverNetwork {
    * deviation meter of the network.
    */
   respond(utterance: string): CouncilResult {
+    // §3.4 NETWORK TRACE: the network's own prior agreement on the exact
+    // utterance settles before any member is asked — the council recalls
+    // its own settled answer instead of re-running resonance rounds.
+    const recalled = this.recallNetworkTrace(utterance);
+    if (recalled !== null) return recalled;
+
     let verdicts = this.askAll(utterance);
     const entropyRoundZero = responseEntropy(verdicts.map((v) => v.response));
-    let agreement = maxPairwiseAgreement(verdicts);
+    const edgeEntropyRoundZero = edgeDistributionEntropy(verdicts);
+    let reading = agreementReading(verdicts);
+    let agreement = gatedAgreement(reading, this.useEdgeAgreement);
+    let edgeEntropy = edgeEntropyRoundZero;
     let rounds = 0;
 
     // A grounded answer from ANY member settles the question — the domain
@@ -303,17 +442,23 @@ export class ObserverNetwork {
         this.creditGoalPreference('fill-gap', true);
         this.goals.delete(utterance);
       }
-      return {
+      const result: CouncilResult = {
         answer: best.response,
         mode: 'grounded',
         rounds,
         agreement: 1,
         entropy: responseEntropy([best.response]),
         entropyRoundZero,
+        edgeAgreement: reading.edge,
+        edgeGated: reading.edgeGated,
+        edgeEntropy,
+        edgeEntropyRoundZero,
         members: verdicts,
         contributors: [best.name],
         cde: candidateDistributionCde(verdicts)
       };
+      this.storeAgreementTrace(utterance, result);
+      return result;
     }
 
     // No grounded voice: the council must resonate — UNLESS everyone
@@ -350,6 +495,10 @@ export class ObserverNetwork {
         agreement: 1,
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
+        edgeAgreement: reading.edge,
+        edgeGated: reading.edgeGated,
+        edgeEntropy,
+        edgeEntropyRoundZero,
         members: verdicts,
         contributors: [],
         cde: candidateDistributionCde(verdicts)
@@ -363,18 +512,24 @@ export class ObserverNetwork {
     this.registerAbstention(utterance, false);
 
     // Members observe each other until their responses resonate, the rounds
-    // run out, or everyone has abstained.
+    // run out, everyone has abstained, or the edge distribution's entropy
+    // stops falling (§4.5 — when the edge signal is live).
     let result: CouncilResult | null = null;
     while (rounds < this.maxRounds && agreement < this.agreementThreshold) {
       verdicts = this.resonanceRound(utterance, verdicts);
       rounds += 1;
-      agreement = maxPairwiseAgreement(verdicts);
+      reading = agreementReading(verdicts);
+      agreement = gatedAgreement(reading, this.useEdgeAgreement);
+      const nextEdgeEntropy = edgeDistributionEntropy(verdicts);
+      const previousEdgeEntropy = edgeEntropy;
+      edgeEntropy = nextEdgeEntropy;
       if (verdicts.every((v) => v.mode === 'ask')) break;
       if (agreement >= this.agreementThreshold) break;
+      if (this.useEdgeAgreement && reading.edgeGated && nextEdgeEntropy >= previousEdgeEntropy) break;
     }
 
     const abstainers = verdicts.filter((v) => v.mode === 'ask' && v.response.trim().length > 0);
-    const cluster = agreement >= this.agreementThreshold ? this.agreeingCluster(verdicts, agreement) : null;
+    const cluster = agreement >= this.agreementThreshold ? this.agreeingCluster(verdicts, reading) : null;
     const clusterIsAbstention = cluster !== null && cluster.every((v) => v.mode === 'ask');
     if (cluster !== null && !clusterIsAbstention) {
       // The cavity resonated: the agreeing cluster is the integrated response.
@@ -400,10 +555,15 @@ export class ObserverNetwork {
         agreement,
         entropy: responseEntropy(cluster.map((v) => v.response)),
         entropyRoundZero,
+        edgeAgreement: reading.edge,
+        edgeGated: reading.edgeGated,
+        edgeEntropy,
+        edgeEntropyRoundZero,
         members: verdicts,
         contributors: cluster.map((v) => v.name),
         cde: candidateDistributionCde(verdicts)
       };
+      this.storeAgreementTrace(utterance, result);
     } else if (abstainers.length > 0) {
       // No consensus and someone is honest about not knowing — the network
       // asks rather than fabricating a consensus.
@@ -414,6 +574,10 @@ export class ObserverNetwork {
         agreement,
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
+        edgeAgreement: reading.edge,
+        edgeGated: reading.edgeGated,
+        edgeEntropy,
+        edgeEntropyRoundZero,
         members: verdicts,
         contributors: [],
         cde: candidateDistributionCde(verdicts)
@@ -430,6 +594,10 @@ export class ObserverNetwork {
         agreement,
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
+        edgeAgreement: reading.edge,
+        edgeGated: reading.edgeGated,
+        edgeEntropy,
+        edgeEntropyRoundZero,
         members: verdicts,
         contributors: [],
         cde: candidateDistributionCde(verdicts)
@@ -438,28 +606,142 @@ export class ObserverNetwork {
     return result;
   }
 
-  private agreeingCluster(verdicts: CouncilMemberVerdict[], agreement: number): CouncilMemberVerdict[] {
-    // The highest-similarity pair defines the consensus; members whose
-    // response matches either member of the pair join the integrated answer.
-    let best: [CouncilMemberVerdict, CouncilMemberVerdict] | null = null;
+  private agreeingCluster(verdicts: CouncilMemberVerdict[], reading: AgreementReading): CouncilMemberVerdict[] {
+    // The highest-similarity pair defines the consensus under the gated
+    // signal: cited-edge Jaccard when ≥2 members cite edges (§4.5), token
+    // overlap otherwise. Members join the integrated answer when they
+    // match either member of the pair.
+    const edgeMode = this.useEdgeAgreement && reading.edgeGated;
+    const keySets = verdicts.map((v) => new Set(v.citedEdges.map(edgeKeyOf)));
+    const tokenSets = verdicts.map((v) => new Set(tokenizeText(v.response)));
+    let best: [number, number] | null = null;
     let bestScore = 0;
     for (let i = 0; i < verdicts.length; i += 1) {
       for (let j = i + 1; j < verdicts.length; j += 1) {
-        const a = new Set(tokenizeText(verdicts[i].response));
-        const b = new Set(tokenizeText(verdicts[j].response));
-        if (a.size === 0 || b.size === 0) continue;
-        let overlap = 0;
-        for (const token of a) if (b.has(token)) overlap += 1;
-        const score = overlap / Math.max(a.size, b.size);
+        let score = 0;
+        if (edgeMode) {
+          const a = keySets[i];
+          const b = keySets[j];
+          if (a.size === 0 || b.size === 0) continue;
+          let intersection = 0;
+          for (const key of a) if (b.has(key)) intersection += 1;
+          const union = a.size + b.size - intersection;
+          score = union === 0 ? 0 : intersection / union;
+        } else {
+          const a = tokenSets[i];
+          const b = tokenSets[j];
+          if (a.size === 0 || b.size === 0) continue;
+          let overlap = 0;
+          for (const token of a) if (b.has(token)) overlap += 1;
+          score = overlap / Math.max(a.size, b.size);
+        }
         if (score > bestScore) {
           bestScore = score;
-          best = [verdicts[i], verdicts[j]];
+          best = [i, j];
         }
       }
     }
     if (best === null) return [verdicts[0]];
-    const seed = new Set([best[0].response, best[1].response]);
+    const [i, j] = best;
+    if (edgeMode) {
+      // The evidence-based cluster: a member joins when it cites at least
+      // one of the edges the agreeing pair cited — agreement on EVIDENCE,
+      // not on wording. Members citing no edges (composed answers) cannot
+      // join an edge-gated cluster: they are weaker evidence.
+      const seedEdges = new Set([...keySets[i], ...keySets[j]]);
+      return verdicts.filter((v, k) => keySets[k].size > 0 && [...keySets[k]].some((key) => seedEdges.has(key)));
+    }
+    const seed = new Set([verdicts[i].response, verdicts[j].response]);
     return verdicts.filter((v) => seed.has(v.response));
+  }
+
+  /**
+   * §3.4 NETWORK TRACE: the council's settled agreement, remembered.
+   *
+   * After a settled answer (grounded or resonated-composed) the network
+   * stores a second-order trace via a member teacher's memory — the network
+   * observing its own agreement. Content = settled answer + cited edges +
+   * contributing member names; metadata kind 'network-agreement' keyed by
+   * the exact cue, so the next identical cue recalls the agreement instead
+   * of re-running resonance rounds.
+   */
+  private storeAgreementTrace(utterance: string, result: CouncilResult): void {
+    const cue = utterance.trim().toLowerCase();
+    if (cue.length === 0 || this.storedAgreementCues.has(cue)) return;
+    const verdictsByName = new Map(result.members.map((v) => [v.name, v]));
+    const citedEdges = result.contributors.flatMap((name) => verdictsByName.get(name)?.citedEdges ?? []);
+    const edgeLines = citedEdges.map((edge) => `${edge.subject} ${edge.predicate} ${edge.object}`);
+    const content = [result.answer, ...edgeLines, `agreed by ${result.contributors.join(', ')}`]
+      .filter((line) => line.trim().length > 0)
+      .join('\n');
+    // The trace lives in ONE member's memory (the consensus leader's when
+    // it has one); recall scans every member, so any member's memory serves.
+    const owner = this.members.find((m) => m.name === result.contributors[0]) ?? this.members[0];
+    const traceId = owner.teacher.storeNetworkAgreement(cue, content, {
+      answer: result.answer,
+      mode: result.mode,
+      contributors: [...result.contributors],
+      edges: citedEdges,
+      edgeAgreement: result.edgeAgreement,
+      edgeGated: result.edgeGated,
+      edgeEntropy: result.edgeEntropy,
+      edgeEntropyRoundZero: result.edgeEntropyRoundZero
+    });
+    if (traceId !== null) this.storedAgreementCues.add(cue);
+  }
+
+  /** §3.4: look for a stored network agreement on the exact utterance
+   *  across the members' memories; rebuild the settled result (rounds = 0)
+   *  and mirror the settled path's trust/goal side effects. */
+  private recallNetworkTrace(utterance: string): CouncilResult | null {
+    const cue = utterance.trim().toLowerCase();
+    if (cue.length === 0) return null;
+    for (const member of this.members) {
+      const hit = member.teacher.recallNetworkAgreement(cue);
+      if (hit === null) continue;
+      const meta = hit.metadata;
+      const answer = typeof meta.answer === 'string' && meta.answer.trim().length > 0 ? meta.answer : hit.content;
+      const mode: 'grounded' | 'composed' = meta.mode === 'composed' ? 'composed' : 'grounded';
+      const contributors = Array.isArray(meta.contributors)
+        ? meta.contributors.filter((c): c is string => typeof c === 'string')
+        : [];
+      // The recall IS the network's win: contributors are credited and the
+      // settled path's goal side effects repeat (resolution for grounded,
+      // deficit registration + promotion for composed).
+      this.creditTrust(contributors, true);
+      if (mode === 'grounded') {
+        const goal = this.goals.get(utterance);
+        if (goal !== undefined) {
+          this.creditGoalPreference('fill-gap', true);
+          this.goals.delete(utterance);
+        }
+      } else {
+        this.registerAbstention(utterance, false);
+        const goal = this.goals.get(utterance);
+        if (goal !== undefined && goal.misses >= this.goalMissThreshold && !goal.adopted) {
+          goal.adopted = true;
+          goal.active = true;
+        }
+      }
+      const entropy = responseEntropy([answer]);
+      return {
+        answer,
+        mode,
+        rounds: 0,
+        agreement: 1,
+        entropy,
+        entropyRoundZero: entropy,
+        edgeAgreement: typeof meta.edgeAgreement === 'number' ? meta.edgeAgreement : 1,
+        edgeGated: meta.edgeGated === true,
+        edgeEntropy: typeof meta.edgeEntropy === 'number' ? meta.edgeEntropy : 0,
+        edgeEntropyRoundZero: typeof meta.edgeEntropyRoundZero === 'number' ? meta.edgeEntropyRoundZero : 0,
+        members: [],
+        contributors,
+        cde: readCde([]),
+        recalledFromTrace: true
+      };
+    }
+    return null;
   }
 
   /** Names of the members (for reporting). */
