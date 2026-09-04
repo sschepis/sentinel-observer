@@ -45,6 +45,7 @@ import {
 } from './PrimeOscillatorField';
 import type { HebbianOptions } from './HebbianCoupling';
 import { SedenionMemoryField, SMF_DIMENSION, MAX_SMF_WIDTH } from './SedenionMemoryField';
+import { SlowContextField } from './SlowContextField';
 import { SMF_AXES, type SMFAxisIndex } from '../common/types';
 import { HolographicMemory } from './HolographicMemory';
 import {
@@ -142,6 +143,28 @@ export const CLUSTER_MOMENT_DEFAULTS = {
   maxBetweenR: 0.5,
   stabilityTicks: 2
 } as const;
+
+/**
+ * E.2 (§6.2) slow context / priming tuning. See `SlowContextField` for the
+ * exact mechanics. All three values are bounded and validated at
+ * construction; the stability and blend weight are tuning constants
+ * registered in the app's constants registry.
+ */
+export interface SlowContextOptions {
+  /**
+   * Retention stability in TURNS for the one retention law — the per-turn
+   * decay factor is R(1; stabilityTurns) under the FSRS v4 curve (default 2).
+   */
+  stabilityTurns?: number;
+  /**
+   * The slow context's contribution to the recall cue as a fraction of the
+   * cue's magnitude — a bounded direction tilt, clamped to [0, 0.5]
+   * (default 0.15).
+   */
+  blendWeight?: number;
+  /** EMA rate at which a turn's converged excitation integrates (default 0.5). */
+  learningRate?: number;
+}
 
 /** Construction options. */
 export interface SemanticObserverOptions {
@@ -298,6 +321,24 @@ export interface SemanticObserverOptions {
    * PrimeOscillatorFieldOptions.hebbian.
    */
   hebbian?: HebbianOptions;
+  /**
+   * E.2 (§6.2) SLOW CONTEXT / PRIMING (default OFF — the honest control).
+   *
+   * The fast field fully decays within one settle, so nothing of the
+   * previous turn survives to prime the next. When set, a second timescale
+   * is maintained: a context accumulator that integrates the converged
+   * excitation ONCE PER TURN (per settle, never per tick) and decays over
+   * turns under the one retention law at `stabilityTurns`. At recall the
+   * context is blended into the SMF cue as a small, bounded direction tilt
+   * (`blendWeight`), so an ambiguous cue is biased toward the reading the
+   * conversation has been about — priming in the field, before the operator
+   * layers see the question. Storage is untouched: only the recall cue is
+   * blended.
+   *
+   * OFF (`undefined`/`false`) keeps every tick and recall bit-identical to
+   * the unprimed engine.
+   */
+  slowContext?: false | SlowContextOptions;
 }
 
 /** A coherence-driven moment. */
@@ -394,6 +435,7 @@ export class SemanticObserver implements Initializable {
         | 'smfProjectionDensity'
         | 'clusterCriterion'
         | 'hebbian'
+        | 'slowContext'
       >
     >,
     never
@@ -409,6 +451,11 @@ export class SemanticObserver implements Initializable {
 
   private readonly field: PrimeOscillatorField;
   private readonly smf: SedenionMemoryField;
+  /**
+   * E.2 (§6.2): the slow context accumulator (null = flag off, the control).
+   * Constructed from the raw options so OFF stays distinguishable from ON.
+   */
+  private readonly slowContext: SlowContextField | null;
   private readonly memory: MemoryBank;
   /**
    * W1: whether the bank consumes the moment's phase configuration and
@@ -605,6 +652,22 @@ export class SemanticObserver implements Initializable {
       projectionSeed: options.smfProjectionSeed,
       projectionDensity: options.smfProjectionDensity
     });
+
+    // E.2 (§6.2): the slow context lives in the SAME sketch space as the
+    // SMF (same width, same projection), so the recall-cue blend is a
+    // within-space direction tilt. Off by default — nothing is constructed
+    // and the control path never consults it.
+    this.slowContext = options.slowContext
+      ? new SlowContextField({
+          width: this.options.smfWidth,
+          ...(this.options.smfProjection ? { primeCount: this.options.primeCount } : {}),
+          projectionSeed: options.smfProjectionSeed,
+          projectionDensity: options.smfProjectionDensity,
+          stabilityTurns: options.slowContext.stabilityTurns,
+          blendWeight: options.slowContext.blendWeight,
+          learningRate: options.slowContext.learningRate
+        })
+      : null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -961,7 +1024,12 @@ export class SemanticObserver implements Initializable {
     }
     const results = this.memory.recall(
       {
-        smf: this.smf.clone(),
+        // E.2 (§6.2): with the slow context on, the cue is the fast SMF
+        // moment blended with the context — a small, bounded direction tilt
+        // (norm preserved, see SlowContextField.blendInto), so the fast
+        // moment converges IN THE PRESENCE of the slow context. Off: the
+        // plain SMF clone, bit-identical to the control.
+        smf: this.slowContext !== null ? this.slowContext.blendInto(this.smf) : this.smf.clone(),
         primes: queryPrimes,
         phases: queryPhases,
         amplitudes: queryAmplitudes,
@@ -1348,6 +1416,14 @@ export class SemanticObserver implements Initializable {
    */
   settleField(): void {
     this.requireInitialized();
+    // E.2 (§6.2): the slow context integrates the moment that just converged
+    // — ONCE per turn, here at the settle boundary, before the oscillators
+    // are reset (the reset destroys the moment). Each integrate decays the
+    // context by exactly one turn under the retention law, so the context
+    // decays over turns, never ticks. No-op when the flag is off.
+    if (this.slowContext !== null) {
+      this.slowContext.integrateTurn(this.field.getState());
+    }
     this.field.reset();
     this.coherenceHistory.length = 0;
     this.driftEpisodeActive = false;
@@ -1409,6 +1485,14 @@ export class SemanticObserver implements Initializable {
   /** The SMF orientation. */
   getMemoryField(): SedenionMemoryField {
     return this.smf;
+  }
+
+  /**
+   * E.2 (§6.2): the slow context accumulator (null when the flag is off —
+   * the control). Read-only introspection for benches and telemetry.
+   */
+  getSlowContext(): SlowContextField | null {
+    return this.slowContext;
   }
 
   /** The oscillator field. */
@@ -1483,6 +1567,9 @@ export class SemanticObserver implements Initializable {
   reset(): void {
     this.requireInitialized();
     this.field.reset();
+    // E.2 (§6.2): a full reset starts a fresh conversation — the slow
+    // context forgets everything too. No-op when the flag is off.
+    if (this.slowContext !== null) this.slowContext.reset();
     this.smf.set(0, 1);
     for (let i = 1; i < this.smf.width; i++) this.smf.set(i, 0);
     this.hologram.clear();

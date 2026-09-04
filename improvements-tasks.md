@@ -196,7 +196,7 @@ own justification. Do this before any routing change.
       **Bench `ambiguity-bench`:** polysemy probes vs. unambiguous cues; ≥1
       field measure separates them with AUC ≫ 0.5 (else ambiguity is invisible
       to the field, handle at candidate level only).
-- [ ] **E.2 Slow context component / priming** (§6.2) — a slow-decaying
+- [x] **E.2 Slow context component / priming** (§6.2) — a slow-decaying
       component of SMF orientation (or a separate context field) decaying over
       *turns* not ticks, so recent turns bias attractor selection before the
       operator layers. Decay measured by the retention law, not set.

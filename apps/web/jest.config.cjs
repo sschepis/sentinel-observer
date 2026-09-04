@@ -19,6 +19,9 @@ module.exports = {
     '<rootDir>/src/teacher/phaseFrameBenchmark.test.ts',
     // 10 arms x (200 words + 728 pairs): a physics sweep, not a unit test.
     '<rootDir>/src/teacher/sparseExcitationBenchmark.test.ts',
+    // Two arms x (24 primed + 8 unrelated) observer sessions: the §6.3
+    // priming experiment, not a unit test.
+    '<rootDir>/src/teacher/primingBenchmark.test.ts',
     // The server parity gate: a deliberate ~70s training + reload control.
     '<rootDir>/src/server/serverParity.test.ts'
   ],
