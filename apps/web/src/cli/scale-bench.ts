@@ -215,9 +215,9 @@ async function routeBench(): Promise<void> {
       console.log(`[scale]   ${line}`);
     }
     const verdict =
-      measurement.effectiveRecall >= measurement.mergedRecall
+      measurement.effectiveComparableRecall >= measurement.mergedRecall
         ? 'PASS — effective recall meets or exceeds the merged baseline'
-        : `REFUTE — effective recall ${(measurement.effectiveRecall * 100).toFixed(1)}% below merged ${(measurement.mergedRecall * 100).toFixed(1)}%`;
+        : `REFUTE — effective recall ${(measurement.effectiveComparableRecall * 100).toFixed(1)}% below merged ${(measurement.mergedRecall * 100).toFixed(1)}%`;
     console.log(`[scale]   → ${verdict}`);
   }
 }

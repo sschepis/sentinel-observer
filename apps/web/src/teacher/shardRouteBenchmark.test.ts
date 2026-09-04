@@ -70,20 +70,24 @@ describe('shard-route-bench (§3.2): routed shards vs the merged single-bank bas
   it('logs the §3.6 pass/refute verdict (reported, like cde-bench — the experiment records its own answer)', () => {
     // The §3.6 gate: effective recall (routing × in-shard + fallback) vs.
     // the merged single-bank baseline the proposal competes against (94.6%
-    // at 20k; here, the baseline measured at the same scale). Following the
-    // cde-bench pattern the verdict is REPORTED, not hard-gated — a
-    // refutation is a recorded scientific result, not a CI failure. The
-    // absolute 94.6% comparison is the CLI's full 5000-words-per-shard run.
+    // at 20k; here, the baseline measured at the same scale). Both sides
+    // are graded over the SAME probes — the words whose traces survive
+    // merge consolidation (`effectiveComparableRecall` vs `mergedRecall`).
+    // Following the cde-bench pattern the verdict is REPORTED, not
+    // hard-gated — a refutation is a recorded scientific result, not a CI
+    // failure. The absolute 94.6% comparison is the CLI's full
+    // 5000-words-per-shard run.
     for (const measurement of results) {
       const verdict =
-        measurement.effectiveRecall >= measurement.mergedRecall - 0.02
+        measurement.effectiveComparableRecall >= measurement.mergedRecall - 0.02
           ? 'PASS — effective recall meets the merged baseline at comparable latency'
           : `REFUTE — routing accuracy (top-1 ${(measurement.routingTop1 * 100).toFixed(1)}%) is low enough that effective recall ` +
-            `${(measurement.effectiveRecall * 100).toFixed(1)}% falls below merged ${(measurement.mergedRecall * 100).toFixed(1)}% ` +
+            `${(measurement.effectiveComparableRecall * 100).toFixed(1)}% falls below merged ${(measurement.mergedRecall * 100).toFixed(1)}% ` +
             `for K=${measurement.k}: interference is not the binding limit for the shard-trainer partition`;
       // eslint-disable-next-line no-console
       console.log(`\n§3.6 VERDICT K=${measurement.k}: ${verdict}`);
-      expect(Number.isFinite(measurement.effectiveRecall)).toBe(true);
+      expect(Number.isFinite(measurement.effectiveComparableRecall)).toBe(true);
+      expect(measurement.comparableProbes).toBeGreaterThan(0);
     }
   });
 

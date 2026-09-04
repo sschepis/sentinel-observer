@@ -968,8 +968,10 @@ export class ShardedMemoryBank implements MemoryBank {
     const all = this.all();
     if (this.seeded) {
       // Externally owned partition (seedShards): re-partitioning would
-      // destroy the caller's K shards. Report the honest reading unchanged.
-      const entropy = all.length === 0 ? 0 : interferenceBits(neighborGraph(all));
+      // destroy the caller's K shards. Report the honest per-shard reading
+      // (Σ n_i² neighbor work, not the O(n²) whole-bank graph — the no-op
+      // must not pay the re-partitioning cost it exists to skip).
+      const entropy = all.length === 0 ? 0 : this.retrievalEntropy();
       return { shards: this.shards.length, entropyBefore: entropy, entropyAfter: entropy };
     }
     if (all.length === 0) {

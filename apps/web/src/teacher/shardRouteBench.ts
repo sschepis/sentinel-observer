@@ -113,8 +113,17 @@ export interface ShardRouteMeasurement {
   routingTop1Exact: number;
   /** (b) P(home shard's own top-1 === true trace). */
   inShardRecall: number;
-  /** (c) P(routed end-to-end top-1 === true trace) — includes fallback. */
+  /** (c) P(routed end-to-end top-1 === true trace) — includes fallback,
+   *  over every measured probe. */
   effectiveRecall: number;
+  /**
+   * (c') effective recall over the probes the MERGED baseline can also
+   *  answer (words whose traces survived merge consolidation) — the
+   *  denominator the §3.6 pass/refute gate compares both sides on.
+   */
+  effectiveComparableRecall: number;
+  /** The shared probe count behind effectiveComparableRecall/mergedRecall. */
+  comparableProbes: number;
   /** routingTop1 × inShardRecall — the analytic decomposition of (c). */
   productEstimate: number;
   /** The merged single-bank recall over the same probe words. */
@@ -201,24 +210,37 @@ function probeWords(slice: readonly DeckWord[], homes: Map<string, { shard: numb
   return Array.from({ length: count }, (_, i) => taught[i * stride]);
 }
 
-/** Build an autoshard session whose bank holds the K training shards. */
+/** Build an autoshard session whose bank holds the K training shards.
+ *  Returns the number of traces restored so the caller can report it. */
 async function buildShardedSession(
   records: readonly BootstrapRecord[],
   missDetector: boolean | undefined
-): Promise<{ session: ObserverSession; bank: BenchBank }> {
+): Promise<{ session: ObserverSession; bank: BenchBank; restored: number }> {
   const session = new ObserverSession(
     {
       ...OBSERVER_OPTIONS,
       memoryMode: 'autoshard',
-      memoryBankOptions: missDetector === undefined ? undefined : { missDetector }
+      // The ON bank's thresholds read the SAME constants the bench's
+      // flat-distractor admission reads (cde.ts CDE_REGIME_DEFAULTS), so a
+      // §5 recalibration can never silently decouple the two.
+      memoryBankOptions:
+        missDetector === undefined
+          ? undefined
+          : {
+              missDetector,
+              missDetectorThresholds: {
+                topTwoMargin: CDE_REGIME_DEFAULTS.topTwoMargin,
+                topTwoThreeMargin: CDE_REGIME_DEFAULTS.topTwoThreeMargin
+              }
+            }
     },
     100
   );
   await session.initialize();
   const bank = session.observer.getMemoryBank() as unknown as BenchBank;
   bank.seedShards(records.length);
-  restoreRecords(bank, records);
-  return { session, bank };
+  const restored = restoreRecords(bank, records);
+  return { session, bank, restored };
 }
 
 /** The full production query recallMemory builds (mirrors its W1 cue
@@ -244,10 +266,14 @@ function fullQuery(session: ObserverSession, primes: readonly number[]): Cue {
 }
 
 /** Excite the observer with the cue and tick once — the exact recognition
- *  ask path (wordloop.recallWithCue). */
-function excite(session: ObserverSession, cue: string): void {
-  session.observeText(cue);
+ *  ask path (wordloop.recallWithCue). Returns the primes the field actually
+ *  excited (resolvePrimes post-fold) — the production cue primes, multi-word
+ *  entries included (the stored trace carries the LESSON's primes, not the
+ *  word's, so the trace cannot stand in for the cue). */
+function excite(session: ObserverSession, cue: string): number[] {
+  const stimulus = session.observeText(cue);
   session.observer.tick(0.02);
+  return stimulus.excitedPrimes;
 }
 
 function isFlatRouter(scores: readonly number[]): boolean {
@@ -275,9 +301,19 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
   const homes = wordHomes(records);
   const probes = probeWords(slice, homes, options.probeCount);
 
+  // The merged baseline's word set is computed FIRST: consolidation can
+  // collapse a word's trace, and the §3.6 gate must compare both sides over
+  // the SAME probes (the words the merged bank can still answer).
+  const mergedRecord = mergeRecords(records);
+  const mergedHomes = new Map<string, string>();
+  for (const state of mergedRecord.wordStates) {
+    if (state.traceId !== null) mergedHomes.set(state.word, state.traceId);
+  }
+  const comparableSet = new Set(probes.filter((word) => mergedHomes.has(word)));
+
   // ── Sharded side ────────────────────────────────────────────────────────
-  const { session, bank } = await buildShardedSession(records, false);
-  report(`[route-bench] K=${k}: sharded bank restored (${bank.shardAudit().length} shards)`);
+  const { session, bank, restored } = await buildShardedSession(records, false);
+  report(`[route-bench] K=${k}: sharded bank restored (${records.length} shards, ${restored} traces)`);
 
   let routingTop1 = 0;
   let routingTop2 = 0;
@@ -289,15 +325,22 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
   let routedAsks = 0;
   let flatTrueCues = 0;
   let measured = 0;
+  const effectiveByWord: Array<{ word: string; hit: boolean }> = [];
   // Read once: shardAudit computes per-shard entropy via the neighbor graph
   // (O(shard²)) — per-probe it would dominate the whole bench.
   const audit = bank.shardAudit();
   for (const word of probes) {
     const home = homes.get(word);
-    const vocabPrimes = OBSERVER_OPTIONS.vocabulary[word];
-    if (home === undefined || vocabPrimes === undefined || vocabPrimes.length === 0) continue;
-    excite(session, word);
-    const queryPrimes = vocabPrimes.filter((p) => p > 0);
+    if (home === undefined) continue;
+    // A probe whose trace failed to restore cannot be graded.
+    const trueTrace = bank.get(home.traceId) as { smf?: SedenionMemoryField; primes?: readonly number[] } | undefined;
+    if (trueTrace === undefined || trueTrace.primes === undefined) continue;
+    // The cue primes are what the PRODUCTION ask resolves the word to (the
+    // field's excited primes — resolvePrimes post-fold), read straight from
+    // the excitation so single- and multi-word entries both match the
+    // production cue.
+    const queryPrimes = excite(session, word).filter((p) => p > 0);
+    if (queryPrimes.length === 0) continue;
     const query = fullQuery(session, queryPrimes);
     measured += 1;
 
@@ -327,8 +370,7 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
     // orientation as the cue. A perfect cue removes the live-field imprint
     // from the equation — if this is also ~random, the shards' prototypes
     // carry no discriminative information for the partition.
-    const trueTrace = bank.get(home.traceId) as { smf?: SedenionMemoryField } | undefined;
-    if (trueTrace?.smf !== undefined) {
+    if (trueTrace.smf !== undefined) {
       const exactScores = bank.routeScores({ smf: trueTrace.smf, primes: queryPrimes });
       let exactTop1 = 0;
       for (let i = 1; i < exactScores.length; i += 1) if (exactScores[i] > exactScores[exactTop1]) exactTop1 = i;
@@ -343,6 +385,7 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
     const answers = wordRecalls(session, word, 5);
     if (answers.length === 0) routedAsks += 1;
     else if (answers[0].trace.id === home.traceId) effective += 1;
+    effectiveByWord.push({ word, hit: answers.length > 0 && answers[0].trace.id === home.traceId });
   }
 
   // (d) latency — a second pass measuring only the ask path.
@@ -353,18 +396,13 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
   }
   const shardedAskMs = (performance.now() - tSharded) / probes.length;
 
-  const shardAudit = bank.shardAudit();
+  const shardAudit = audit;
 
   // ── Merged baseline (the 94.6% path) ────────────────────────────────────
-  const mergedRecord = mergeRecords(records);
   const mergedSession = new ObserverSession(OBSERVER_OPTIONS, 100);
   await mergedSession.initialize();
   const mergedTeacher = new TeacherAgent(mergedSession, slice);
   mergedTeacher.importBootstrap(mergedRecord);
-  const mergedHomes = new Map<string, string>();
-  for (const state of mergedRecord.wordStates) {
-    if (state.traceId !== null) mergedHomes.set(state.word, state.traceId);
-  }
   const comparable = probes.filter((word) => mergedHomes.has(word));
   let mergedCorrect = 0;
   for (const word of comparable) {
@@ -391,6 +429,9 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
   mergedSession.dispose();
   session.dispose();
 
+  const comparableResults = effectiveByWord.filter((entry) => comparableSet.has(entry.word));
+  const comparableHits = comparableResults.filter((entry) => entry.hit).length;
+
   return {
     k,
     shardSizes: shardAudit.map((a) => a.traces),
@@ -403,6 +444,8 @@ async function measureOneK(options: ShardRouteBenchOptions, k: number, report: (
     routingTop1Exact: measured === 0 ? 0 : routingTop1Exact / measured,
     inShardRecall: measured === 0 ? 0 : inShard / measured,
     effectiveRecall: measured === 0 ? 0 : effective / measured,
+    effectiveComparableRecall: comparableResults.length === 0 ? 0 : comparableHits / comparableResults.length,
+    comparableProbes: comparableResults.length,
     productEstimate: measured === 0 ? 0 : (routingTop1 / measured) * (inShard / measured),
     mergedRecall: comparable.length === 0 ? 0 : mergedCorrect / comparable.length,
     shardedAskMs,
@@ -500,7 +543,7 @@ async function measureFuzz(
 
   report(
     `[route-bench] fuzz: ${flatDistractors.length} flat distractors · OFF confident ${offConfident} · ON confident ${onConfident} · ` +
-      `OFF≡no-flag ${identical ? 'bit-identical' : 'DIVERGED'} · detector true-cue cost ${offCorrect - onCorrect}/${Math.min(64, probes.length)}`
+      `ON bank asks ${on.bank.missDetectorAsks} · OFF≡no-flag ${identical ? 'bit-identical' : 'DIVERGED'} · detector true-cue cost ${offCorrect - onCorrect}/${Math.min(64, probes.length)}`
   );
 
   on.session.dispose();
@@ -533,7 +576,8 @@ export function summarize(measurement: ShardRouteMeasurement): string[] {
   const lines = [
     `K=${m.k} · shards ${m.shardSizes.join('/')} words (${m.totalWords} total) · ${m.probes} probes`,
     `  routing top-1 ${(m.routingTop1 * 100).toFixed(1)}% · top-2 ${(m.routingTop2 * 100).toFixed(1)}% · prime-overlap top-1 ${(m.routingTop1Primes * 100).toFixed(1)}% · top-2 ${(m.routingTop2Primes * 100).toFixed(1)}% · perfect-cue ceiling ${(m.routingTop1Exact * 100).toFixed(1)}% · in-shard ${(m.inShardRecall * 100).toFixed(1)}%`,
-    `  effective ${(m.effectiveRecall * 100).toFixed(1)}% (top1×in-shard product ${(m.productEstimate * 100).toFixed(1)}%) vs merged ${(m.mergedRecall * 100).toFixed(1)}%`,
+    `  effective ${(m.effectiveRecall * 100).toFixed(1)}% (top1×in-shard product ${(m.productEstimate * 100).toFixed(1)}%) · ` +
+      `gate ${(m.effectiveComparableRecall * 100).toFixed(1)}% vs merged ${(m.mergedRecall * 100).toFixed(1)}% (${m.comparableProbes} shared probes)`,
     `  latency ask ${m.shardedAskMs.toFixed(1)} ms (sharded) vs ${m.mergedAskMs.toFixed(1)} ms (merged) · routed asks ${m.routedAsks} · flat true cues ${m.flatTrueCues}`,
     `  shards: ${m.shardAudit.map((a) => `${a.traces}t/${a.entropyBits.toFixed(1)}b`).join(' | ')}`
   ];
