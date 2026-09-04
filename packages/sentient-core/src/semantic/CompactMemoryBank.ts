@@ -31,6 +31,20 @@
  *    older ones. Its weight (phaseWeight, default 0.15) is deliberately small;
  *    discrimination between moments rides on the SMF and overlap terms.
  *
+ *    MEASURED CONTENT-VERDICT (phase-frame-bench, improvements.md §4.2 /
+ *    §11 "the moment may carry nothing"): the co-rotating frame — which
+ *    cancels the free drift and isolates whatever coupling contributed
+ *    during the moment — does NOT separate siblings: mean AUC 0.495 across
+ *    the elapsed-time sweep vs 0.497 raw, i.e. chance (≈ 0.5) in both
+ *    frames. The moment carries no content beyond the excitation. The term
+ *    is RETAINED as the moment-proximity/recency signal it measures to be
+ *    (verdict DROP recorded: the term stays in code, its content claim
+ *    retires). The bank option `phaseTerm` selects the frame: 'proximity'
+ *    (the raw term, the pre-experiment control), 'coRotating' (the §4.2
+ *    machinery), or 'off' (the term leaves the blend and the remaining
+ *    SMF/overlap weights renormalize — the PRODUCTION DEFAULT, set by the
+ *    three-arm measurement at COMPACT_DEFAULTS.phaseTerm).
+ *
  *   NOTE on the overlap term: the semantic signature scheme (semantic-is-a)
  *   deliberately gives SIBLINGS shared category primes, so the overlap term
  *   cannot separate siblings by construction (the H1 win / H4 cost tradeoff)
@@ -122,13 +136,13 @@ export interface RecallQuery {
   /**
    * §4.2 (co-rotating phase frame): the observer's SIMULATED time — elapsed
    * seconds of the oscillator clock — at the cue moment. Used only when the
-   * bank's `coRotatingPhases` option is on; ignored otherwise (the raw
+   * bank's phaseTerm mode is 'coRotating'; ignored otherwise (the raw
    * frame needs no clock).
    */
   simTime?: number;
   /**
    * §4.2: the natural frequency ω_i of each cue prime, index-aligned with
-   * `primes`/`phases`. Used only when `coRotatingPhases` is on.
+   * `primes`/`phases`. Used only in the 'coRotating' phaseTerm mode.
    */
   phaseFrequencies?: readonly number[];
 }
@@ -203,12 +217,12 @@ export interface MemoryBank {
       /**
        * §4.2: the observer's simulated time (elapsed seconds) at store —
        * the `t` of the stored co-rotating phase θ_i = φ_i − ω_i·t. Only
-       * consumed when the bank's `coRotatingPhases` option is on.
+       * consumed when the bank's phaseTerm mode is 'coRotating'.
        */
       simTime?: number;
       /**
        * §4.2: natural frequency ω_i per stored prime, index-aligned with
-       * `primes`/`phases`. Only consumed when `coRotatingPhases` is on.
+       * `primes`/`phases`. Only consumed in the 'coRotating' phaseTerm mode.
        */
       phaseFrequencies?: readonly number[];
       importance?: number;
@@ -250,6 +264,27 @@ export interface CompactMemoryBankOptions {
   overlapWeight?: number;
   /** Weight of the phase order-parameter term (W1, default 0.15). */
   phaseWeight?: number;
+  /**
+   * PHASE TERM MODE (§4.2 verdict, default 'off' — the EXECUTED DROP).
+   *
+   *   · 'proximity'  — the raw phase order parameter in the blend at
+   *     `phaseWeight` (the pre-experiment engine, bit-identical).
+   *   · 'coRotating' — the co-rotating frame θ_i = φ_i − ω_i·t in the blend
+   *     at `phaseWeight`; reuses the merged §4.2 machinery and needs the
+   *     sim-time/frequency metadata on both sides (absent metadata is the
+   *     honest 0, never a fabricated reading).
+   *   · 'off'        — the phase term leaves the blend entirely and the
+   *     remaining SMF/overlap weights renormalize over their sum. The raw
+   *     order parameter is still REPORTED under `holographicScore` as a
+   *     diagnostic (the proximity reading), but it carries no weight.
+   *
+   * The measured content-verdict (§4.2, recorded in the file doc block)
+   * says the term cannot separate content in ANY frame; the three-arm
+   * measurement that set the default is test/semantic/PhaseTermArms.test.ts
+   * (deck-scale-ish) plus the production gates, recorded at
+   * COMPACT_DEFAULTS.phaseTerm.
+   */
+  phaseTerm?: 'proximity' | 'coRotating' | 'off';
   /** Amplitude below which a prime is not indexed (default 1e-4). */
   indexThreshold?: number;
   /** Strength below which an unconsolidated trace is prunable (default 0.25). */
@@ -292,11 +327,16 @@ export interface CompactMemoryBankOptions {
    * phase term, and a cue without them disables the term — the honest
    * absence reading, exactly like a missing phase configuration. OFF is
    * bit-identical to the control: the new fields are stored but never read.
+   *
+   * DEPRECATED ALIAS for `phaseTerm: 'coRotating'` (the §4.2 call sites
+   * and the phase-frame bench still pass this boolean). When `phaseTerm` is
+   * given it wins; `true` maps to 'coRotating', `false` to the bank's
+   * default phaseTerm mode (COMPACT_DEFAULTS.phaseTerm).
    */
   coRotatingPhases?: boolean;
 }
 
-const COMPACT_DEFAULTS = {
+const COMPACT_DEFAULTS: Required<CompactMemoryBankOptions> = {
   // Deck-scale default: the 20k-word vocabulary plus conversations, creative
   // answers, gaps, and beliefs MUST fit without thrashing — a default of
   // 5000 against a 20k deck pruned 75% of everything a bare observer stored
@@ -305,6 +345,23 @@ const COMPACT_DEFAULTS = {
   smfWeight: 0.5,
   overlapWeight: 0.5,
   phaseWeight: 0.15,
+  // PHASE TERM MODE — the §4.2 DROP verdict, EXECUTED (default 'off').
+  //
+  // Measured (PhaseTermArms.test.ts, deck-scale-ish: 250 sibling pairs,
+  // ~5,300 traces, capacity 50,000, 128-dim sketches): the phase order
+  // parameter cannot separate content in ANY frame (co-rotating AUC 0.495
+  // vs 0.497 raw — chance), and at the amplified sibling cosine where a
+  // 0.15 weight CAN flip a ranking it only adds noise: recall 91.2%/90.8%
+  // (proximity) and 100%/92.0% (coRotating) vs 100%/100% off, with 0 fuzz
+  // false positives in every arm. The production gates (recallBenchmark,
+  // semanticRecall, ciGates) are bit-identical across the three arms
+  // (100.0% 30/30 · paraphrase 70% · calibration 0.113 · ASK 33%). The
+  // term is RETAINED in code — 'proximity'/'coRotating' stay selectable,
+  // and `holographicScore` still reports the (weightless) reading under
+  // 'off' — but it is a moment-proximity/recency diagnostic, not a content
+  // discriminator, and earns no weight in the production blend. Re-run
+  // PhaseTermArms before re-arming it.
+  phaseTerm: 'off',
   indexThreshold: 1e-4,
   pruneStrength: 0.25,
   minAccessCount: 3,
@@ -395,6 +452,14 @@ export class CompactMemoryBank implements MemoryBank {
     this.config = {
       ...COMPACT_DEFAULTS,
       ...options,
+      // The §4.2 boolean option is a deprecated alias: `coRotatingPhases:
+      // true` selects the 'coRotating' frame. An explicit `phaseTerm` wins;
+      // otherwise the bank keeps COMPACT_DEFAULTS.phaseTerm (the executed
+      // §4.2 DROP default), and a caller passing `phaseTerm: undefined`
+      // must NOT defeat it (same rule as capacity below).
+      phaseTerm:
+        options.phaseTerm ??
+        (options.coRotatingPhases === true ? 'coRotating' : COMPACT_DEFAULTS.phaseTerm),
       // A caller passing `capacity: undefined` (the observer does when no
       // memoryCapacity is configured) must NOT defeat the default — an
       // undefined capacity would prune every new trace under utility rules.
@@ -627,10 +692,12 @@ export class CompactMemoryBank implements MemoryBank {
     }
     // §4.2: the cue side of the co-rotating frame — the natural frequency of
     // each cue prime (index-aligned with `primes`/`phases`) and the cue
-    // moment's simulated time. Only read when `coRotatingPhases` is on; the
-    // raw frame never needs them and stays bit-identical to the control.
+    // moment's simulated time. Only read in the 'coRotating' phaseTerm mode;
+    // the raw frame never needs them and stays bit-identical to the control.
+    const coRotating = this.config.phaseTerm === 'coRotating';
+    const phaseOff = this.config.phaseTerm === 'off';
     let cueFreqByPrime: Map<number, number> | undefined;
-    if (this.config.coRotatingPhases && query.phaseFrequencies !== undefined && cuePhasesByPrime !== undefined && query.primes !== undefined) {
+    if (coRotating && query.phaseFrequencies !== undefined && cuePhasesByPrime !== undefined && query.primes !== undefined) {
       cueFreqByPrime = new Map();
       for (let i = 0; i < query.primes.length; i += 1) {
         const frequency = query.phaseFrequencies[i];
@@ -643,10 +710,12 @@ export class CompactMemoryBank implements MemoryBank {
     // cue moment's clock and its oscillators' natural frequencies — without
     // them there is no co-rotating reading, and the term is honestly absent
     // (mirroring the store-side rule that a moment without stored phases
-    // cannot phase-lock).
+    // cannot phase-lock). Under `phaseTerm: 'off'` the term never joins the
+    // blend, whatever the metadata: the remaining weights renormalize.
     const phaseTermUsable =
       usePhase &&
-      (!this.config.coRotatingPhases ||
+      !phaseOff &&
+      (!coRotating ||
         (query.simTime !== undefined &&
           Number.isFinite(query.simTime) &&
           cueFreqByPrime !== undefined &&
@@ -690,7 +759,7 @@ export class CompactMemoryBank implements MemoryBank {
         for (let i = 0; i < trace.phasePrimes.length; i += 1) {
           tracePhaseByPrime.set(trace.phasePrimes[i], trace.phases[i]);
         }
-        if (this.config.coRotatingPhases) {
+        if (coRotating) {
           traceFreqByPrime = new Map();
           const frequencies = trace.phaseFrequencies;
           if (frequencies !== undefined) {
@@ -711,8 +780,11 @@ export class CompactMemoryBank implements MemoryBank {
       const overlapScore = useOverlap
         ? this.amplitudeOverlap(cuePrimes, traceAmpByPrime, traceNormSq)
         : 0;
+      // The order parameter is reported under `holographicScore` in every
+      // phaseTerm mode (the raw proximity reading when 'off' — a diagnostic,
+      // weightless); only the BLEND depends on the mode via `phaseTermUsable`.
       const phaseScore =
-        usePhase && this.config.coRotatingPhases
+        usePhase && coRotating
           ? phaseTermUsable
             ? this.phaseOrderParameterCoRotating(
                 cuePhasesByPrime!,
