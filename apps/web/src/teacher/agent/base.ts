@@ -57,6 +57,7 @@ import type { TransitionWeights, ConversationPair } from '../conversation';
 import type { WeightMeta } from '../agedWeights';
 import type { Relation, SourceClass, Negation, RelationPredicate } from '../relations';
 import type { DerivationDenial } from '../rules/types';
+import type { SenseAssignment } from '../senseModel';
 
 export type Constructor<T = object> = new (...args: any[]) => T;
 
@@ -90,6 +91,12 @@ export interface CrossFacultyApi {
   removeEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void;
   storeNegation(subject: string, predicate: RelationPredicate, object: string, evidence: string, origin?: Negation['origin']): void;
   invalidateRelations(): void;
+  // Sense split (F.2, §7.2): the sense assignment (override or derived),
+  // the unsplit graph the split rewrites from, and the split-deployment
+  // step that re-teaches per-sense traces over a merged-era record.
+  senseAssignment(): SenseAssignment;
+  unsplitRelations(): Relation[];
+  ensureSenseTraces(word: string): number;
   // ── rules ───────────────────────────────────────────────────────────────
   weakenRule(id: string, weight: number, denial?: Partial<DerivationDenial>): void;
   // ── operators ───────────────────────────────────────────────────────────
@@ -133,6 +140,20 @@ export class TeacherAgentCore {
   protected hiddenRelationKeys: ReadonlySet<string> | null = null;
   protected curriculumConfig: CurriculumConfig = {};
   protected rewriteInduction = false;
+  /**
+   * F.2 SENSE SPLIT (§7.2): assign each reading of a polysemous word its
+   * own sense node (bank#1, bank#2) with its own four-prime signature —
+   * definitions, edges, and traces live on the sense; chain walks cannot
+   * cross senses. DEFAULT OFF: every existing behavior stays bit-identical.
+   */
+  protected senseSplit = false;
+  /** An externally-minted sense assignment (the bench pre-builds the
+   *  session vocabulary from the same assignment so the two agree by
+   *  construction). Null = derive from the relation graph. */
+  protected senseAssignmentOverride: SenseAssignment | null = null;
+  /** The derived-or-override assignment, cached until the relations
+   *  cache invalidates. */
+  protected senseAssignmentCache: SenseAssignment | null = null;
 
   /** Seeded stream so the arbitration PRNG is a genuine mulberry32; the
    *  composition stream is injected (session-seeded or Math.random). */
@@ -234,6 +255,10 @@ export class TeacherAgentCore {
   protected readonly workingMemory = new WorkingMemory();
   /** Lazily extracted relational edges over the deck definitions. */
   protected relationsCache: Relation[] | null = null;
+  /** F.2: the merged surface-word graph the split rewrites from — the
+   *  unsplit view for measurement (empty/unsplit-identical when the flag
+   *  is off). */
+  protected unsplitRelationsCache: Relation[] | null = null;
   /** LLM-supplied (Chaperone) edges, reconciled and provenance-tagged. */
   protected chaperoneRelations: Relation[] = [];
   /**
