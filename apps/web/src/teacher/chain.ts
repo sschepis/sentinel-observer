@@ -104,8 +104,9 @@ export interface IsAPath {
   strength: number;
 }
 
-/** The strongest is-a edge strength for `subject -> object` (absent = 1). */
-function isAEdgeStrength(relations: readonly Relation[], subject: string, object: string): number {
+/** The strongest is-a edge strength for `subject -> object` (absent = 1).
+ *  Exported for the §4.3 path-evidence reading (pathEvidence.ts). */
+export function isAEdgeStrength(relations: readonly Relation[], subject: string, object: string): number {
   let best = -Infinity;
   for (const relation of relations) {
     if (relation.subject === subject && relation.predicate === 'is-a' && relation.object === object) {
