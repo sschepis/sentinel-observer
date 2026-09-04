@@ -304,6 +304,15 @@ const ADJECTIVE_BLACKLIST = new Set([
   'distinctive', 'prominent', 'prominent', 'outstanding', 'remarkable', 'striking',
   'states', 'republic', 'kingdom', 'formal', 'informal', 'verbal', 'visual',
   'material', 'spiritual', 'emotional', 'intellectual', 'musical', 'visual',
+  // Post-modifier adjectives the head-final scan otherwise lands on: "a tuber
+  // native to South America" -> tuber, "a vehicle suitable for hauling" ->
+  // vehicle, "a very large person; impressive in size" -> person. Also the
+  // closed-class particles and adjectival forms that are deck words but can
+  // never be kind heads ("a region marked off" -> region; "something edible"
+  // -> never edible; "a garment worn" -> garment).
+  'native', 'suitable', 'impressive', 'excessive', 'together', 'available',
+  'worn', 'edible', 'off', 'high', 'low', 'upper', 'inner', 'outer',
+  'belonging',
   // Pronoun-ish heads that carry no kind information ("someone entrusted
   // to..." must not produce is-a someone).
   'one', 'ones', 'someone', 'somebody', 'something', 'anyone', 'anybody',
@@ -312,8 +321,11 @@ const ADJECTIVE_BLACKLIST = new Set([
 
 /** Clause markers that end the head noun phrase of a definition. Includes
  *  the common post-modifier participles ("a nucleotide found in...") and
- *  relative/place clauses ("a building where people live" -> building). */
-const HEAD_END = /\b(with|having|which|that|who|where|when|used|of|for|in|on|at|from|by|to|containing|made|found|called|named|known|considered|regarded|characterized|consisting|occurring|relating|resembling|derived|based|generated|produced|formed|played)\b/i;
+ *  relative/place clauses ("a building where people live" -> building).
+ *  `since` ends temporal qualifiers ("domesticated since prehistoric times")
+ *  and `around` ends the worn-around / built-around prepositional qualifiers
+ *  ("a garment worn around the head" -> garment). */
+const HEAD_END = /\b(with|having|which|that|who|where|when|used|of|for|in|on|at|from|by|to|containing|made|found|called|named|known|considered|regarded|characterized|consisting|occurring|relating|resembling|derived|based|generated|produced|formed|played|since|around)\b/i;
 
 /**
  * The location-clause matcher shared by the relations extractor (located-in
@@ -365,9 +377,14 @@ export function extractRelations(
     return null;
   };
   // Trailing participles and adverbs are post-modifiers, never the head
-  // ("a plane curve generated" -> curve).
-  const PARTICIPLE = /^[a-z]{4,}(?:ed|ing)$/;
-  const TRAILING_MODIFIER = /^[a-z]{4,}(?:ed|ing)$|^[a-z]{3,}ly$/;
+  // ("a plane curve generated" -> curve). A trailing -ing token is the head
+  // itself when it stands alone or follows modifiers ("the excessive killing
+  // of many people" -> killing), and a post-modifier participle when a
+  // plausible noun head precedes it ("a person belonging to..." -> person).
+  const PARTICIPLE = /^[a-z]{3,}(?:ed|ing)$/;
+  const PAST_PARTICIPLE = /^[a-z]{3,}ed$/;
+  const ED_OR_LY = /^[a-z]{3,}ed$|^[a-z]{3,}ly$/;
+  const GERUND = /^[a-z]{3,}ing$/;
   // A compound noun made of two deck words chains to its head suffix
   // ("songbird" -> bird). Both halves must be substantial deck words and the
   // suffix a plain noun — ("landlocked" -> locked must never produce an edge).
@@ -379,6 +396,14 @@ export function extractRelations(
     }
     return null;
   };
+  // Derivational suffixes and closed-class fragments that are deck words but
+  // never the semantic head of a compound: the compound chain must not
+  // manufacture "statement is-a ment" or "underground is-a ground".
+  const CHAIN_SUFFIX_JUNK = new Set([
+    'ment', 'tion', 'sion', 'ness', 'ity', 'lies', 'ties', 'ling', 'elle',
+    'tory', 'born', 'stat', 'us', 'up', 'per', 'ground', 'graduate',
+    'mission', 'formation'
+  ]);
 
   const relations: Relation[] = [];
   const seen = new Set<string>();
@@ -406,31 +431,87 @@ export function extractRelations(
       /^(?:a|an|the)\s+/i.test(def) ||
       (rawTokens.length > 0 && (rawTokens[0].includes('-') || ADJECTIVE_BLACKLIST.has(rawTokens[0])));
     if (nounPhrase) {
-      const clauseEnd = def.search(HEAD_END);
-      const head = (clauseEnd > 0 ? def.slice(0, clauseEnd) : def).replace(/^(?:a|an|the)\s+/i, '');
-      // Hyphenated tokens are compound modifiers ("egg-laying"), never heads.
-      const tokens = head.toLowerCase().split(/[^a-z-]+/).filter((t) => t.length > 0 && !t.includes('-'));
-      while (tokens.length > 0 && TRAILING_MODIFIER.test(tokens[tokens.length - 1])) tokens.pop();
+      // The head noun phrase of a gloss clause ends at the earliest of: a
+      // HEAD_END clause marker, a sense-separating colon ("a very large
+      // person; impressive in size" -> person), a parenthetical qualifier
+      // ("a connection (like a clamp) between..." -> connection), or a
+      // participial "covering" ("a garment covering the upper part" ->
+      // garment — but never "a covering that ...", where covering IS the
+      // head). Semicolon-separated clauses are tried IN ORDER — the first
+      // clause of a gloss is its primary reading — and a later clause is
+      // consulted only when the earlier ones yield no kind head ("something
+      // owned; any tangible or intangible possession..." -> possession).
+      const headOf = (slice: string): string | undefined => {
+        const clauseEnd = slice.search(HEAD_END);
+        let end = clauseEnd > 0 ? clauseEnd : -1;
+        for (const separator of [':', '(']) {
+          const at = slice.indexOf(separator);
+          if (at !== -1 && (end === -1 || at < end)) end = at;
+        }
+        const coveringMatch = /\s([a-z]+)\s+covering\s+(?:the|a|an|its|their|his|her|your|our|my)\b/i.exec(slice);
+        if (coveringMatch !== null) {
+          const at = (coveringMatch.index ?? 0) + coveringMatch[1].length + 1;
+          if (end === -1 || at < end) end = at;
+        }
+        const head = (end > 0 ? slice.slice(0, end) : slice).replace(/^(?:a|an|the)\s+/i, '');
+        // Hyphenated tokens are compound modifiers ("egg-laying"), never heads.
+        const tokens = head.toLowerCase().split(/[^a-z-]+/).filter((t) => t.length > 0 && !t.includes('-'));
+        const nounLike = (token: string): boolean =>
+          !ADJECTIVE_BLACKLIST.has(token) &&
+          !PAST_PARTICIPLE.test(token) &&
+          !GERUND.test(token) &&
+          !ED_OR_LY.test(token) &&
+          token !== 'and' &&
+          token !== 'or' &&
+          isContentWord(token);
+        while (tokens.length > 0) {
+          const last = tokens[tokens.length - 1];
+          if (ED_OR_LY.test(last)) {
+            tokens.pop();
+            continue;
+          }
+          if (GERUND.test(last) && tokens.length >= 2 && nounLike(tokens[tokens.length - 2])) {
+            tokens.pop();
+            continue;
+          }
+          break;
+        }
+        for (let i = tokens.length - 1; i >= 0; i -= 1) {
+          // A past participle is a post-modifier, never the head ("a region
+          // marked off" -> region; "a thing arranged" -> thing). A blacklisted
+          // adjective is never a head either — and its morphological halves
+          // ("suitable" -> "able") must not be manufactured into one.
+          if (PAST_PARTICIPLE.test(tokens[i]) || ADJECTIVE_BLACKLIST.has(tokens[i])) continue;
+          const resolved = resolveNoun(tokens[i]);
+          if (resolved !== null) return resolved;
+          // Compound fallback: "songbird" is the head even when not a deck word.
+          const viaCompound = compoundHead(tokens[i]);
+          if (viaCompound !== null) return viaCompound;
+        }
+        return undefined;
+      };
       let hypernym: string | undefined;
-      for (let i = tokens.length - 1; i >= 0; i -= 1) {
-        const resolved = resolveNoun(tokens[i]);
-        if (resolved !== null) {
-          hypernym = resolved;
-          break;
-        }
-        // Compound fallback: "songbird" is the head even when not a deck word.
-        const viaCompound = compoundHead(tokens[i]);
-        if (viaCompound !== null) {
-          hypernym = viaCompound;
-          break;
-        }
+      for (const clause of def.split(';')) {
+        // A later clause supplies the head only when it is itself a noun
+        // phrase — "achieved independence from..." or "formerly a European
+        // soviet" are qualifiers, not kind clauses.
+        const clauseTokens = clause.trim().toLowerCase().split(/[^a-z-]+/).filter(Boolean);
+        const clauseIsNounPhrase =
+          /^(?:a|an|the|any|some|each|every|another|one|no)\s+/i.test(clause.trim()) ||
+          (clauseTokens.length > 0 && (clauseTokens[0].includes('-') || ADJECTIVE_BLACKLIST.has(clauseTokens[0])));
+        if (!clauseIsNounPhrase) continue;
+        hypernym = headOf(clause);
+        if (hypernym !== undefined) break;
       }
       if (hypernym !== undefined && hypernym !== subject) {
         push(subject, 'is-a', hypernym, def);
         // A compound hypernym also chains upward (songbird is-a bird) so
-        // inheritance can walk through it even if its own entry never parses.
+        // inheritance can walk through it even if its own entry never
+        // parses. GATED on the suffix not being a derivational fragment:
+        // splitting "statement" -> "ment" or "transmission" -> "mission"
+        // manufactures junk parents out of morphological leftovers.
         const suffix = compoundHead(hypernym);
-        if (suffix !== null && suffix !== hypernym && suffix !== subject) {
+        if (suffix !== null && suffix !== hypernym && suffix !== subject && !CHAIN_SUFFIX_JUNK.has(suffix)) {
           push(hypernym, 'is-a', suffix, def);
         }
       }

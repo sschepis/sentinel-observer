@@ -116,20 +116,56 @@ export function senseGroupsFor(
   const ordered = groups
     .map((members) => ({ members: [...members].sort(), regex: members.some((m) => originOf(m) === 'regex') }))
     .sort((a, b) => Number(b.regex) - Number(a.regex) || (a.members[0] < b.members[0] ? -1 : 1));
-  return ordered.map((group, index) => {
-    const lead =
-      group.members.find((m) => originOf(m) === 'regex') ?? group.members[0];
+  // PER-SENSE READINGS MUST BE DISTINCT — the disambiguating ask names both,
+  // so two readings with the same text ("as in X, or as in X") are a bug.
+  // A group's candidate gloss is its lead edge's source; a generic
+  // curriculum label ("everyday-knowledge curriculum") or a source already
+  // claimed by another group falls back to the distinct parent itself
+  // ("a bank" / "a slope"), with the same article convention the probe
+  // questions use.
+  const sourceOf = (parent: string): string => {
     const source = relations.find(
-      (r) => r.subject === subject && r.predicate === 'is-a' && r.object === lead
+      (r) => r.subject === subject && r.predicate === 'is-a' && r.object === parent
     )?.source;
+    return typeof source === 'string' ? source.trim() : '';
+  };
+  const GENERIC_LABEL = /curriculum\s*$/i;
+  const article = (noun: string): string => (/^[aeiou]/.test(noun) ? 'an' : 'a');
+  // A gloss quotes only its primary clause: "a very large person;
+  // impressive in size" reads as "a very large person" in the ask.
+  const glossOf = (source: string): string => {
+    let end = source.length;
+    for (const separator of [';', ':']) {
+      const at = source.indexOf(separator);
+      if (at !== -1 && at < end) end = at;
+    }
+    const trimmed = source.slice(0, end).trim();
+    return trimmed.length > 0 ? trimmed : source.trim();
+  };
+  const leadOf = (group: { members: string[] }): string =>
+    group.members.find((m) => originOf(m) === 'regex') ?? group.members[0];
+  const claimed = new Set<string>();
+  const readings = ordered.map((group, index) => {
+    const lead = leadOf(group);
+    const candidate = glossOf(sourceOf(lead));
+    let reading = candidate.length > 0 && !GENERIC_LABEL.test(candidate) && !claimed.has(candidate) ? candidate : '';
+    if (reading.length === 0 || claimed.has(reading)) {
+      reading = `${article(lead)} ${lead}`;
+    }
+    claimed.add(reading);
     return {
       key: senseKeyOf(subject, index + 1),
       surface: subject,
       index: index + 1,
       parents: group.members,
-      reading: typeof source === 'string' && source.trim().length > 0 ? source.trim() : `a ${lead}`
+      reading
     };
   });
+  // DEGENERATE SPLIT: a word whose readings cannot be made distinct has no
+  // two-sense distinction to expose — it keeps the merged graph instead of
+  // a fake split whose ask would name the same gloss twice.
+  if (new Set(readings.map((r) => r.reading)).size !== readings.length) return [];
+  return readings;
 }
 
 /** Words the sense model splits: surface words with is-a parents in
