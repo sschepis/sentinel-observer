@@ -1005,6 +1005,42 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     line: 72,
     note: '0 = the 0.25 world-feedback weight is the CONTROL; 1 = the world channel\'s measured agreement with ground truth via the trust kernel\'s bucket machinery (Wilson lower bound at prior 0).',
     evidence: { sources: ['fuzz', 'world-outcome'], mass: null, note: '§5.2 row 9: measured by the trust kernel itself; the programmatic trust bench pins the measured weight bounded and evidence-responsive.' }
+  },
+  {
+    name: 'ELABORATION_MARGINAL_SCORE_FLOOR',
+    class: 'tuning',
+    value: 0.6,
+    file: 'apps/web/src/teacher/elaboration.ts',
+    line: 190,
+    note: '§8.1: the frontier stop engages when the best remaining claim\'s marginal score falls below this floor — the elaboration stopping criterion, not a fixed depth budget.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§8 elaboration-bench: 0 fabrications at every depth, redundancy falls as the stop engages; the floor is the knob the bench measures.' }
+  },
+  {
+    name: 'ELABORATION_TRACE_RECALL_FLOOR',
+    class: 'tuning',
+    value: 0.25,
+    file: 'apps/web/src/teacher/elaboration.ts',
+    line: 205,
+    note: '§8.4: the recall score at which a stored elaboration resolves a re-ask; below it the elaboration is re-searched.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§8 elaboration-trace-bench: stored elaborations recall on re-ask and decay under the retention law like ordinary traces.' }
+  },
+  {
+    name: 'CONTEXT_SENSE_SPLIT_ENABLED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/senseModel.ts',
+    line: 399,
+    note: '0 = the context-bimodality split induction (F.4 / §7.4) is OFF (the control — only supplied senses are used); 1 = a trace whose context-prime distribution is bimodal splits when the entropy reduction exceeds the new sense node\'s cost.',
+    evidence: { sources: ['fuzz', 'adversarial'], mass: null, note: '§7.4 sense-split-bench: the rule recovers the known sense splits with 0 splits on the monosemous control; the flag earns itself on that measurement.' }
+  },
+  {
+    name: 'CONCEPT_SYNTHESIS_ENABLED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/agent/relations.ts',
+    line: 98,
+    note: '0 = MDL concept synthesis (§9) is OFF (the control); 1 = induced concepts enter the hypothesis tier, answer hedged, promote on corroboration, stop on two world denials.',
+    evidence: { sources: ['fuzz', 'chain'], mass: null, note: '§9 hypernym-recovery-bench: recovery 1.00 vs shuffle-chance 0.00 with 0 false-inheritance in asserted speech; the flag gates the tier integration.' }
   }
 ] as const;
 

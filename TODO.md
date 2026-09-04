@@ -396,7 +396,7 @@ One line per item; the paper record is `docs/observer-paper.md` §5.16.
 - [x] §7 sense-split — **LANDED**: cross-sense exposure 109 → 37 → **0**; disambiguating ask with distinct readings (senseSplit flag)
 - [x] §5.2 D.4 calibration — **PASS**: error 0.311 → 0.008; honesty 44/44 + fuzz 0 held; recall 99.2% = control; no gate reverted
 - [x] §5.2 D.2 settle-peak — **PASS with nuance**: 0 chat FP, exact recall held, mean 2.0 vs 4 ticks; guard-free FP up (140 → 224) recorded
-- [x] §5.1 taxonomy — 89 → 105 constants classified (values/safety/tuning) + `constants-report` + D.10 circularity guard
+- [x] §5.1 taxonomy — 89 → 109 constants classified (12 values / 26 safety / 71 tuning) + `constants-report` + D.10 circularity guard
 - [x] §5.2 D.5–D.8 — measured replacements (per-store decay, MDL costs, goal MDL, world weight) landed behind flags
 - [x] §3.4/§4.5 council — **LANDED**: edge-cited agreement + network traces (100% recall of settled answers, rounds = 0)
 - [x] §4.1 surprise→stability — **LANDED**: store-time surprise seeds FSRS initial stability
