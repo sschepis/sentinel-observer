@@ -230,6 +230,23 @@ export interface MemoryBank {
     }
   ): TraceLike;
   recall(query: RecallQuery, topK?: number): RecallResultLike[];
+  /**
+   * INSTRUMENTATION (§2 / improvements.md A.2): the FULL scored candidate
+   * list for a cue, sorted descending, WITHOUT the top-K slice and WITHOUT
+   * touching (reinforcing) any trace — `recall` is the decision; `recallAll`
+   * is the distribution the decision was made from, so candidate-
+   * distribution entropy can be read over it with no side effects. OPTIONAL:
+   * the compact bank implements it; sharded banks do not (their candidate
+   * sets are per-shard — read via `routeScores`).
+   */
+  recallAll?(query: RecallQuery): RecallResultLike[];
+  /**
+   * INSTRUMENTATION (§2): the prefilter candidate count a recall would score
+   * for a cue — the size of the candidate set the scoring loop iterates (the
+   * §3.1 figure, ~1,200 at deck scale). Pure read; does not score or touch.
+   * OPTIONAL, same ownership as `recallAll`.
+   */
+  prefilterCandidateCount?(query: RecallQuery): number;
   get(id: string): TraceLike | undefined;
   all(): readonly TraceLike[];
   serializeTrace(traceId: string): SerializedTraceData | null;

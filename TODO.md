@@ -391,7 +391,7 @@ All baselines recorded in the 2026-09 review + pinned where executable:
 
 One line per item; the paper record is `docs/observer-paper.md` §5.16.
 
-- [x] §2 CDE instrument — **REFUTED**: no variant beats the top score (AUC 0.912 vs. best 0.779); routing not built per §2.4/§11; margins calibrated (topTwoMargin 0.17, measurement-only)
+- [x] §2 CDE instrument — **REFUTED**: no variant beats the top score (AUC 0.913 vs. best 0.762); routing not built per §2.4/§11; margins calibrated (topTwoMargin 0.17, measurement-only)
 - [x] §4.2 phase frame — **DROP executed**: co-rotating AUC 0.495 ≈ chance; `phaseTerm` default 'off' (recall 100% vs 91.2%, 0 fuzz FP all arms)
 - [x] §7 sense-split — **LANDED**: cross-sense exposure 109 → 37 → **0**; disambiguating ask with distinct readings (senseSplit flag)
 - [x] §5.2 D.4 calibration — **PASS**: error 0.311 → 0.008; honesty 44/44 + fuzz 0 held; recall 99.2% = control; no gate reverted
@@ -404,4 +404,8 @@ One line per item; the paper record is `docs/observer-paper.md` §5.16.
 - [x] §3.2 shard routing — **REFUTED for every K**: routing is the binding limit (effective 56.6%/24.1% vs merged 99.2%); miss detector landed (0 confident wrong-shard)
 - [x] §3.5 merge consolidation — **LANDED**: cross-shard duplicates → 0; aggregate merge rules
 - [x] §6.2 priming — **LANDED**: slowContext flag; primed resolution up, contamination 0
-- [ ] Open: elaboration (§8), concept synthesis (§9), wsd-bench (F.3), sense-split-bench (F.4), field ambiguity (E.1), cleanup entropy (C.4), judge weights (D.3)
+- [x] §8 elaboration — **LANDED**: frontier search with a stopping criterion (0 fabrications, stop engages), grounded-only recursion, self-questioning into curiosity gaps, elaboration traces
+- [x] §9 concept synthesis — **LANDED**: hypernym recovery 1.00 vs shuffle-chance 0.00 (bird/tool/vehicle); prototype recovers shared edges (0.43 vs 0.25); naming ask + rediscovery-merge; hypothesis-tier lifecycle. §9.8 field-cluster **REFUTED** (arms indistinguishable, ΔR ≈ 0.008 → hologram path only)
+- [x] §7.3 wsd-bench — **MEASURED: REFUTED at this scale** (Hebbian resolution does not clear chance); flag stays off
+- [x] §7.4 sense-split-bench — **LANDED: PASS** (context-bimodality split rule recovers the known senses, 0 monosemous fragmentation)
+- [ ] NOT BUILT (recorded): field ambiguity (E.1 — the §2 instrument it reads is refuted; ambiguity is handled at the candidate/sense level instead), cleanup entropy (C.4 — superseded by sense-split + disambiguating ask), judge weights (D.3 — superseded by the §4.2 phase-term DROP)

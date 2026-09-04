@@ -48,7 +48,6 @@ import type { Relation } from '../teacher/relations';
 const WORDS = Number(process.env.CDE_BENCH_WORDS ?? 300);
 const CUE_COUNT = Number(process.env.CDE_BENCH_CUES ?? 120);
 const AGREE_WORDS = Number(process.env.CDE_BENCH_AGREE_WORDS ?? 100);
-const BIG_K = 100_000;
 
 /** Mann–Whitney AUC: P(a random positive scores above a random negative). */
 function auc(positive: readonly number[], negative: readonly number[]): number {
@@ -265,10 +264,13 @@ async function main(): Promise<void> {
   const recallMargins: number[] = [];
   for (const entry of sample) {
     teacher.exciteAndSettle(entry.word);
-    const scores = session.recall(entry.word, BIG_K).map((r) => r.score);
+    const scores = session.recallAll(entry.word).map((r) => r.score);
     recallMargins.push(topTwoMargin(scores));
     summarize(entry.word, scores);
   }
+  // The §3.1 figure: the prefilter candidate count a recall scores over.
+  // eslint-disable-next-line no-console
+  console.log(`  prefilter candidates for '${sample[0].word}': ${session.prefilterCandidateCount(sample[0].word)}`);
 
   // ── FUZZ: AUC of every instrument variant on true-match / distractor ─────
   // eslint-disable-next-line no-console
@@ -283,12 +285,12 @@ async function main(): Promise<void> {
   const distractorMargins: number[] = [];
   for (const cue of sampleCues(CUE_COUNT)) {
     teacher.exciteAndSettle(cue);
-    const exact = session.recall(cue, BIG_K).map((r) => r.score);
+    const exact = session.recallAll(cue).map((r) => r.score);
     const tokens = cue.trim().split(/\s+/);
     tokens[tokens.length - 1] = 'water';
     const swapped = tokens.join(' ');
     teacher.exciteAndSettle(swapped);
-    const distractor = session.recall(swapped, BIG_K).map((r) => r.score);
+    const distractor = session.recallAll(swapped).map((r) => r.score);
     exactMargins.push(topTwoMargin(exact));
     distractorMargins.push(topTwoMargin(distractor));
     for (const [name, measure] of Object.entries(FUZZ_VARIANTS)) {
@@ -397,7 +399,7 @@ async function main(): Promise<void> {
   const adversarialMargins: number[] = [];
   for (const probe of ['is a bird a quargle', 'is snow a vehicle', 'does a bird have wheels', 'what is zzz']) {
     teacher.exciteAndSettle(probe);
-    const scores = session.recall(probe, BIG_K).map((r) => r.score);
+    const scores = session.recallAll(probe).map((r) => r.score);
     adversarialMargins.push(topTwoMargin(scores));
     summarize(probe, scores);
   }

@@ -5,7 +5,8 @@ import {
   type ObserverSignal,
   type StimulusResult,
   type TraceLike,
-  type RecallResult
+  type RecallResult,
+  type RecallResultLike
 } from '@sschepis/sentient-core';
 
 export type ObserverStatus = 'idle' | 'loading' | 'ready' | 'degraded' | 'error';
@@ -74,6 +75,25 @@ export class ObserverSession {
    */
   recall(cue: string, topK = 5): RecallResult[] {
     return this.observer.recallMemory(cue, topK);
+  }
+
+  /**
+   * INSTRUMENTATION (§2 / improvements.md A.2): the FULL scored candidate
+   * list for a cue — `recall` is the decision; this is the distribution the
+   * decision was made from, read with NO side effects (no touching, no
+   * signals). Empty ([]) when the bank carries no `recallAll` instrumentation.
+   */
+  recallAll(cue: string): RecallResultLike[] {
+    return this.observer.recallAllContent(cue);
+  }
+
+  /**
+   * INSTRUMENTATION (§2): the prefilter candidate count a recall would score
+   * for a cue (the §3.1 figure, ~1,200 at deck scale). 0 without the bank's
+   * instrumentation.
+   */
+  prefilterCandidateCount(cue: string): number {
+    return this.observer.prefilterCandidateCount(cue);
   }
 
   /** Subscribe to the observer's signal stream; returns an unsubscribe fn. */

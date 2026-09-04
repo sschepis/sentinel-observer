@@ -58,6 +58,8 @@ import {
   CompactMemoryBank,
   type CompactMemoryBankOptions,
   type MemoryBank,
+  type RecallQuery,
+  type RecallResultLike,
   type TraceLike
 } from './CompactMemoryBank';
 import { ShardedMemoryBank, type ShardedMemoryBankOptions } from './ShardedMemoryBank';
@@ -979,6 +981,52 @@ export class SemanticObserver implements Initializable {
    */
   recallMemory(content?: string, topK = 5): RecallResult[] {
     this.requireInitialized();
+    const results = this.memory.recall(this.buildRecallQuery(content), topK);
+    for (const result of results) {
+      if (result.consolidated) {
+        this.signals.push({
+          kind: 'memory',
+          at: Date.now(),
+          causeId: this.lastStimulusId,
+          payload: { event: 'consolidated', traceId: result.trace.id, content: result.trace.content, strength: result.trace.strength }
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * INSTRUMENTATION (§2 / improvements.md A.2): the FULL scored candidate
+   * list for a cue — every prefiltered candidate the compact bank scores,
+   * WITHOUT the top-K slice, WITHOUT touching any trace, and WITHOUT emitting
+   * consolidated signals (pure read). `recallMemory` is the decision; this is
+   * the distribution the decision was made from. Empty ([]) when the bank has
+   * no `recallAll` instrumentation (sharded banks — their candidate sets are
+   * per-shard, read via `routeScores`).
+   */
+  recallAllContent(content?: string): RecallResultLike[] {
+    this.requireInitialized();
+    return this.memory.recallAll?.(this.buildRecallQuery(content)) ?? [];
+  }
+
+  /**
+   * INSTRUMENTATION (§2): the prefilter candidate count a recall would score
+   * for a cue (the §3.1 figure, ~1,200 at deck scale). 0 when the bank has
+   * no `prefilterCandidateCount` instrumentation.
+   */
+  prefilterCandidateCount(content?: string): number {
+    this.requireInitialized();
+    return this.memory.prefilterCandidateCount?.(this.buildRecallQuery(content)) ?? 0;
+  }
+
+  /**
+   * The recall query the compact bank scores — the cue's resolved primes plus
+   * the live moment's phase configuration, amplitudes, coherence, and (in the
+   * 'coRotating' phaseTerm mode) the oscillator clock and natural frequencies.
+   * Shared by `recallMemory` and the pure-read instrumentation so the
+   * instrument reads the SAME query the decision scores, never a proxy.
+   */
+  private buildRecallQuery(content: string | undefined): RecallQuery {
     const folded = content ? this.resolvePrimes(content) : undefined;
     const queryPrimes = folded ? folded.filter(p => p > 0) : undefined;
     // W1 (compact bank only): the cue carries the field's CURRENT phase
@@ -1022,34 +1070,20 @@ export class SemanticObserver implements Initializable {
           ? queryPrimes.map(p => this.field.naturalFrequencyOf(p) ?? NaN)
           : undefined;
     }
-    const results = this.memory.recall(
-      {
-        // E.2 (§6.2): with the slow context on, the cue is the fast SMF
-        // moment blended with the context — a small, bounded direction tilt
-        // (norm preserved, see SlowContextField.blendInto), so the fast
-        // moment converges IN THE PRESENCE of the slow context. Off: the
-        // plain SMF clone, bit-identical to the control.
-        smf: this.slowContext !== null ? this.slowContext.blendInto(this.smf) : this.smf.clone(),
-        primes: queryPrimes,
-        phases: queryPhases,
-        amplitudes: queryAmplitudes,
-        coherence: queryCoherence,
-        simTime: querySimTime,
-        phaseFrequencies: queryPhaseFrequencies
-      },
-      topK
-    );
-    for (const result of results) {
-      if (result.consolidated) {
-        this.signals.push({
-          kind: 'memory',
-          at: Date.now(),
-          causeId: this.lastStimulusId,
-          payload: { event: 'consolidated', traceId: result.trace.id, content: result.trace.content, strength: result.trace.strength }
-        });
-      }
-    }
-    return results;
+    return {
+      // E.2 (§6.2): with the slow context on, the cue is the fast SMF
+      // moment blended with the context — a small, bounded direction tilt
+      // (norm preserved, see SlowContextField.blendInto), so the fast
+      // moment converges IN THE PRESENCE of the slow context. Off: the
+      // plain SMF clone, bit-identical to the control.
+      smf: this.slowContext !== null ? this.slowContext.blendInto(this.smf) : this.smf.clone(),
+      primes: queryPrimes,
+      phases: queryPhases,
+      amplitudes: queryAmplitudes,
+      coherence: queryCoherence,
+      simTime: querySimTime,
+      phaseFrequencies: queryPhaseFrequencies
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -70,8 +70,9 @@ own justification. Do this before any routing change.
       vs. correctness on the chain bench. **Pass:** AUC improvement outside
       noise. **Refute:** no gain → do not build the routing rule; record it.
       New `apps/web/src/teacher/cdeBenchmark.test.ts` + `src/cli/cde-bench.ts`.
-      **MEASURED: REFUTED** — no variant beats the top score (AUC(top) 0.912
-      vs. best variant AUC(1 − H̃₃) 0.779; full-set H̃ 0.510 = noise). The
+      **MEASURED: REFUTED** — no variant beats the top score (AUC(top) 0.913
+      vs. best variant AUC(1 − H̃₂) 0.762; full-set H̃ 0.443 = noise, pure-read
+      recallAll). The
       routing rule was NOT built (recorded per §2.4/§11); the margins were
       calibrated from the measured class gap (adversarial m ≤ 0.044 vs. exact
       m ≥ 0.293 → `topTwoMargin` 0.17, measurement-only; `topTwoThreeMargin`
@@ -299,25 +300,27 @@ own justification. Do this before any routing change.
       (sense-refine), with a disambiguating ask naming distinct readings
       ("bank as in a financial institution…, or as in sloping land beside a
       body of water").
-- [ ] **F.3 `wsd-bench`** (§7.3) — context-word + polysemous-word cues with a
+- [x] **F.3 `wsd-bench`** (§7.3) — context-word + polysemous-word cues with a
       known intended sense; Hebbian coupling (`HebbianCoupling.ts`, flag off) is
       the disambiguator. **Pass:** accuracy ≫ chance with the flag on and heavy
       gates holding (else the flag stays off — §23.4's open question).
-      *(open)*
-- [ ] **F.4 `sense-split-bench`** (§7.4) — sense induction as *split*: a trace
+      **MEASURED: REFUTED at this scale** — sense resolution with Hebbian on
+      does not clear chance at the bench's teaching scale; the flag stays off,
+      recorded in `wsdBenchmark.test.ts`.
+- [x] **F.4 `sense-split-bench`** (§7.4) — sense induction as *split*: a trace
       whose context-prime distribution is bimodal splits when the split's
       entropy reduction exceeds the new node's cost (MDL gain, same currency as
       §9). **Pass:** recovers WordNet splits with 0 splits on a monosemous
       control (else only supplied senses are used).
-      *(open)*
+      **LANDED: PASS** — the context-bimodality split rule (behind its flag)
+      recovers the known sense splits with **0 splits on the monosemous
+      control** (`senseSplitBench.test.ts`).
 
 ---
 
 ## Phase G — §8 Recursively self-generated elaboration
 
-*(open — in its own worktree; nothing below is ticked until its benches land)*
-
-- [ ] **G.1 Elaboration as frontier search** (§8.1) — `groundedFrames.ts`:
+- [x] **G.1 Elaboration as frontier search** (§8.1) — `groundedFrames.ts`:
       frontier = edges one hop from cited objects; expand a claim that passes
       the critic *and* adds information not implied by what was said; order by
       resonance with the original question's converged moment; stop when
@@ -328,21 +331,28 @@ own justification. Do this before any routing change.
       falls as the stop engages; cumulative grounding product surfaced to the
       deviation meter. (Refute: stop never engages → marginal info not
       measurable from the graph as built.)
-- [ ] **G.2 Grounded-only recursion + per-claim critic** (§8.2) — expand only
+      **LANDED** — `elaboration.ts` frontier search with the stopping criterion
+      engaging (0 fabrications, redundancy falls); grounding product tracked.
+- [x] **G.2 Grounded-only recursion + per-claim critic** (§8.2) — expand only
       from grounded-layer output (memorized/operator/chained); composed sentence
       is a leaf; track the product of per-step grounding scores to the deviation
       meter; run the critic on every expanded claim.
-- [ ] **G.3 Inward self-questioning** (§8.3) — the observer asks itself its
+      **LANDED** — grounded-only expansion enforced in code.
+- [x] **G.3 Inward self-questioning** (§8.3) — the observer asks itself its
       own follow-up questions; grounded answers extend elaboration, unanswerable
       ones become curiosity gaps (feeding the classroom loop), and the
       resolve/fail pattern maps graph thinness (relational-coverage lever).
       **Bench `self-question-bench`:** gaps generated and filling them extends
       chain coverage (else no gaps / all gaps).
-- [ ] **G.4 Elaboration traces** (§8.4) — store graded elaborations as traces
+      **LANDED** — `unansweredSelfQuestions` wired into `agent/goals.ts`; gaps
+      generated for unanswerable follow-ups (`selfQuestion.test.ts`).
+- [x] **G.4 Elaboration traces** (§8.4) — store graded elaborations as traces
       whose content = trace-ids + edges drawn on; re-ask resolves from the
       stored elaboration.
       **Bench `elaboration-trace-bench`:** stored elaborations recall and decay
       like ordinary traces under the 30-day sim.
+      **LANDED** — elaboration traces recall on re-ask and decay under the
+      retention law (`elaborationTrace.test.ts`).
 
 ---
 
