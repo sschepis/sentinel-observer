@@ -1,6 +1,7 @@
 import { tokenizeText } from './context';
 import { ALL_PACK_PAIRS } from './conversationPacks';
 import { ALL_ELOQUENCE_PAIRS } from './eloquence';
+import { calibratedGateScore } from './calibration';
 
 /**
  * The conversation curriculum: taught exchange cues and their expected
@@ -314,6 +315,16 @@ export const CONVERSATION_RECALL_FLOOR = 0.6;
 export const CONVERSATION_EXACT_RECALL_FLOOR = 0.4;
 /** Fraction of taught pairs recalled at least once needed to unlock creative mode. */
 export const CREATIVE_UNLOCK_THRESHOLD = 0.8;
+
+/**
+ * D.4 (§5.2 row 3): the unlock gate's LIVE fraction — the isotonic-fitted
+ * decision score when the calibrated gate is enabled, else the hand
+ * constant (the control). conversationReport() reads this so one flag moves
+ * the unlock with the bench.
+ */
+export function creativeUnlockThreshold(): number {
+  return calibratedGateScore('creative-unlock', CREATIVE_UNLOCK_THRESHOLD);
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // The observer's own creative voice

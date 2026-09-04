@@ -1,4 +1,4 @@
-import { CREATIVE_REINFORCE_SCORE, CREATIVE_WEAKEN_SCORE, type TeacherAgent } from './TeacherAgent';
+import { CREATIVE_REINFORCE_SCORE, CREATIVE_WEAKEN_SCORE, creativeReinforceScore, type TeacherAgent } from './TeacherAgent';
 import type { Chaperone, SemanticGrader } from './chaperone';
 import type { RememberedFact } from './episodic';
 
@@ -94,7 +94,9 @@ export async function hybridAnswer(
   // re-graded on disagreement (the pending queue is the confirmation UI's).
   let stored = false;
   let regradeId: string | null = null;
-  if (score !== null && score >= CREATIVE_REINFORCE_SCORE) {
+  // D.4: the store gate reads the LIVE reinforce score — the fitted decision
+  // score while the calibrated gate is on, the constant otherwise.
+  if (score !== null && score >= creativeReinforceScore()) {
     const graded = await Promise.resolve(
       teacher.gradeCreativeWithReliability(
         { traceIds: memories.map((m) => m.id), edges: [] },

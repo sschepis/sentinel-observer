@@ -82,6 +82,7 @@ import {
   // Module-scope vocabulary moved to agent/support.ts (public names are
   // re-exported below; the internal ones are imported for the class body).
   CREATIVE_REINFORCE_SCORE,
+  creativeReinforceScore,
   VERIFY_UNLOCK_THRESHOLD,
   RETENTION_FRACTION,
   CREATIVE_WEAKEN_SCORE,
@@ -105,11 +106,13 @@ import {
   meaningCueOf,
   normalizedContentTokens,
   CONVERSATION_HIGH_CONFIDENCE,
+  conversationHighConfidenceScore,
   CONVERSATION_MIN_MARGIN,
   READING_WORD_BUDGET,
   authoritativeRecall,
   sleep,
   SETTLE_DT,
+  settleUntilCoherencePeak,
   matchesCue,
   isStaleEncoding,
   type CompiledRule,
@@ -151,6 +154,8 @@ export {
 // The previously-public module-scope surface, frozen (see agent/support.ts).
 export {
   CREATIVE_REINFORCE_SCORE,
+  creativeReinforceScore,
+  conversationHighConfidenceScore,
   VERIFY_UNLOCK_THRESHOLD,
   RETENTION_FRACTION,
   CREATIVE_WEAKEN_SCORE,
@@ -213,6 +218,39 @@ const TeacherAgentComposed = PersistenceMixin(
 
 export class TeacherAgent extends TeacherAgentComposed {
 
+  /** D.2: the settle criterion (constructor option; 'fixed' = the control). */
+  private readonly settleCriterion: 'fixed' | 'peak';
+
+  /** D.2 telemetry: the peak criterion's own record of whether it found a
+   *  well-defined peak on real cues — the settle-criterion bench reads it to
+   *  decide whether the constant stays. */
+  readonly settleTelemetry = { peakSettles: 0, illDefinedPeaks: 0, ticksSpent: 0 };
+
+  /**
+   * D.2 (§5.2 row 1): the coherence-peak settle. Same preamble as the fixed
+   * settle (settleField → observeText → one 0.02 tick), then tick SETTLE_DT
+   * until d coherence/dt crosses zero (stop at the peak). The search is
+   * bounded by SETTLE_PEAK_FUEL — a safety budget, never self-tuned — and a
+   * fuel-exhausted search falls back on the fixed-depth behavior (fuel ≥ the
+   * fixed depth, so the field is at least as settled as the control, and the
+   * bench records the ill-defined peak).
+   */
+  override exciteAndSettle(utterance: string): void {
+    if (this.settleCriterion !== 'peak') {
+      super.exciteAndSettle(utterance);
+      return;
+    }
+    this.session.settleField();
+    this.session.observeText(utterance);
+    this.session.observer.tick(0.02);
+    this.settleTelemetry.peakSettles += 1;
+    const outcome = settleUntilCoherencePeak((dt) => this.session.observer.tick(dt).metrics.coherence);
+    this.settleTelemetry.ticksSpent += outcome.ticks;
+    if (!outcome.peaked) {
+      this.settleTelemetry.illDefinedPeaks += 1;
+    }
+  }
+
   /** Adjust behaviour that is read at the point of use. */
   setTuning(next: Partial<{ forgettingRate: number; reviewThreshold: number }>): void {
     if (typeof next.forgettingRate === 'number' && Number.isFinite(next.forgettingRate)) {
@@ -272,13 +310,24 @@ export class TeacherAgent extends TeacherAgentComposed {
      * A/B arm) instead of DSL compilation. Default false — the shipped
      * behavior is bit-identical.
      */
-    rewriteInduction = false
+    rewriteInduction = false,
+    /**
+     * D.2 (§5.2 row 1): the settle CRITERION. 'fixed' (default — the
+     * control) settles RECALL_SETTLE_STEPS ticks; 'peak' ticks until the
+     * coherence peaks (d coherence/dt crosses zero), bounded by the
+     * SETTLE_PEAK_FUEL budget with the fixed depth as the fallback. The
+     * default is the control until the settle-criterion bench shows the
+     * peak is well-defined on real cues (0 fuzz FP, exact recall held).
+     * LAST parameter on purpose: every positional call site stays valid.
+     */
+    settleCriterion: 'fixed' | 'peak' = 'fixed'
   ) {
     super();
     this.session = session;
     this.persistence = persistence;
     this.persistEvery = Math.max(1, Math.floor(persistEvery));
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
+    this.settleCriterion = settleCriterion === 'peak' ? 'peak' : 'fixed';
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
     this.curriculumConfig = curriculumConfig ?? {};
     this.rewriteInduction = rewriteInduction;

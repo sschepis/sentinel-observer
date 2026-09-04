@@ -54,7 +54,7 @@ import {
   type BootstrapRecord
 } from '../bootstrap';
 import {
-  CREATIVE_REINFORCE_SCORE,
+  creativeReinforceScore,
   PERSIST_DEBOUNCE_MS,
   PERSIST_MAX_DELAY_MS,
   isTouchedWordState,
@@ -533,7 +533,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
       for (const trace of bank.all()) {
         if (trace.metadata?.kind !== 'creative') continue;
         const score = typeof trace.metadata.score === 'number' ? trace.metadata.score : 0.7;
-        if (score < CREATIVE_REINFORCE_SCORE) continue;
+        if (score < creativeReinforceScore()) continue;
         bumpAgedWeights(this.compositionWeights, this.compositionWeightMeta, [trace.content], CREATIVE_GRADE_DELTA);
       }
     }

@@ -6,6 +6,7 @@
  */
 import { FSRS_INITIAL_STABILITY, FSRS_INITIAL_DIFFICULTY } from '../fsrs';
 import { CONVERSATION_RECALL_FLOOR, type CreativeComposition } from '../conversation';
+import { calibratedGateScore } from '../calibration';
 import { tokenizeText, isContentWord, singularize } from '../context';
 import type { OperatorResult } from '../operators';
 import type { RecallResult } from '@sschepis/sentient-core';
@@ -279,6 +280,16 @@ export const CREATIVE_WEAKEN_SCORE = 0.3;
 const CREATIVE_GRADE_DELTA = 0.05;
 
 /**
+ * D.4 (§5.2 row 3): the reinforce gate's LIVE score — the isotonic-fitted
+ * decision score when the calibrated gate is enabled, else the hand
+ * constant (the control). Consumed by every store/reinforce decision site
+ * so one flag moves them all together.
+ */
+export function creativeReinforceScore(): number {
+  return calibratedGateScore('creative-reinforce', CREATIVE_REINFORCE_SCORE);
+}
+
+/**
  * L1b (Phase 18.2): the creative grade delta is SURPRISE-SCALED by the
  * grade's margin beyond its gate — a 0.95 grade moves seeds more than a
  * 0.71, a 0.05 grade weakens more than a 0.28 — floored at 0.25 of the base
@@ -288,11 +299,14 @@ const CREATIVE_GRADE_DELTA = 0.05;
  * creativeGradeDelta(1) = +CREATIVE_GRADE_DELTA, creativeGradeDelta(0) =
  * −CREATIVE_GRADE_DELTA — the world-feedback channels (re-ask = full
  * weaken, retention confirm = full reinforce × RETENTION_FRACTION) route
- * through those extremes.
+ * through those extremes. D.4: the reinforce edge reads the LIVE gate
+ * (creativeReinforceScore), so the calibrated band replaces the constant
+ * while the flag is on.
  */
 export function creativeGradeDelta(score: number): number {
-  if (score >= CREATIVE_REINFORCE_SCORE) {
-    const margin = (score - CREATIVE_REINFORCE_SCORE) / (1 - CREATIVE_REINFORCE_SCORE);
+  const reinforceScore = creativeReinforceScore();
+  if (score >= reinforceScore) {
+    const margin = (score - reinforceScore) / (1 - reinforceScore);
     return CREATIVE_GRADE_DELTA * Math.max(0.25, Math.min(1, margin));
   }
   if (score <= CREATIVE_WEAKEN_SCORE) {
@@ -363,6 +377,15 @@ function normalizedContentTokens(text: string): Set<string> {
 const CONVERSATION_HIGH_CONFIDENCE = 0.8;
 
 /**
+ * D.4 (§5.2 row 3): the recall-confidence gate's LIVE score — the
+ * isotonic-fitted decision score when the calibrated gate is enabled, else
+ * the hand constant (the control).
+ */
+export function conversationHighConfidenceScore(): number {
+  return calibratedGateScore('conversation-high-confidence', CONVERSATION_HIGH_CONFIDENCE);
+}
+
+/**
  * MARGIN GATE — the separation a memorized answer must show over its best
  * competitor when its absolute score sits in the 0.6-0.8 band.
  *
@@ -386,10 +409,12 @@ const READING_WORD_BUDGET = 64;
  * Whether a recalled exchange may be SPOKEN as memorized: the cue identity
  * must match, and the recall must either clear the absolute confidence bar
  * or clear the recall floor with a clear margin over its best competitor.
+ * D.4: the absolute bar is the LIVE gate — the fitted score when the
+ * calibrated gate is on, the constant otherwise.
  */
 function authoritativeRecall(score: number, margin: number, cue: string, matchedCue: string): boolean {
   if (!matchesCue(cue.trim().toLowerCase(), matchedCue.trim().toLowerCase())) return false;
-  if (score >= CONVERSATION_HIGH_CONFIDENCE) return true;
+  if (score >= conversationHighConfidenceScore()) return true;
   return score >= CONVERSATION_RECALL_FLOOR && margin >= CONVERSATION_MIN_MARGIN;
 }
 
@@ -440,6 +465,39 @@ export const SOON_STRENGTH_THRESHOLD = 0.75;
  */
 export const RECALL_SETTLE_STEPS = 4;
 const SETTLE_DT = 0.05;
+
+/**
+ * D.2 (§5.2 row 1): the fuel budget of the coherence-peak settle — a SAFETY
+ * bound. When the settle criterion is the coherence peak, the field may tick
+ * at most this many times hunting for d coherence/dt = 0; beyond it the
+ * criterion is ill-defined and the fixed depth is the fallback (a
+ * self-tuning fuel budget is a fabrication channel, §5.1).
+ */
+export const SETTLE_PEAK_FUEL = 16;
+
+/**
+ * D.2: tick until the coherence peaks — advance the field one SETTLE_DT at a
+ * time while d coherence/dt > 0, and stop at the first tick where coherence
+ * stops rising (the derivative crosses zero). Returns the ticks spent and
+ * whether the peak was found within the fuel budget. The fixed depth is the
+ * fallback the caller applies when `peaked` is false: the fuel budget is the
+ * bound, and fuel ≥ the fixed depth, so a failed peak search still settles
+ * at least as deep as the control.
+ */
+export function settleUntilCoherencePeak(
+  tick: (dt: number) => number,
+  fuel = SETTLE_PEAK_FUEL,
+  dt = SETTLE_DT
+): { ticks: number; peaked: boolean } {
+  if (fuel < 2) return { ticks: Math.max(0, fuel), peaked: false };
+  let previous = tick(dt);
+  for (let step = 2; step <= fuel; step += 1) {
+    const coherence = tick(dt);
+    if (coherence <= previous) return { ticks: step, peaked: true };
+    previous = coherence;
+  }
+  return { ticks: fuel, peaked: false };
+}
 
 /**
  * Whether a recalled cue matches the question it was taught under. The
