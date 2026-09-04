@@ -40,9 +40,11 @@ deck stays above a measured baseline (see §4).
   per trace: content, SMF sketch vector, prime signature, amplitudes, and the
   moment's sparse phase configuration — ~1.2 KB at the 128-dim width with q8
   serialization (the phase pair adds ~a few hundred bytes for the active
-  primes). Keep the holographic layer for the *session field*; for ranking,
-  combine SMF cosine (gated by the cue moment's coherence) + prime-overlap +
-  the phase order parameter of the cue-vs-stored phase-difference ensemble —
+  primes; the configuration is retained for self-measurement even though the
+  phase order parameter that once ranked it was measured as moment-proximity
+  only and dropped from the recall blend by default — observer-paper §5.16).
+  Keep the holographic layer for the *session field*; for ranking,
+  combine SMF cosine (gated by the cue moment's coherence) + prime-overlap —
   the lean replacement for the per-trace holographic correlation.
 - **Candidate prefiltering**: recall first selects traces whose prime
   signatures overlap the cue (a Map from prime → trace ids). At 10K words a
