@@ -20,6 +20,7 @@ import {
   type BootstrapRecord
 } from './bootstrap';
 import type { DeckWord } from './deck';
+import { consolidateTraces, mergeAggregateStores } from './mergeConsolidation';
 
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -58,15 +59,30 @@ parentPort.on('message', async (msg) => {
 }
 
 /**
- * Concatenate shard records into a single bootstrap record. Traces are
- * deduplicated by id; the prime basis is taken from the first record that
- * carries one (all shards share the same observer options).
+ * Concatenate shard records into a single bootstrap record, then run the
+ * merge-hygiene passes:
+ *   - traces are deduplicated by id, then CONSOLIDATED — the surprise gate
+ *     run once over the merged set collapses cross-shard near-duplicates
+ *     (SMF cosine at/above NEAR_DUPLICATE_SMF_COSINE) to the strongest trace;
+ *   - the non-concatenable aggregate stores are merged with explicit rules
+ *     (masses sum, weights average by mass, clocks take the max) instead of
+ *     being dropped.
+ * The prime basis is taken from the first record that carries one (all shards
+ * share the same observer options).
  */
 export function mergeRecords(records: readonly BootstrapRecord[]): BootstrapRecord {
   const seen = new Set<string>();
-  const traces = records
+  const concatenated = records
     .flatMap((r) => r.traces)
     .filter((trace) => (seen.has(trace.id) ? false : (seen.add(trace.id), true)));
+  const traces = consolidateTraces(concatenated);
+  // A word whose trace collapsed into a near-duplicate is covered by the
+  // survivor; drop its word state so the import never binds a dangling id.
+  const survivingIds = new Set(traces.map((t) => t.id));
+  const wordStates = records
+    .flatMap((r) => r.wordStates)
+    .filter((state) => state.traceId !== null && survivingIds.has(state.traceId));
+  const aggregates = mergeAggregateStores(records);
   const basis = records.find((r) => r.primeBasis !== undefined && r.primeBasis.length > 0)?.primeBasis;
   return {
     version: BOOTSTRAP_VERSION,
@@ -81,8 +97,11 @@ export function mergeRecords(records: readonly BootstrapRecord[]): BootstrapReco
       definitionsFilled: false
     },
     traces,
-    wordStates: records.flatMap((r) => r.wordStates),
-    definitions: records.flatMap((r) => r.definitions)
+    wordStates,
+    definitions: records.flatMap((r) => r.definitions),
+    ...(aggregates.driveWeights !== undefined ? { driveWeights: aggregates.driveWeights } : {}),
+    ...(aggregates.goalHistory !== undefined ? { goalHistory: aggregates.goalHistory } : {}),
+    ...(aggregates.learningState !== undefined ? { learningState: aggregates.learningState } : {})
   };
 }
 
