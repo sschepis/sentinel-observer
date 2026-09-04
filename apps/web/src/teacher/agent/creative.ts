@@ -68,7 +68,7 @@ import {
   clampRange
 } from '@sschepis/sentient-core';
 import {
-  CREATIVE_REINFORCE_SCORE,
+  creativeReinforceScore,
   RETENTION_FRACTION,
   CREATIVE_WEAKEN_SCORE,
   creativeGradeDelta,
@@ -205,7 +205,8 @@ export function CreativeMixin<TBase extends Constructor<TeacherAgentCore & Cross
      * weaken both slightly — creativity becomes a learned behavior on top of
      * memorization, driven by entropy descent over the composition weights.
      *
-     * Additionally, a STRONG answer (>= CREATIVE_REINFORCE_SCORE) is itself
+     * Additionally, a STRONG answer (>= CREATIVE_REINFORCE_SCORE — the live
+     * creativeReinforceScore() gate, D.4) is itself
      * memorized as a new creative trace keyed by its utterance — the observer
      * "remembers what worked", so a good answer becomes a repeatable answer
      * (and its words join the composition pool for future novelty). Weak
@@ -268,7 +269,7 @@ export function CreativeMixin<TBase extends Constructor<TeacherAgentCore & Cross
       // the grounded composition used. A strong answer also demonstrates its
       // structure — the induction reconstructs the template from the accepted
       // sentence (content still read from stored edges at generation time).
-      const accepted = score >= CREATIVE_REINFORCE_SCORE;
+      const accepted = score >= creativeReinforceScore();
       this.learnedFrames.observeUse(templateIds, accepted);
       if (delta > 0 && templateIds.length > 0 && answer.trim().length > 0) {
         this.learnedFrames.induce(answer, this.relations(), this.negations);
@@ -347,7 +348,7 @@ export function CreativeMixin<TBase extends Constructor<TeacherAgentCore & Cross
       // Memorize strong answers as creative traces (surprise-gated: only store
       // if this exact answer is not already an utterance-keyed memory).
       let stored = false;
-      if (score >= CREATIVE_REINFORCE_SCORE && utterance.trim().length > 0 && answer.trim().length > 0) {
+      if (score >= creativeReinforceScore() && utterance.trim().length > 0 && answer.trim().length > 0) {
         const key = utterance.trim().toLowerCase();
         if (!this.creativeUtteredKeys.has(key) && !this.taughtConversationCues.has(key)) {
           // Excite the field with the utterance so the answer stores under a
@@ -378,7 +379,7 @@ export function CreativeMixin<TBase extends Constructor<TeacherAgentCore & Cross
         // LEARNED GRADIENT: a weak composition credits compose as a loss.
         this.noteBehaviorOutcome('compose', false);
       }
-      if (score >= CREATIVE_REINFORCE_SCORE) {
+      if (score >= creativeReinforceScore()) {
         // LEARNED GRADIENT: a strong composition credits compose as a win.
         this.noteBehaviorOutcome('compose', true);
         // P8 GRADED-CONFIRMED "NO": a strong answer that IS a negative statement

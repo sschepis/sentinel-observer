@@ -16,7 +16,7 @@ import type {
 import {
   CONVERSATION_RECALL_FLOOR,
   CONVERSATION_EXACT_RECALL_FLOOR,
-  CREATIVE_UNLOCK_THRESHOLD,
+  creativeUnlockThreshold,
   type ConversationPair
 } from '../conversation';
 import {
@@ -244,7 +244,7 @@ export function ConversationMixin<TBase extends Constructor<TeacherAgentCore & C
         taught,
         recalled,
         competency,
-        creativeUnlocked: competency >= CREATIVE_UNLOCK_THRESHOLD
+        creativeUnlocked: competency >= creativeUnlockThreshold()
       };
     }
 

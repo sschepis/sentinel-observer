@@ -159,6 +159,22 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     line: 35,
     note: 'Effective strength above which an edge reads as confident.'
   },
+  {
+    name: 'WRONG_ANSWER_COST',
+    class: 'values',
+    value: 1,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 40,
+    note: '§5.2 row 3: the cost of a wrong answer — the decision threshold τ = 1/(1+0.25) = 0.8 encodes the honesty contract.'
+  },
+  {
+    name: 'ABSTAIN_COST',
+    class: 'values',
+    value: 0.25,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 43,
+    note: '§5.2 row 3: the cost of abstaining (asking honestly) — a wrong answer costs 4× an abstention; the data cannot set this.'
+  },
 
   // ── SAFETY — bounds that make failure impossible ───────────────────────────
   {
@@ -232,6 +248,14 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     file: 'apps/web/src/teacher/calibration.ts',
     line: 36,
     note: 'Bounded ledger — the calibration sample FIFO is capped per gate.'
+  },
+  {
+    name: 'SETTLE_PEAK_FUEL',
+    class: 'safety',
+    value: 16,
+    file: 'apps/web/src/teacher/agent/support.ts',
+    line: 476,
+    note: 'Fuel budget — the coherence-peak settle may tick at most this many times before the fixed depth is the fallback (a self-tuning fuel budget is a fabrication channel).'
   },
   {
     name: 'MAX_RECORD_BYTES',
@@ -369,7 +393,7 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     value: 0.8,
     file: 'apps/web/src/teacher/agent/support.ts',
     line: 363,
-    note: 'Chat routing threshold — memorized recall is authoritative above this.',
+    note: 'Chat routing threshold — memorized recall is authoritative above this. The CONTROL of CALIBRATED_CONVERSATION_HIGH_CONFIDENCE.',
     evidence: { sources: ['fuzz', 'calibration', 'llm-grade'], mass: null, note: '§5.2 row 3: calibrated P(correct | score) on graded outcomes; anchored by the fuzz bench (0 false positives).' }
   },
   {
@@ -405,7 +429,7 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     value: 0.8,
     file: 'apps/web/src/teacher/conversation.ts',
     line: 316,
-    note: 'Fraction of taught pairs recalled needed to unlock creative mode.',
+    note: 'Fraction of taught pairs recalled needed to unlock creative mode. The CONTROL of CALIBRATED_CREATIVE_UNLOCK.',
     evidence: { sources: ['fuzz', 'calibration'], mass: null, note: '§5.2 row 3: creative unlock 80%.' }
   },
   {
@@ -414,7 +438,7 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     value: 0.7,
     file: 'apps/web/src/teacher/agent/support.ts',
     line: 270,
-    note: 'A creative answer graded this well reinforces its seed memories.',
+    note: 'A creative answer graded this well reinforces its seed memories. The CONTROL of CALIBRATED_CREATIVE_REINFORCE.',
     evidence: { sources: ['fuzz', 'llm-grade'], mass: null, note: '§5.2 row 3: hybrid store ≥ 0.7.' }
   },
   {
@@ -461,6 +485,42 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     line: 442,
     note: 'Per-step integration dt of the settle transient.',
     evidence: { sources: ['fuzz'], mass: null, note: 'Drive-scaled settle falls out of the coherence-peak criterion.' }
+  },
+  {
+    name: 'SETTLE_CRITERION_PEAK',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/TeacherAgent.ts',
+    line: 323,
+    note: '0 = fixed-depth settle is the CONTROL; 1 = tick until the coherence peak (stop when d coherence/dt crosses zero), the fixed depth remaining the fallback within the fuel budget.',
+    evidence: { sources: ['fuzz', 'chain'], mass: null, note: '§5.2 row 1: the settleCriterion option; defaults to the fixed depth until the settle-criterion bench (0 fuzz FP + exact recall) shows the peak is well-defined.' }
+  },
+  {
+    name: 'CALIBRATED_CONVERSATION_HIGH_CONFIDENCE',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 70,
+    note: '0 = the 0.8 constant is the CONTROL; 1 = gate on the isotonic P(correct | recall score) crossing τ = cost(wrong)/(cost(wrong)+cost(abstain)).',
+    evidence: { sources: ['fuzz', 'adversarial', 'calibration'], mass: null, note: '§5.2 row 3: calibrated on labeled recall outcomes (exact cues vs fuzz distractors); anchored by the fuzz bench — a lost probe reverts the flag.' }
+  },
+  {
+    name: 'CALIBRATED_CREATIVE_REINFORCE',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 70,
+    note: '0 = the 0.7 constant is the CONTROL; 1 = reinforce/store on the isotonic P(correct | grade) crossing τ.',
+    evidence: { sources: ['fuzz', 'adversarial', 'calibration'], mass: null, note: '§5.2 row 3: calibrated on graded creative outcomes (gold set + rule-band agreement); anchored by the honesty probes.' }
+  },
+  {
+    name: 'CALIBRATED_CREATIVE_UNLOCK',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 70,
+    note: '0 = the 0.8 unlock fraction is the CONTROL; 1 = unlock when P(correct composition | competency) crosses τ.',
+    evidence: { sources: ['fuzz', 'adversarial', 'calibration'], mass: null, note: '§5.2 row 3: calibrated on graded outcomes across competency levels; anchored by the honesty probes (evasion rule untouched).' }
   },
   {
     name: 'GRADE_STRONG_THRESHOLD',
