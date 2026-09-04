@@ -430,10 +430,15 @@ export function extractSubject(sentence: string): string | null {
   return hit === null ? null : hit[1].toLowerCase();
 }
 
-/** Split an object list ("wings and feathers", "cold and wet") into words. */
+/** Split an object list ("wings and feathers", "cold and wet", "beak,
+ *  wings, and feathers") into words. Handles both the bare-"and" and the
+ *  comma-joined list forms framesFor emits — a comma never follows
+ *  whitespace, so the comma form needs its own alternative (previously a
+ *  3-object list parsed as "beak, wings," + "feathers" and the critic
+ *  refused the frame it had been handed). */
 function splitObjects(rest: string): string[] {
   return rest
-    .split(/\s+(?:and|,)\s+/i)
+    .split(/\s+and\s+|,\s*(?:and\s+)?/i)
     .map((token) => token.trim().toLowerCase())
     .filter((token) => token.length > 0 && isContentWord(token));
 }
