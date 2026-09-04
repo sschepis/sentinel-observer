@@ -11,6 +11,15 @@
  * edges, and traces live on the sense; chain walks run over sense nodes and
  * cannot cross senses.
  *
+ * §7.4 adds SENSE INDUCTION AS SPLIT FROM CONTEXT, behind
+ * `CONTEXT_SENSE_SPLIT_FLAGS` (default OFF): a `ContextSenseRecorder` keeps
+ * the co-excited context primes at each store/recall, and
+ * `contextSplitDecision` splits a trace into two senses exactly when its
+ * context distribution is BIMODAL (two distinguishable context clusters,
+ * read with the cde.ts instrument) AND the split's conditional-entropy
+ * reduction exceeds the new sense node's cost — the §9 MDL criterion run in
+ * the split direction.
+ *
  * This module is PURE and shared by the teacher (relations split, teach),
  * the probe test, and `cli/polysemy-bench.ts` — the same discipline as
  * `polysemyProbes.ts`. It IMPORTS `chain.ts` for the depth-bounded walk
@@ -31,6 +40,8 @@ import { PRIME_SPACE, SIGNATURE_LENGTH, sensePrimeSignature } from './primeSigna
 import { technicalRelations } from './technical';
 import { SUPPLEMENTAL_RELATIONS } from './decks/relationSupplements';
 import { GROUNDED_FACTS_RELATIONS } from './decks/groundedFacts';
+import { normalizedEntropy, topTwoMargin } from './cde';
+import { UNKNOWN_TOKEN_COST } from './mdl';
 
 const NEVER_DENIED: DeniedClaim = () => false;
 
@@ -357,4 +368,358 @@ export function senseClosuresOf(
   const readings = assignment.readingsOf.get(subject);
   if (readings === undefined) return [new Set(ancestors(relations, subject, denied))];
   return readings.map((reading) => senseClosure(relations, reading, denied));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §7.4 SENSE INDUCTION AS SPLIT FROM CONTEXT — the context-bimodality rule.
+//
+// Where WordNet supplies no senses, the entropy principle supplies an
+// induction rule: a trace's CONTEXTS — the prime sets co-excited with it
+// across its stores and recalls — form a distribution. When that
+// distribution is BIMODAL (two distinguishable context clusters), splitting
+// the trace into two senses reduces the conditional entropy of context
+// given sense. The split is taken exactly when the reduction exceeds the
+// cost of the new sense node — an MDL gain in the same currency as §9
+// (split lowers the description length of context given sense; §9's merge
+// lowers the description length of edges given concept).
+//
+// EVERYTHING BELOW IS BEHIND `CONTEXT_SENSE_SPLIT_FLAGS` (default OFF):
+// recording is a no-op and the rule refuses to split while the flag is
+// off, so every existing behavior stays bit-identical — the same additive
+// discipline as the `senseSplit` constructor option above. The
+// `sense-split-bench` (§7.5) flips the flag on, teaches with contexts from
+// both known senses, and measures whether the rule recovers the splits
+// without fragmenting a monosemous control set.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** The §7.4 gate — ALL OFF by default. The rule is the FLAG-DRIVEN arm;
+ *  the relation-graph split (§7.2) stays the default until the
+ *  `sense-split-bench` shows the context distribution is clean enough to
+ *  induce senses from it. */
+export const CONTEXT_SENSE_SPLIT_FLAGS: { enabled: boolean } = { enabled: false };
+
+/** Enable/disable context-based sense induction (the bench flips this). */
+export function setContextSenseSplitEnabled(enabled: boolean): void {
+  CONTEXT_SENSE_SPLIT_FLAGS.enabled = enabled;
+}
+
+/** Reset the §7.4 flag behind its control (off — the graph split only). */
+export function resetContextSenseSplitFlags(): void {
+  CONTEXT_SENSE_SPLIT_FLAGS.enabled = false;
+}
+
+/** One recorded co-excitation: the sorted distinct primes of the context
+ *  cues excited together with the word at ONE store/recall (the word's own
+ *  signature is excluded — these are the primes co-excited WITH it). */
+export interface ContextEvent {
+  primes: readonly number[];
+}
+
+/**
+ * The context-distribution recorder: one event per store/recall of a word,
+ * each event the cue's co-excited context prime set. A pure, self-contained
+ * channel the caller feeds at every teach and recall — while the flag is
+ * off `record` is a no-op, so the mechanism costs nothing when disabled.
+ */
+export class ContextSenseRecorder {
+  private readonly events = new Map<string, ContextEvent[]>();
+
+  /** Record one co-excited context prime set for a word. No-op while the
+   *  §7.4 flag is off; empty contexts are recorded as-is (the split rule
+   *  ignores them — a store/recall with no co-excited context primes
+   *  carries no context information). */
+  record(word: string, contextPrimes: readonly number[]): void {
+    if (!CONTEXT_SENSE_SPLIT_FLAGS.enabled) return;
+    const key = word.trim().toLowerCase();
+    if (key.length === 0) return;
+    const primes = [...new Set(contextPrimes)].sort((a, b) => a - b);
+    const bucket = this.events.get(key) ?? [];
+    bucket.push({ primes });
+    this.events.set(key, bucket);
+  }
+
+  /** Every recorded context event of a word, in recording order. */
+  eventsOf(word: string): readonly ContextEvent[] {
+    return this.events.get(word.trim().toLowerCase()) ?? [];
+  }
+
+  /** The words with at least one recorded context event. */
+  recordedWords(): string[] {
+    return [...this.events.keys()].sort();
+  }
+
+  /** Drop every recorded event. */
+  clear(): void {
+    this.events.clear();
+  }
+}
+
+// ── §7.4 tuning constants (§5 discipline) ────────────────────────────────────
+// Calibrated for the sense-split bench's teaching regime (a few context
+// words per cue, several cues per sense). Documented here as constants, not
+// buried in the rule, so the bench can read them and the report can name
+// them.
+
+/** Minimum non-empty context events before the rule reads a word. */
+export const CONTEXT_SPLIT_MIN_EVENTS = 4;
+
+/** Minimum events a cluster must hold to count as a distinguishable sense. */
+export const CONTEXT_SPLIT_MIN_CLUSTER_EVENTS = 2;
+
+/** Minimum mean top-two margin over the events' cluster affinities — how
+ *  one-sided each event's cluster membership must be for the two clusters
+ *  to count as DISTINGUISHABLE (mixed events read ~0 and kill the split). */
+export const CONTEXT_SPLIT_MIN_MEAN_MARGIN = 0.5;
+
+/** Minimum normalized entropy of the two cluster masses — both senses must
+ *  actually occur (a 1-0 split is not bimodal). */
+export const CONTEXT_SPLIT_MIN_BALANCE = 0.6;
+
+/** Maximum Jaccard overlap between the two clusters' prime sets — the
+ *  induced senses' contexts must be separable, not one noisy family. */
+export const CONTEXT_SPLIT_MAX_PRIME_OVERLAP = 0.25;
+
+/** Laplace smoothing over the per-cluster prime frequency tables. */
+export const CONTEXT_SPLIT_LAPLACE = 1;
+
+/** The Zipf cost of NAMING the new sense node — the sense key ("bank#2") is
+ *  an unseen token, so it costs the model's unknown-token cost (mdl.ts,
+ *  the §9 "bits(name X)" currency). */
+export const SENSE_NODE_NAME_COST_BITS = UNKNOWN_TOKEN_COST;
+
+/** The bits of minting a sense node's four-prime signature: selecting 4
+ *  distinct primes from the prime space costs log₂ C(P, 4). */
+export function senseNodeSignatureCostBits(primeSpaceSize: number): number {
+  if (primeSpaceSize < SIGNATURE_LENGTH) return 0;
+  const combinations =
+    (primeSpaceSize * (primeSpaceSize - 1) * (primeSpaceSize - 2) * (primeSpaceSize - 3)) / 24;
+  return Math.log2(combinations);
+}
+
+/** The total cost of a new sense node in the §9 currency: its name (a new
+ *  token) plus its signature (a 4-of-P prime selection). */
+export function senseNodeCostBits(primeSpaceSize: number = PRIME_SPACE.length): number {
+  return SENSE_NODE_NAME_COST_BITS + senseNodeSignatureCostBits(primeSpaceSize);
+}
+
+/** The split decision the rule reaches for one word. */
+export interface ContextSplitDecision {
+  /** The surface word. */
+  word: string;
+  /** The rule FIRED: enabled AND bimodal AND the MDL gain is positive. */
+  split: boolean;
+  /** The cde-based bimodality read alone (two distinguishable context
+   *  clusters) — reported even when the MDL gate then blocks the split,
+   *  so the bench can see which gate refused. */
+  bimodal: boolean;
+  /** Σ cost(E | word) − Σ cost(E | assigned sense) over the events, bits. */
+  entropyReductionBits: number;
+  /** bits(name of the sense node) + bits(its four-prime signature). */
+  nodeCostBits: number;
+  /** entropyReductionBits − nodeCostBits (positive exactly when split). */
+  gainBits: number;
+  /** Event index → cluster (0/1); non-null when the read is bimodal. */
+  assignment: number[] | null;
+  /** The two induced context-prime clusters — the induced senses. */
+  clusters: [readonly number[], readonly number[]] | null;
+}
+
+/** The Jaccard co-occurrence between two primes over the recorded events
+ *  (pair-order-independent: the co-occurrence table stores sorted keys). */
+function primeJaccard(
+  frequency: ReadonlyMap<number, number>,
+  cooccurrence: ReadonlyMap<string, number>,
+  a: number,
+  b: number
+): number {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const together = cooccurrence.get(`${lo}:${hi}`) ?? 0;
+  const total = (frequency.get(a) ?? 0) + (frequency.get(b) ?? 0) - together;
+  return total <= 0 ? 0 : together / total;
+}
+
+/** Σ cost(E | assigned sense) − Σ cost(E | word) — the bit reduction of
+ *  encoding every event under its assigned sense's Laplace-smoothed prime
+ *  frequencies instead of the word's single merged distribution. Hard
+ *  assignment; the term is clamped at 0 (a split that would cost more to
+ *  encode never pays). */
+function contextEntropyReduction(
+  events: readonly ContextEvent[],
+  assignment: readonly number[],
+  clusterCount: number
+): number {
+  const costOf = (
+    counts: ReadonlyMap<number, number>,
+    total: number,
+    vocab: number,
+    prime: number
+  ): number => {
+    const probability =
+      ((counts.get(prime) ?? 0) + CONTEXT_SPLIT_LAPLACE) / (total + CONTEXT_SPLIT_LAPLACE * vocab);
+    return -Math.log2(Math.max(probability, 1e-12));
+  };
+  const merged = new Map<number, number>();
+  let mergedTotal = 0;
+  for (const event of events) {
+    for (const prime of event.primes) {
+      merged.set(prime, (merged.get(prime) ?? 0) + 1);
+      mergedTotal += 1;
+    }
+  }
+  let unsplitBits = 0;
+  for (const event of events) {
+    for (const prime of event.primes) unsplitBits += costOf(merged, mergedTotal, merged.size, prime);
+  }
+  const perCluster: Array<Map<number, number>> = Array.from(
+    { length: clusterCount },
+    () => new Map<number, number>()
+  );
+  const totals = new Array<number>(clusterCount).fill(0);
+  for (let i = 0; i < events.length; i += 1) {
+    const cluster = assignment[i];
+    for (const prime of events[i].primes) {
+      perCluster[cluster].set(prime, (perCluster[cluster].get(prime) ?? 0) + 1);
+      totals[cluster] += 1;
+    }
+  }
+  let splitBits = 0;
+  for (let i = 0; i < events.length; i += 1) {
+    const cluster = assignment[i];
+    for (const prime of events[i].primes) {
+      splitBits += costOf(perCluster[cluster], totals[cluster], perCluster[cluster].size, prime);
+    }
+  }
+  return Math.max(0, unsplitBits - splitBits);
+}
+
+/**
+ * THE §7.4 SPLIT RULE — read a word's recorded context distribution and
+ * decide whether the trace splits into two senses.
+ *
+ *  1. Cluster the context primes into TWO clusters by co-occurrence: the
+ *     seeds are the most frequent prime and the frequent prime that
+ *     co-occurs with it LEAST (two distinguishable context families); every
+ *     other prime joins its nearer seed (Jaccard co-occurrence).
+ *  2. The BIMODALITY read reuses cde.ts: each event's cluster affinities
+ *     [|E∩A|, |E∩B|] give a top-two margin (one-sided = distinguishable),
+ *     and the two cluster masses give a normalized entropy (both senses
+ *     occur). Bimodal ⇔ every gate holds: each cluster has enough events,
+ *     the mean margin meets CONTEXT_SPLIT_MIN_MEAN_MARGIN, the mass balance
+ *     meets CONTEXT_SPLIT_MIN_BALANCE, and the clusters' prime sets do not
+ *     overlap past CONTEXT_SPLIT_MAX_PRIME_OVERLAP.
+ *  3. The MDL gate: the split fires exactly when the conditional-entropy
+ *     reduction of context given sense exceeds the new sense node's cost
+ *     (senseNodeCostBits) — the same currency as §9, run in the split
+ *     direction.
+ *
+ *  Deterministic for a given recording. A monosemous word whose contexts
+ *  overlap (one family of co-occurring primes) fails the margin gate or
+ *  fails to pay for the node — it never fragments.
+ */
+export function contextSplitDecision(
+  word: string,
+  recorder: ContextSenseRecorder,
+  primeSpaceSize: number = PRIME_SPACE.length
+): ContextSplitDecision {
+  const nodeCostBits = senseNodeCostBits(primeSpaceSize);
+  const refused: ContextSplitDecision = {
+    word,
+    split: false,
+    bimodal: false,
+    entropyReductionBits: 0,
+    nodeCostBits,
+    gainBits: -nodeCostBits,
+    assignment: null,
+    clusters: null
+  };
+  if (!CONTEXT_SENSE_SPLIT_FLAGS.enabled) return refused;
+  const events = recorder.eventsOf(word).filter((event) => event.primes.length > 0);
+  if (events.length < CONTEXT_SPLIT_MIN_EVENTS) return refused;
+
+  const frequency = new Map<number, number>();
+  for (const event of events) {
+    for (const prime of event.primes) frequency.set(prime, (frequency.get(prime) ?? 0) + 1);
+  }
+  const cooccurrence = new Map<string, number>();
+  for (const event of events) {
+    for (let i = 0; i < event.primes.length; i += 1) {
+      for (let j = i + 1; j < event.primes.length; j += 1) {
+        const a = event.primes[i];
+        const b = event.primes[j];
+        const key = `${a}:${b}`;
+        cooccurrence.set(key, (cooccurrence.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  const jaccard = (a: number, b: number): number => primeJaccard(frequency, cooccurrence, a, b);
+  const ranked = [...frequency.keys()].sort(
+    (a, b) => (frequency.get(b) ?? 0) - (frequency.get(a) ?? 0) || a - b
+  );
+  if (ranked.length < 2) return refused;
+
+  // Seed A: the most frequent prime. Seed B: the frequent prime that
+  // co-occurs with it LEAST — the farthest context family.
+  const seedA = ranked[0];
+  let seedB: number | null = null;
+  for (const prime of ranked.slice(1)) {
+    const better =
+      seedB === null ||
+      jaccard(prime, seedA) < jaccard(seedB, seedA) - 1e-9 ||
+      (Math.abs(jaccard(prime, seedA) - jaccard(seedB, seedA)) <= 1e-9 &&
+        ((frequency.get(prime) ?? 0) > (frequency.get(seedB) ?? 0) ||
+          ((frequency.get(prime) ?? 0) === (frequency.get(seedB) ?? 0) && prime < seedB)));
+    if (better) seedB = prime;
+  }
+  if (seedB === null) return refused;
+
+  const clusterA = new Set<number>([seedA]);
+  const clusterB = new Set<number>([seedB]);
+  for (const prime of ranked) {
+    if (prime === seedA || prime === seedB) continue;
+    if (jaccard(prime, seedA) >= jaccard(prime, seedB)) clusterA.add(prime);
+    else clusterB.add(prime);
+  }
+
+  // Event assignment + the cde-based bimodality read.
+  const assignment: number[] = [];
+  const margins: number[] = [];
+  for (const event of events) {
+    let affinityA = 0;
+    let affinityB = 0;
+    for (const prime of event.primes) {
+      if (clusterA.has(prime)) affinityA += 1;
+      else affinityB += 1;
+    }
+    assignment.push(affinityA >= affinityB ? 0 : 1);
+    margins.push(topTwoMargin([affinityA, affinityB]));
+  }
+  const clusterSize = [0, 0];
+  for (const index of assignment) clusterSize[index] += 1;
+  const meanMargin = margins.reduce((sum, margin) => sum + margin, 0) / margins.length;
+  const balance = normalizedEntropy(clusterSize);
+  const shared = [...clusterA].filter((prime) => clusterB.has(prime)).length;
+  const union = clusterA.size + clusterB.size - shared;
+  const overlap = union <= 0 ? 1 : shared / union;
+  const bimodal =
+    clusterSize[0] >= CONTEXT_SPLIT_MIN_CLUSTER_EVENTS &&
+    clusterSize[1] >= CONTEXT_SPLIT_MIN_CLUSTER_EVENTS &&
+    meanMargin >= CONTEXT_SPLIT_MIN_MEAN_MARGIN &&
+    balance >= CONTEXT_SPLIT_MIN_BALANCE &&
+    overlap <= CONTEXT_SPLIT_MAX_PRIME_OVERLAP;
+
+  const entropyReductionBits = contextEntropyReduction(events, assignment, 2);
+  const gainBits = entropyReductionBits - nodeCostBits;
+  if (!bimodal) {
+    return { ...refused, bimodal, entropyReductionBits, gainBits: Math.min(gainBits, 0) };
+  }
+  const clusters: [readonly number[], readonly number[]] = [
+    [...clusterA].sort((a, b) => a - b),
+    [...clusterB].sort((a, b) => a - b)
+  ];
+  if (gainBits <= 0) {
+    // Bimodal but the split does not pay for the node — the MDL gate holds.
+    return { ...refused, bimodal, entropyReductionBits, gainBits, assignment, clusters };
+  }
+  return { word, split: true, bimodal, entropyReductionBits, nodeCostBits, gainBits, assignment, clusters };
 }
