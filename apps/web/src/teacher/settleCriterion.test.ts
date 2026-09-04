@@ -76,7 +76,7 @@ interface ArmResult {
 async function runArm(criterion: 'fixed' | 'peak'): Promise<{ result: ArmResult; telemetry: TeacherAgent['settleTelemetry'] | null }> {
   const session = new ObserverSession(OPTIONS, 100);
   await session.initialize();
-  const teacher = new TeacherAgent(session, DECK, new MemoryPersistenceStore(), 500, 4, undefined, undefined, undefined, undefined, false, criterion);
+  const teacher = new TeacherAgent(session, DECK, new MemoryPersistenceStore(), 500, 4, undefined, undefined, undefined, undefined, false, undefined, criterion);
   for (const entry of DECK) teacher.teach(entry.word);
 
   const pairs = ALL_CONVERSATION_PAIRS.slice(0, PAIR_COUNT);
