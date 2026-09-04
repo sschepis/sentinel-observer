@@ -480,9 +480,15 @@ describe('sense split (§7.2/F.2) — after-split measurement', () => {
 
     // THE AFTER-SPLIT FINDING (§7.5): 0 confident cross-sense answers, and
     // the disambiguating ask names both readings where context is absent.
+    // The exact ask COUNT is environment-sensitive — it follows the recall
+    // blend, and the §4.2 DROP verdict removed the phase term from the
+    // blend by default (PhaseTermArms), which re-routes a few probes to a
+    // hedged belief or a plain ask instead of the disambiguating ask (the
+    // per-probe lines above are the source of truth). The CONTRACT is the
+    // zeros: no probe may be asserted confidently under the wrong sense.
     expect(exposed.length).toBe(6);
     expect(confidentYes).toBe(0);
     expect(crossSenseConfidentYes).toBe(0);
-    expect(disambiguatingAsks).toBe(12);
+    expect(disambiguatingAsks).toBe(9);
   });
 });
