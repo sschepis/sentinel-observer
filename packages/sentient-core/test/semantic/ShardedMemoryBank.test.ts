@@ -143,6 +143,36 @@ describe('ShardedMemoryBank', () => {
     expect(nightRecall.some((r) => r.trace.id === night)).toBe(true);
   });
 
+  it('routeScores exposes the flat router distribution without changing routing', () => {
+    const bank = new ShardedMemoryBank({ splitMinTraces: 3, splitEntropyBits: 2.0, minSplitGainBits: 0.05 });
+    storeTrace(bank, 'good morning', WORD_PRIMES.morning, 'morning');
+    storeTrace(bank, 'good evening', WORD_PRIMES.evening, 'evening');
+    storeTrace(bank, 'good night', WORD_PRIMES.night, 'night');
+    storeTrace(bank, 'a bird can fly', WORD_PRIMES.bird, 'bird');
+    storeTrace(bank, 'a robin is a bird', WORD_PRIMES.robin, 'robin');
+    storeTrace(bank, 'snow is cold', WORD_PRIMES.snow, 'snow');
+    bank.reorganize();
+
+    const shardCount = bank.shardAudit().length;
+    expect(shardCount).toBeGreaterThan(1);
+
+    // Prime-vocabulary overlap per shard — the values routeFor ranks.
+    const byPrimes = bank.routeScores({ primes: WORD_PRIMES.morning });
+    expect(byPrimes).toHaveLength(shardCount);
+    expect(byPrimes.every((s) => Number.isFinite(s) && s >= 0)).toBe(true);
+    // The max-score shard is where recall routes the morning cue.
+    const best = byPrimes.indexOf(Math.max(...byPrimes));
+    expect(best).toBeGreaterThanOrEqual(0);
+
+    // SMF prototype cosine per shard — the sketch route's distribution.
+    const bySmf = bank.routeScores({ smf: orientation('morning') });
+    expect(bySmf).toHaveLength(shardCount);
+    expect(bySmf.every((s) => Number.isFinite(s))).toBe(true);
+
+    // An unroutable cue (no sketch, no primes) has no distribution.
+    expect(bank.routeScores({})).toEqual([]);
+  });
+
   it('keeps every trace reachable by id across partition moves', () => {
     const bank = new ShardedMemoryBank({ splitMinTraces: 3, splitEntropyBits: 2.0, minSplitGainBits: 0.05 });
     const ids = [WORD_PRIMES.morning, WORD_PRIMES.evening, WORD_PRIMES.night, WORD_PRIMES.bird, WORD_PRIMES.robin, WORD_PRIMES.snow].map((primes) => storeTrace(bank, `t${primes[0]}`, primes, Object.keys(WORD_PRIMES)[Object.values(WORD_PRIMES).indexOf(primes)] as keyof typeof WORD_PRIMES));

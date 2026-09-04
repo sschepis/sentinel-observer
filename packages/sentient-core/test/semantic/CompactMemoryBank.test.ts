@@ -152,6 +152,40 @@ describe('CompactMemoryBank', () => {
     expect(results[0].trace.content).toContain('water');
   });
 
+  it('recallAll exposes the full scored list and prefilter count without touching (pure instrumentation)', () => {
+    const bank = new CompactMemoryBank();
+    // apple excited on [3, 5]; water on [13, 17]; snow on [3, 29].
+    bank.store('apple', orientation(1), BASIS, {
+      amplitudes: BASIS.map((_, i) => (i === 1 || i === 2 ? 0.7 : 0))
+    });
+    bank.store('water', orientation(2), BASIS, {
+      amplitudes: BASIS.map((_, i) => (i === 5 || i === 6 ? 0.7 : 0))
+    });
+    bank.store('snow', orientation(3), BASIS, {
+      amplitudes: BASIS.map((_, i) => (i === 1 || i === 9 ? 0.7 : 0))
+    });
+
+    // The prefilter count is the candidate set size BEFORE scoring.
+    expect(bank.prefilterCandidateCount({ primes: [11, 13] })).toBe(1);
+    expect(bank.prefilterCandidateCount({ primes: [3] })).toBe(2);
+    // An unroutable query (no smf, no primes) is honest 0.
+    expect(bank.prefilterCandidateCount({})).toBe(0);
+
+    // recallAll returns EVERY candidate, sorted, unlike recall's top-K slice.
+    const all = bank.recallAll({ primes: [3] });
+    expect(all).toHaveLength(2);
+    expect(all[0].score).toBeGreaterThanOrEqual(all[1].score);
+
+    // recallAll is a pure read: it never reinforces (touches) a trace.
+    const apple = bank.all().find((t) => t.content.includes('apple'))!;
+    expect(apple.accessCount).toBe(0);
+    expect(apple.strength).toBeCloseTo(1, 10);
+
+    const topK = bank.recall({ primes: [3] }, 1);
+    expect(topK).toHaveLength(1);
+    expect(topK[0].trace.id).toBe(all[0].trace.id);
+  });
+
   it('serialize/restore round-trips lean traces with strength and identity', () => {
     const bank = new CompactMemoryBank();
     const trace = bank.store('book', orientation(3), BASIS, { amplitudes: BASIS.map(() => 0.2) });

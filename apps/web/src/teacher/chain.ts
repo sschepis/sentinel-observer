@@ -48,7 +48,7 @@ function isAAncestors(relations: readonly Relation[], denied: DeniedClaim): Map<
 }
 
 /** All is-a ancestors of `subject` (up to MAX_DEPTH), including itself. */
-function ancestors(relations: readonly Relation[], subject: string, denied: DeniedClaim): string[] {
+export function ancestors(relations: readonly Relation[], subject: string, denied: DeniedClaim): string[] {
   const bySubject = isAAncestors(relations, denied);
   const reached = [subject];
   const seen = new Set<string>([subject]);
@@ -93,6 +93,68 @@ export function isATypeOf(
     frontier.push(...next);
   }
   return false;
+}
+
+/** One is-a path from a subject to a target: the nodes walked plus the
+ *  product of the edges' strength weights along it (§4.3 path evidence). */
+export interface IsAPath {
+  /** The nodes along the path, subject first and target last. */
+  nodes: string[];
+  /** Product of edge strengths along the path (absent strength = 1). */
+  strength: number;
+}
+
+/** The strongest is-a edge strength for `subject -> object` (absent = 1). */
+function isAEdgeStrength(relations: readonly Relation[], subject: string, object: string): number {
+  let best = -Infinity;
+  for (const relation of relations) {
+    if (relation.subject === subject && relation.predicate === 'is-a' && relation.object === object) {
+      best = Math.max(best, relation.strength ?? 1);
+    }
+  }
+  return Number.isFinite(best) ? best : 1;
+}
+
+/**
+ * ALL is-a paths from `subject` to `target` (up to MAX_DEPTH edges), each
+ * with its product of edge strengths — the candidate distribution §4.3's
+ * branching entropy reads (a claim reached by one path vs. many independent
+ * routes). `isATypeOf` is the single-path decision; this retains every path
+ * the walk visits so a claim's robustness can be measured. Subject ===
+ * target (the identity case) yields no edge path; simple paths only (no
+ * node revisited) and a denied is-a edge is never walked.
+ */
+export function isAPaths(
+  relations: readonly Relation[],
+  subject: string,
+  target: string,
+  denied: DeniedClaim = NEVER_DENIED
+): IsAPath[] {
+  if (subject === target) return [];
+  const bySubject = isAAncestors(relations, denied);
+  const paths: IsAPath[] = [];
+  const stack: Array<{ node: string; nodes: string[]; product: number }> = [
+    { node: subject, nodes: [subject], product: 1 }
+  ];
+  while (stack.length > 0) {
+    const { node, nodes, product } = stack.pop()!;
+    for (const parent of bySubject.get(node) ?? []) {
+      if (nodes.includes(parent)) continue;
+      const nextNodes = [...nodes, parent];
+      const nextProduct = product * isAEdgeStrength(relations, node, parent);
+      if (parent === target) {
+        paths.push({ nodes: nextNodes, strength: nextProduct });
+      } else if (nextNodes.length - 1 < MAX_DEPTH) {
+        stack.push({ node: parent, nodes: nextNodes, product: nextProduct });
+      }
+    }
+  }
+  paths.sort(
+    (a, b) =>
+      a.nodes.length - b.nodes.length ||
+      a.nodes.join('\u0000').localeCompare(b.nodes.join('\u0000'))
+  );
+  return paths;
 }
 
 /**

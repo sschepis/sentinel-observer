@@ -456,8 +456,56 @@ export class CompactMemoryBank implements MemoryBank {
 
     this.recallCounter += 1;
 
+    const { scored } = this.scoreCandidates(query);
+
+    scored.sort((a, b) => b.score - a.score);
+    const hits = scored.slice(0, limit);
+    for (const hit of hits) this.touch(hit.trace);
+    for (const hit of hits) hit.consolidated = hit.trace.consolidated;
+    return hits;
+  }
+
+  /**
+   * INSTRUMENTATION (§2 / improvements.md A.2): the FULL scored candidate
+   * list for a cue, sorted descending by score — every prefiltered candidate
+   * `recall` scores, WITHOUT the top-K slice and WITHOUT touching
+   * (reinforcing) any trace. `recall` is the decision; `recallAll` is the
+   * distribution the decision was made from, so candidate-distribution
+   * entropy H̃ can be read over it without mutating the bank. Pure read.
+   */
+  recallAll(query: RecallQuery): RecallResultLike<CompactTrace>[] {
+    if (!query.smf && (!query.primes || query.primes.length === 0)) {
+      throw new Error('CompactMemoryBank.recallAll requires an smf and/or primes cue');
+    }
+    if (this.traces.size === 0) return [];
+
+    const { scored } = this.scoreCandidates(query);
+    scored.sort((a, b) => b.score - a.score);
+    return scored;
+  }
+
+  /**
+   * INSTRUMENTATION: the prefilter candidate count a recall would score for
+   * a cue — the size of the candidate set the scoring loop iterates (the
+   * §3.1 figure, ~1,200 at deck scale). Pure read; does not score or touch.
+   */
+  prefilterCandidateCount(query: RecallQuery): number {
+    if (!query.smf && (!query.primes || query.primes.length === 0)) return 0;
+    if (this.traces.size === 0) return 0;
+    const cuePrimes = query.primes ? [...new Set(query.primes)] : undefined;
+    return this.candidatesFor(cuePrimes).length;
+  }
+
+  /** Score every prefiltered candidate for a cue (the shared scoring loop
+   *  behind `recall` and `recallAll`). Returns the scored list (unsorted)
+   *  and the prefilter count it was built from. */
+  private scoreCandidates(query: RecallQuery): {
+    scored: RecallResultLike<CompactTrace>[];
+    prefilterCount: number;
+  } {
     const cuePrimes = query.primes ? [...new Set(query.primes)] : undefined;
     const candidates = this.candidatesFor(cuePrimes);
+    const prefilterCount = candidates.length;
 
     const useSmf = query.smf !== undefined;
     const useOverlap = cuePrimes !== undefined && cuePrimes.length > 0;
@@ -549,11 +597,7 @@ export class CompactMemoryBank implements MemoryBank {
       });
     }
 
-    scored.sort((a, b) => b.score - a.score);
-    const hits = scored.slice(0, limit);
-    for (const hit of hits) this.touch(hit.trace);
-    for (const hit of hits) hit.consolidated = hit.trace.consolidated;
-    return hits;
+    return { scored, prefilterCount };
   }
 
   get(id: string): CompactTrace | undefined {

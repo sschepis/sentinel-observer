@@ -20,6 +20,7 @@
  */
 import { TeacherAgent } from './TeacherAgent';
 import { tokenizeText, isContentWord } from './context';
+import { readCde, type CdeReading } from './cde';
 
 export interface CouncilMember {
   name: string;
@@ -49,6 +50,14 @@ export interface CouncilResult {
   contributors: string[];
   /** Entropy at round 0 (before any resonance). */
   entropyRoundZero: number;
+  /**
+   * §2 candidate-distribution entropy over the members' answers — H̃, the
+   * top-two margin, and the regime, read from each member's answer
+   * (confidence when stated, else the presence of a claim vs. abstention).
+   * Kept separate from the token `entropy` (the black-body meter) and from
+   * §4.5's edge-based agreement. Pure instrumentation; nothing routes on it.
+   */
+  cde: CdeReading;
 }
 
 /** A shared learning goal the network formed from its own collective
@@ -110,6 +119,21 @@ function maxPairwiseAgreement(verdicts: readonly CouncilMemberVerdict[]): number
 }
 
 const GROUNDED_MODES = new Set(['memorized', 'operator']);
+
+/** The council's candidate distribution: H̃ over the members' answers —
+ *  each member's stated confidence when it carries one (memorized /
+ *  creative), 1 for a non-empty non-ask response (an operator answer that
+ *  carries no confidence field still IS a claim), and 0 for an abstention
+ *  (ask / empty) — an abstainer is a candidate with no support. */
+function candidateDistributionCde(verdicts: readonly CouncilMemberVerdict[]): CdeReading {
+  return readCde(
+    verdicts.map((v) => {
+      if (typeof v.confidence === 'number' && Number.isFinite(v.confidence)) return v.confidence;
+      if (v.mode === 'ask' || v.response.trim().length === 0) return 0;
+      return 1;
+    })
+  );
+}
 
 /** Network-level learned trust: which specialist to credit for which cue,
  *  revised by resonance outcomes rather than assigned by construction. */
@@ -287,7 +311,8 @@ export class ObserverNetwork {
         entropy: responseEntropy([best.response]),
         entropyRoundZero,
         members: verdicts,
-        contributors: [best.name]
+        contributors: [best.name],
+        cde: candidateDistributionCde(verdicts)
       };
     }
 
@@ -326,7 +351,8 @@ export class ObserverNetwork {
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
         members: verdicts,
-        contributors: []
+        contributors: [],
+        cde: candidateDistributionCde(verdicts)
       };
     }
 
@@ -375,7 +401,8 @@ export class ObserverNetwork {
         entropy: responseEntropy(cluster.map((v) => v.response)),
         entropyRoundZero,
         members: verdicts,
-        contributors: cluster.map((v) => v.name)
+        contributors: cluster.map((v) => v.name),
+        cde: candidateDistributionCde(verdicts)
       };
     } else if (abstainers.length > 0) {
       // No consensus and someone is honest about not knowing — the network
@@ -388,7 +415,8 @@ export class ObserverNetwork {
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
         members: verdicts,
-        contributors: []
+        contributors: [],
+        cde: candidateDistributionCde(verdicts)
       };
     } else {
       // No agreement and no honest abstainer: the members SPOKE but nothing
@@ -403,7 +431,8 @@ export class ObserverNetwork {
         entropy: responseEntropy(verdicts.map((v) => v.response)),
         entropyRoundZero,
         members: verdicts,
-        contributors: []
+        contributors: [],
+        cde: candidateDistributionCde(verdicts)
       };
     }
     return result;

@@ -20,13 +20,14 @@
  * as a LABELED fallback (the caller marks the answer `grounded: false`).
  */
 
-import { edgeObjects, inheritsEdge, deniedFromNegations, type DeniedClaim } from './chain';
+import { edgeObjects, inheritsEdge, ancestors, deniedFromNegations, type DeniedClaim } from './chain';
 import { composeClaim, composedClaimsFor } from './composition';
 import { isContentWord, tokenizeText } from './context';
 import type { TokenCostModel } from './mdl';
 import { predicateVerb, type Relation, type RelationPredicate } from './relations';
 import { claimHedge } from './grounding';
 import { hedgeForClaim, type HedgeWord } from './corroboration';
+import { normalizedEntropy } from './cde';
 import { FIRST_FRAME_PREFERENCE, fixedFrames, type FrameRef, type LearnedFrameStore } from './learnedFrames';
 import type { Negation } from './relations';
 
@@ -128,6 +129,69 @@ export function framesFor(
   }
 
   return frames;
+}
+
+/** One candidate next-claim on the elaboration frontier, scoreable for §2's
+ *  candidate-distribution entropy. */
+export interface FrontierClaim {
+  /** The claim text (a frame `framesFor` would emit, or a composed claim). */
+  text: string;
+  /** Marginal-information score: the backing edge's corroboration strength
+   *  for typed claims, the MDL gain for composed (P10) claims. */
+  score: number;
+}
+
+/**
+ * INSTRUMENTATION (§2 / improvements.md A.7): the candidate next-claim
+ * frontier — every claim `framesFor` and `composedClaimsFor` could emit for
+ * a subject, scored so candidate-distribution entropy H̃ can be read over it.
+ * This is the candidate set the elaboration stopping criterion (§8) will
+ * gate on; it is exposed here as a pure list and nothing routes on it.
+ * Direct and inherited typed edges carry their corroboration strength;
+ * composed chains carry their MDL gain.
+ */
+export function nextClaimFrontier(
+  subject: string,
+  relations: readonly Relation[],
+  options: FrameOptions = {},
+  denied: DeniedClaim = () => false
+): FrontierClaim[] {
+  const deny = options.negations !== undefined ? deniedFromNegations(options.negations) : denied;
+  const byKey = new Map<string, { text: string; score: number }>();
+  const record = (predicate: RelationPredicate, object: string, score: number): void => {
+    if (!Number.isFinite(score) || score <= 0) return;
+    const key = `${predicate}\u0000${object}`;
+    const existing = byKey.get(key);
+    if (existing === undefined || score > existing.score) {
+      byKey.set(key, { text: `A ${subject} ${predicateVerb(predicate, object)} ${object}.`, score });
+    }
+  };
+  // Direct and inherited typed edges — the framesFor pools, with their
+  // corroboration strength as the marginal-information score.
+  for (const ancestor of ancestors(relations, subject, deny)) {
+    for (const relation of relations) {
+      if (relation.subject !== ancestor) continue;
+      if (deny(subject, relation.predicate, relation.object)) continue;
+      if (deny(ancestor, relation.predicate, relation.object)) continue;
+      record(relation.predicate, relation.object, relation.strength ?? 1);
+    }
+  }
+  // Composed chains (P10) — the composedClaimsFor pool, scored by MDL gain.
+  for (const claim of composedClaimsFor(subject, relations, options)) {
+    record(claim.predicate, claim.object, claim.gain);
+  }
+  return [...byKey.values()].sort((a, b) => b.score - a.score);
+}
+
+/** H̃ over the candidate next-claim frontier — the §8 stopping signal: a
+ *  flat reading (H̃ → 1) means nothing is left worth saying. */
+export function frontierEntropy(
+  subject: string,
+  relations: readonly Relation[],
+  options: FrameOptions = {},
+  denied: DeniedClaim = () => false
+): number {
+  return normalizedEntropy(nextClaimFrontier(subject, relations, options, denied).map((c) => c.score));
 }
 
 /** Subjects (from the recall seeds) that have at least one fillable frame. */

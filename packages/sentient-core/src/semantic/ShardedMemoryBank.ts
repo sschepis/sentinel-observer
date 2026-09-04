@@ -671,6 +671,30 @@ export class ShardedMemoryBank implements MemoryBank {
     return runner;
   }
 
+  /**
+   * INSTRUMENTATION (§2 / improvements.md A.6): the router's per-shard
+   * scores for a cue, in shard order — the flat distribution `routeFor` /
+   * `runnerUpFor` rank. SMF prototype cosine per shard when the query
+   * carries a sketch; prime-vocabulary overlap counts otherwise. Empty ([])
+   * when the cue is unroutable (no sketch and no primes). Pure — routing is
+   * unchanged; this only reads the scores the decision was made from.
+   */
+  routeScores(query: RecallQuery): number[] {
+    const smf = query.smf;
+    if (smf !== undefined) {
+      const cue = smf.toArray();
+      return this.prototypes().map((prototype) => cosineOf(cue, Array.from(prototype)));
+    }
+    const primes = query.primes ?? [];
+    if (primes.length === 0) return [];
+    const primeSet = new Set(primes);
+    return this.vocabularies().map((vocabulary) => {
+      let overlap = 0;
+      for (const prime of primeSet) if (vocabulary.has(prime)) overlap += 1;
+      return overlap;
+    });
+  }
+
   // ── Entropy readings ──────────────────────────────────────────────────────
 
   /** The interference entropy of one shard (bits). */
