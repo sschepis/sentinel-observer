@@ -255,6 +255,47 @@ describe('sense model (§7.2 signature-per-sense) predicates', () => {
     expect(senseGroupsFor(RELATIONS, 'robin')).toEqual([]);
   });
 
+  it('readings are DISTINCT — an identical gloss falls back to the distinct parent, and generic curriculum labels never become readings', () => {
+    // Both edges carry the SAME definition as their source: the ask must
+    // not repeat it ("as in X, or as in X").
+    const shared = senseGroupsFor(
+      [
+        { subject: 'star', predicate: 'is-a', object: 'sphere', source: 'a luminous sphere of plasma', origin: 'regex' },
+        { subject: 'star', predicate: 'is-a', object: 'matter', source: 'a luminous sphere of plasma', origin: 'authored' }
+      ],
+      'star'
+    );
+    expect(shared).toHaveLength(2);
+    expect(shared[0].reading).toBe('a luminous sphere of plasma');
+    expect(shared[1].reading).toBe('a matter');
+    expect(shared[0].reading).not.toBe(shared[1].reading);
+    // An authored edge whose only gloss is a curriculum label names the
+    // parent itself — with the probe questions' article convention.
+    const labeled = senseGroupsFor(
+      [
+        { subject: 'tiger', predicate: 'is-a', object: 'person', source: 'a fierce or audacious person', origin: 'regex' },
+        { subject: 'tiger', predicate: 'is-a', object: 'animal', source: 'everyday-knowledge curriculum', origin: 'authored' }
+      ],
+      'tiger'
+    );
+    expect(labeled).toHaveLength(2);
+    expect(labeled[0].reading).toBe('a fierce or audacious person');
+    expect(labeled[1].reading).toBe('an animal');
+  });
+
+  it('a gloss quotes only its primary clause ("a person; impressive in size" -> "a person")', () => {
+    const readings = senseGroupsFor(
+      [
+        { subject: 'whale', predicate: 'is-a', object: 'person', source: 'a very large person; impressive in size or qualities', origin: 'regex' },
+        { subject: 'whale', predicate: 'is-a', object: 'animal', source: 'everyday-knowledge curriculum', origin: 'authored' }
+      ],
+      'whale'
+    );
+    expect(readings).toHaveLength(2);
+    expect(readings[0].reading).toBe('a very large person');
+    expect(readings[1].reading).toBe('an animal');
+  });
+
   it('assignSenses mints deterministic, distinct, in-basis sense signatures and leaves legacy word signatures byte-identical', () => {
     const legacy = primeSignature('bank');
     const first = assignSenses(RELATIONS, PRIME_SPACE);

@@ -165,6 +165,21 @@ function assignmentFor(relations: readonly Relation[], vocabulary: Readonly<Reco
   return assignSenses(relations, PRIME_SPACE, reservedSignatureKeys(vocabulary));
 }
 
+/** The definitions the teacher actually derives from: the deck's own
+ *  definitions, with the record filling only EMPTY ones (exactly what
+ *  `applyDefinitions` does on import). The assignment must be minted over
+ *  this graph — minting it over the record's definitions alone misses every
+ *  deck-defined word (the record omits them), leaving the split to cover a
+ *  different population than the teacher's graph exposes. */
+function effectiveDefinitionsFor(record: BootstrapRecord): Array<{ word: string; definition: string }> {
+  const recordDefs = new Map((record.definitions ?? []).map((d) => [d.word, d]));
+  return ACTIVE_DECK.map((entry) => {
+    if (entry.definition.trim().length > 0) return { word: entry.word, definition: entry.definition };
+    const recordDef = recordDefs.get(entry.word);
+    return { word: entry.word, definition: recordDef !== undefined ? recordDef.definition : entry.definition };
+  });
+}
+
 async function benchShippedRecord(path: string): Promise<void> {
   console.log(`\n=== ${path} — full shipped record ===`);
   const record = JSON.parse(readFileSync(path, 'utf8')) as BootstrapRecord;
@@ -183,10 +198,9 @@ async function benchShippedRecord(path: string): Promise<void> {
   // ── AFTER: the sense split (§7.2, senseSplit ON) ─────────────────────────
   {
     const known = new Set(ACTIVE_DECK.map((entry) => entry.word));
-    const assignment = assignmentFor(
-      mergedGraphFor(record.definitions, known, record.relations ?? []),
-      OBSERVER_OPTIONS.vocabulary
-    );
+    const effectiveDefinitions = effectiveDefinitionsFor(record);
+    const merged = mergedGraphFor(effectiveDefinitions, known, record.relations ?? []);
+    const assignment = assignmentFor(merged, OBSERVER_OPTIONS.vocabulary);
     const session = new ObserverSession(
       { ...OBSERVER_OPTIONS, vocabulary: senseVocabulary(OBSERVER_OPTIONS.vocabulary, assignment) },
       100
@@ -196,7 +210,7 @@ async function benchShippedRecord(path: string): Promise<void> {
     teacher.importBootstrap(record);
     // Split deployment over a merged-era record: re-teach one trace PER SENSE
     // for the exposed words (the record's word traces live on the surface).
-    const exposed = wordsWithUnrelatedIsAParents(mergedGraphFor(record.definitions, known, record.relations ?? []));
+    const exposed = wordsWithUnrelatedIsAParents(merged);
     let stored = 0;
     for (const word of exposed) stored += teacher.ensureSenseTraces(word);
     console.log(`split deployment: ${stored} sense traces re-taught over ${exposed.length} exposed words`);
