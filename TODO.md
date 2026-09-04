@@ -386,3 +386,22 @@ All baselines recorded in the 2026-09 review + pinned where executable:
   persistence 1198, relations 665, rules 489, support 558, wordloop 771.
   persistence.ts exceeds the ~900 soft budget because restore/import/export
   are inherently the largest bodies; every other faculty file is ≤ ~775.
+
+# TODO — Improvements round (improvements.md, Phases A–I) — DONE
+
+One line per item; the paper record is `docs/observer-paper.md` §5.16.
+
+- [x] §2 CDE instrument — **REFUTED**: no variant beats the top score (AUC 0.912 vs. best 0.779); routing not built per §2.4/§11; margins calibrated (topTwoMargin 0.17, measurement-only)
+- [x] §4.2 phase frame — **DROP executed**: co-rotating AUC 0.495 ≈ chance; `phaseTerm` default 'off' (recall 100% vs 91.2%, 0 fuzz FP all arms)
+- [x] §7 sense-split — **LANDED**: cross-sense exposure 109 → 37 → **0**; disambiguating ask with distinct readings (senseSplit flag)
+- [x] §5.2 D.4 calibration — **PASS**: error 0.311 → 0.008; honesty 44/44 + fuzz 0 held; recall 99.2% = control; no gate reverted
+- [x] §5.2 D.2 settle-peak — **PASS with nuance**: 0 chat FP, exact recall held, mean 2.0 vs 4 ticks; guard-free FP up (140 → 224) recorded
+- [x] §5.1 taxonomy — 89 → 105 constants classified (values/safety/tuning) + `constants-report` + D.10 circularity guard
+- [x] §5.2 D.5–D.8 — measured replacements (per-store decay, MDL costs, goal MDL, world weight) landed behind flags
+- [x] §3.4/§4.5 council — **LANDED**: edge-cited agreement + network traces (100% recall of settled answers, rounds = 0)
+- [x] §4.1 surprise→stability — **LANDED**: store-time surprise seeds FSRS initial stability
+- [x] §4.3 path mass — **PASS**: multi-path claims survive edge corruption, single-path flip; hedged-by-paths speech
+- [x] §3.2 shard routing — **REFUTED for every K**: routing is the binding limit (effective 56.6%/24.1% vs merged 99.2%); miss detector landed (0 confident wrong-shard)
+- [x] §3.5 merge consolidation — **LANDED**: cross-shard duplicates → 0; aggregate merge rules
+- [x] §6.2 priming — **LANDED**: slowContext flag; primed resolution up, contamination 0
+- [ ] Open: elaboration (§8), concept synthesis (§9), wsd-bench (F.3), sense-split-bench (F.4), field ambiguity (E.1), cleanup entropy (C.4), judge weights (D.3)

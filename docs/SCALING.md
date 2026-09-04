@@ -1424,3 +1424,60 @@ clean, margin bench unchanged (+0.129 / top-1 99.0% / DC 0.732 / competency
 99.0% — the fixed word lies outside the 200-word, 728-pair protocol). Live
 browser check: the training loop runs (3 cycles, 9 words taught, 6 reviews,
 3 drills); the only remaining errors are the honest unreachable-LLM ones.
+
+## 23. The improvements round at scale: shard routing refuted, the phase term dropped
+
+Two proposals from the improvements round (paper record: `observer-paper.md`
+§5.16) bear directly on how the observer scales, and both were measured
+rather than assumed. Both are recorded here because they change what the
+scaling path *is*.
+
+**Shard routing — a measured dead end, like the prime-space bench.** The §3.1
+interference analysis predicted that recall is a function of the *bank the
+search runs in* — the prefilter admits ~1,200 candidates at 20k words and the
+scored terms must separate the true trace from them. The proposal: keep the
+shard trainer's K shards as separate banks at query time and route each cue
+to one of them, beating the merged baseline (94.6% at 20k, 26.4 ms ask) by
+shrinking the search per query. Measured at 5,000 words/shard (K=4 → 4×5,000;
+K=8 → 8×2,534 deck-capped; 400 strided probes, parallel worker pool):
+
+| K | routing top-1 (prototype / prime) | perfect-cue ceiling | in-shard recall | effective | merged (same probes) | ask ms (shard / merged) |
+|---|---|---|---|---|---|---|
+| 4 | 26.3% / 25.0% | 39.0% | 100.0% | **56.6%** | 99.2% | 18.0 / 24.5 |
+| 8 | 11.0% / 12.8% | 27.0% | 100.0% | **24.1%** | 99.2% | 14.5 / 27.1 |
+
+Routing is at or below random for both routers, and the perfect-cue ceiling —
+routing with the true trace's own stored orientation as the cue — is 39%/27%,
+which proves the shards themselves are indistinguishable: their prototypes
+converge to the corpus mean as the shards grow. Effective recall falls below
+the merged baseline for every K at better latency, so the §3.6 refute clause
+holds: **interference is not the binding limit for the shard-trainer
+partition — routing is.** Shards remain a training-only device (A.2's
+shard-train-merge path is unchanged), and the merged single bank remains the
+query-time architecture. What survives is the **miss detector**
+(`memoryBankOptions.missDetector`, default off): flat-router cues — and
+385/400 true cues at K=4 route flat, so this is the norm, not an edge case —
+surface as asks instead of a wrong shard's confident answer. On flat fuzz
+distractors the ON bank gives 0 confident wrong-shard answers (the OFF bank
+answers all 32; explicit-off is bit-identical to the flagless bank) at a
+measured true-cue cost of 46/64 at K=4: the price of refusing to guess.
+
+**The phase term — dropped from the blend, kept on the wire.** §4.2's
+co-rotating frame measured the phase order parameter honestly: sibling
+(same-prime, different-content) separation reads AUC 0.495 co-rotating vs.
+0.497 raw — chance in both frames, so the moment carries no content beyond
+the excitation and the term is a moment-*proximity* (recency) signal. The
+production default is now `phaseTerm: 'off'` — the term leaves the blend and
+the SMF/overlap weights renormalize — and the deck-scale three-arm
+measurement shows the drop costs nothing: recall 100%/100% off vs.
+91.2%/90.8% with the raw term in the blend, 0 fuzz false positives in every
+arm, production gates bit-identical. Two scaling notes follow. First, the
+recall curve of §7/Phase-3 numbers was never riding on the phase term, so the
+94.6% @ 20k figure is unchanged by its removal — the term was noise, not
+load-bearing separation. Second, the stored phase configuration (≈56 B per
+word trace, Appendix A.3) and the co-rotating metadata (`storedSimTime`,
+`phaseFrequencies`) now carry no weight in the production blend: they are
+retained as diagnostics (`holographicScore` still reports the weightless
+reading), but they are a recoverable storage budget if the trace record ever
+needs shrinking again — the decision to reclaim them is a persistence change,
+not a recall change, because nothing in the blend reads them.
