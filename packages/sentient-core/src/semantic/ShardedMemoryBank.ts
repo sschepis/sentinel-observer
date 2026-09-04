@@ -439,6 +439,25 @@ export interface ShardedMemoryBankOptions {
   /** How far above the split threshold a shard's entropy may sit after
    *  reorganization (default 1.25 — the budget is soft, the split hard). */
   reorganizeBudget?: number;
+  /**
+   * §3.2 MISS DETECTOR (improvements.md): when true, a FLAT router
+   * distribution over `routeScores` — small top-two margin m AND small m₂₃,
+   * the §2.2 'flat' regime — makes recall surface an ASK ([]) instead of a
+   * wrong shard's confident answer: the router does not know where the cue
+   * lives, so the observer must not answer from the shard it merely
+   * guessed. Default OFF (false): routing is bit-identical to the
+   * detector-free bank.
+   */
+  missDetector?: boolean;
+  /**
+   * The router margins below which the distribution counts as FLAT. Mirrors
+   * the §2.2 regime boundaries (`cde.ts` CDE_REGIME_DEFAULTS): m ≥
+   * `topTwoMargin` is 'clear' (answer); m < `topTwoMargin` with m₂₃ ≥
+   * `topTwoThreeMargin` is 'disambiguate' (two dominant shards — the
+   * runner-up fallback answers); both small is 'flat' (ASK). Tuning
+   * constants, §5.
+   */
+  missDetectorThresholds?: { topTwoMargin?: number; topTwoThreeMargin?: number };
 }
 
 const SHARD_DEFAULTS = {
@@ -450,11 +469,43 @@ const SHARD_DEFAULTS = {
   reorganizeBudget: 1.25
 };
 
+/** The §2.2 regime boundaries the miss detector reads (mirrors `cde.ts`
+ *  CDE_REGIME_DEFAULTS — keep in sync until §5 calibrates both). */
+const MISS_DETECTOR_MARGINS = {
+  topTwoMargin: 0.2,
+  topTwoThreeMargin: 0.2
+};
+
+/** The top-two margin m = (s₁ − s₂) / s₁ over non-negative scores, in [0, 1]
+ *  (0 when the winner scores nothing or there is no runner-up) — the exact
+ *  reading `cde.ts` topTwoMargin defines, reimplemented here because the
+ *  core cannot import the app layer. */
+function topTwoMarginOf(scores: readonly number[]): number {
+  if (scores.length < 2) return 0;
+  const sorted = [...scores].sort((a, b) => b - a);
+  const s1 = sorted[0];
+  if (!Number.isFinite(s1) || s1 <= 0) return 0;
+  return Math.max(0, Math.min(1, (s1 - sorted[1]) / s1));
+}
+
+/** The second-to-third margin m₂₃ = (s₂ − s₃) / s₂, in [0, 1] (0 with fewer
+ *  than three candidates) — the exact reading `cde.ts` topTwoThreeMargin
+ *  defines. */
+function topTwoThreeMarginOf(scores: readonly number[]): number {
+  if (scores.length < 3) return 0;
+  const sorted = [...scores].sort((a, b) => b - a);
+  const s2 = sorted[1];
+  if (!Number.isFinite(s2) || s2 <= 0) return 0;
+  return Math.max(0, Math.min(1, (s2 - sorted[2]) / s2));
+}
+
 /** The amortization interval: a split/merge attempt runs every N stores. */
 const REORGANIZE_EVERY_STORES = 48;
 
 export class ShardedMemoryBank implements MemoryBank {
-  private readonly options: Required<Omit<ShardedMemoryBankOptions, 'bankOptions'>>;
+  private readonly options: Required<Omit<ShardedMemoryBankOptions, 'bankOptions' | 'missDetectorThresholds'>> & {
+    missDetectorThresholds: { topTwoMargin: number; topTwoThreeMargin: number };
+  };
   private readonly bankOptions: Omit<CompactMemoryBankOptions, 'capacity'>;
   private readonly shards: CompactMemoryBank[] = [];
   /** trace id -> owning shard index (the router's lookup; rebuilt on any
@@ -464,6 +515,12 @@ export class ShardedMemoryBank implements MemoryBank {
   private storeCount = 0;
   private recallCount = 0;
   private prunedCount = 0;
+  /** §3.2: recalls the miss detector turned into asks (flat router). */
+  private missAskCount = 0;
+  /** Set by `seedShards`: the partition is the CALLER's (the shard trainer's
+   *  K records), so the automatic split/merge maintenance is disabled —
+   *  it would silently re-partition an externally owned bank. */
+  private seeded = false;
 
   constructor(options: ShardedMemoryBankOptions = {}) {
     this.options = {
@@ -472,7 +529,12 @@ export class ShardedMemoryBank implements MemoryBank {
       minSplitGainBits: options.minSplitGainBits ?? SHARD_DEFAULTS.minSplitGainBits,
       splitMinTraces: options.splitMinTraces ?? SHARD_DEFAULTS.splitMinTraces,
       mergeFloor: options.mergeFloor ?? SHARD_DEFAULTS.mergeFloor,
-      reorganizeBudget: options.reorganizeBudget ?? SHARD_DEFAULTS.reorganizeBudget
+      reorganizeBudget: options.reorganizeBudget ?? SHARD_DEFAULTS.reorganizeBudget,
+      missDetector: options.missDetector ?? false,
+      missDetectorThresholds: {
+        topTwoMargin: options.missDetectorThresholds?.topTwoMargin ?? MISS_DETECTOR_MARGINS.topTwoMargin,
+        topTwoThreeMargin: options.missDetectorThresholds?.topTwoThreeMargin ?? MISS_DETECTOR_MARGINS.topTwoThreeMargin
+      }
     };
     this.bankOptions = options.bankOptions ?? {};
     this.totalCapacity = this.options.capacity;
@@ -695,6 +757,57 @@ export class ShardedMemoryBank implements MemoryBank {
     });
   }
 
+  /**
+   * §3.2 MISS DETECTOR reading: whether the router's distribution over the
+   * shards is FLAT — m < τ₁ AND m₂₃ < τ₂₃ (the §2.2 'flat' regime: no
+   * dominant shard and no dominant pair). A single shard is 'clear' (there
+   * is nothing to route against); the 'disambiguate' regime (two dominant
+   * shards) is NOT flat — the top route plus its runner-up fallback covers
+   * it.
+   */
+  private routerFlat(scores: readonly number[]): boolean {
+    if (scores.length < 2) return false;
+    const thresholds = this.options.missDetectorThresholds;
+    if (topTwoMarginOf(scores) >= thresholds.topTwoMargin) return false;
+    if (topTwoThreeMarginOf(scores) >= thresholds.topTwoThreeMargin) return false;
+    return true;
+  }
+
+  /** §3.2: the count of recalls the miss detector surfaced as asks (0 unless
+   *  `missDetector` is enabled — the ask counter is the flag's only visible
+   *  footprint). */
+  get missDetectorAsks(): number {
+    return this.missAskCount;
+  }
+
+  /**
+   * RECALL WITHIN ONE SHARD (instrumentation, §3.2 bench): the shard-scoped
+   * recall answer for a query — what in-shard recall measures before the
+   * routing product multiplies it. Reads ONLY the named shard; no routing,
+   * no fallback. Empty ([]) for an out-of-range index.
+   */
+  recallIn(shardIndex: number, query: RecallQuery, topK?: number): RecallResultLike[] {
+    if (!Number.isInteger(shardIndex) || shardIndex < 0 || shardIndex >= this.shards.length) return [];
+    return this.shards[shardIndex].recall(query, topK);
+  }
+
+  /**
+   * §3.2 bench: seed `k` EMPTY shards for an EXTERNALLY partitioned bank —
+   * the shard trainer's K records restored one shard each. Only valid while
+   * the bank holds nothing; from here the caller owns the partition and the
+   * automatic split/merge maintenance no longer applies to it.
+   */
+  seedShards(k: number): void {
+    if (this.size > 0) throw new Error('seedShards requires an empty bank');
+    const count = Math.max(1, Math.floor(k));
+    this.shards.length = 0;
+    for (let i = 0; i < count; i += 1) this.shards.push(this.newShard());
+    this.home.clear();
+    this.invalidateVocabularies();
+    this.rebalanceCapacities();
+    this.seeded = true;
+  }
+
   // ── Entropy readings ──────────────────────────────────────────────────────
 
   /** The interference entropy of one shard (bits). */
@@ -837,6 +950,7 @@ export class ShardedMemoryBank implements MemoryBank {
    *  fire) — public so callers can trigger it on demand (e.g., after a
    *  bootstrap restore) and tests can drive it deterministically. */
   maintain(): { split: boolean; merged: boolean } {
+    if (this.seeded) return { split: false, merged: false }; // externally owned partition
     const split = this.maybeSplit();
     const merged = split ? false : this.maybeMerge();
     return { split, merged };
@@ -852,6 +966,14 @@ export class ShardedMemoryBank implements MemoryBank {
    */
   reorganize(): { shards: number; entropyBefore: number; entropyAfter: number } {
     const all = this.all();
+    if (this.seeded) {
+      // Externally owned partition (seedShards): re-partitioning would
+      // destroy the caller's K shards. Report the honest per-shard reading
+      // (Σ n_i² neighbor work, not the O(n²) whole-bank graph — the no-op
+      // must not pay the re-partitioning cost it exists to skip).
+      const entropy = all.length === 0 ? 0 : this.retrievalEntropy();
+      return { shards: this.shards.length, entropyBefore: entropy, entropyAfter: entropy };
+    }
     if (all.length === 0) {
       return { shards: this.shards.length, entropyBefore: 0, entropyAfter: 0 };
     }
@@ -924,8 +1046,9 @@ export class ShardedMemoryBank implements MemoryBank {
     for (const prime of new Set(primes)) vocabularies[homeIndex].add(prime);
     this.updatePrototype(homeIndex, Float64Array.from(trace.smf.toArray()));
     // Amortized partition maintenance: a split/merge attempt every N stores
-    // keeps the bookkeeping O(1) amortized while the landscape drifts.
-    if (this.storeCount % REORGANIZE_EVERY_STORES === 0) {
+    // keeps the bookkeeping O(1) amortized while the landscape drifts. A
+    // seeded (externally partitioned) bank skips this — the caller owns it.
+    if (this.storeCount % REORGANIZE_EVERY_STORES === 0 && !this.seeded) {
       const split = this.maybeSplit();
       if (!split) this.maybeMerge();
     }
@@ -944,6 +1067,16 @@ export class ShardedMemoryBank implements MemoryBank {
       return topK === undefined ? results : results.slice(0, topK);
     }
     const best = this.routeFor(query);
+    // §3.2 MISS DETECTOR (default OFF): a flat router distribution means the
+    // router does not know where the cue lives — surface an ASK (no recall
+    // result) instead of the guessed shard's confident answer. The check
+    // short-circuits on the flag, so the disabled path is bit-identical to
+    // the detector-free bank. The empty-cue scan above is unaffected (it is
+    // the honest single-bank answer, not a routed guess).
+    if (this.options.missDetector && this.shards.length > 1 && this.routerFlat(this.routeScores(query))) {
+      this.missAskCount += 1;
+      return [];
+    }
     const results = this.shards[best].recall(query, topK);
     if (this.shards.length === 1) return results;
     if (results.length === 0) {
@@ -1003,16 +1136,22 @@ export class ShardedMemoryBank implements MemoryBank {
     return null;
   }
 
-  restoreTrace(data: SerializedTraceData): TraceLike | null {
+  restoreTrace(data: SerializedTraceData, homeShard?: number): TraceLike | null {
     // Home by vocabulary overlap — deterministic, and identical to the
     // store-time home decision, so a restored record reorganizes the same
-    // way a freshly stored one would.
+    // way a freshly stored one would. `homeShard` (the §3.2 bench's
+    // externally partitioned bank, seeded via `seedShards`) restores into a
+    // specific shard instead: the caller owns the partition.
     const vocabularies = this.vocabularies();
-    const homeIndex = this.homeFor(data.primes, vocabularies);
+    const explicit = homeShard !== undefined && Number.isInteger(homeShard) && homeShard >= 0 && homeShard < this.shards.length;
+    const homeIndex = explicit ? (homeShard as number) : this.homeFor(data.primes, vocabularies);
     const trace = this.shards[homeIndex].restoreTrace(data);
     if (trace !== null) {
       this.home.set(trace.id, homeIndex);
       for (const prime of new Set(trace.primes)) vocabularies[homeIndex].add(prime);
+      // The shard's sketch changed, so its cached SMF prototype is stale —
+      // drop it; the next route rebuilds prototypes from the restored set.
+      this.prototypeCache = null;
     }
     return trace;
   }
@@ -1037,6 +1176,7 @@ export class ShardedMemoryBank implements MemoryBank {
     this.home.clear();
     this.invalidateVocabularies();
     this.prunedCount = 0;
+    this.seeded = false;
   }
 
   setCapacity(capacity: number): void {

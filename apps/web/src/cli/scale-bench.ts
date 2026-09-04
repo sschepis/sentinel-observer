@@ -16,8 +16,12 @@
  *
  * Usage:
  *   npx tsx src/cli/scale-bench.ts [--prime-bench] [--shard-bench]
+ *     [--route-bench]
  *     --words N       slice size for the shard bench (default 1200)
  *     --shards K      worker count (default 4)
+ *     --shard-words N words per shard for the route bench (default 5000)
+ *     --probes N      probe count for the route bench (default 400)
+ *     --no-fuzz       skip the route bench's miss-detector fuzz pass
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -31,16 +35,27 @@ import { ACTIVE_DECK } from '../teacher/decks';
 import { deckVocabulary, auditDeck, firstPrimes } from '../teacher/primeSignature';
 import { MemoryPersistenceStore } from '../persistence/store';
 import { ShardTrainer, mergeRecords } from '../teacher/shardTrainer';
+import { runShardRouteBench, summarize } from '../teacher/shardRouteBench';
 import type { BootstrapRecord } from '../teacher/bootstrap';
 import type { DeckWord } from '../teacher/deck';
 
 const args = process.argv.slice(2);
 const RUN_PRIME = args.includes('--prime-bench');
 const RUN_SHARD = args.includes('--shard-bench');
+const RUN_ROUTE = args.includes('--route-bench');
 const RUN_SEARCH = args.includes('--search-bench');
-const BOTH = !RUN_PRIME && !RUN_SHARD && !RUN_SEARCH ? true : false;
+const BOTH = !RUN_PRIME && !RUN_SHARD && !RUN_ROUTE && !RUN_SEARCH ? true : false;
 const WORDS = Number(args[args.indexOf('--words') + 1] ?? 1200);
 const SHARDS = Number(args[args.indexOf('--shards') + 1] ?? 4);
+const argValue = (flag: string, fallback: number): number => {
+  const index = args.indexOf(flag);
+  if (index === -1 || index + 1 >= args.length) return fallback;
+  const value = Number(args[index + 1]);
+  return Number.isFinite(value) ? value : fallback;
+};
+const SHARD_WORDS = argValue('--shard-words', 5000);
+const PROBES = argValue('--probes', 400);
+const RUN_FUZZ = !args.includes('--no-fuzz');
 
 // ────────────────────────────────────────────────────────────────────────────
 // PRIME-SPACE BENCH
@@ -168,6 +183,46 @@ async function shardBench(): Promise<void> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// SHARD-ROUTE BENCH (§3.2) — K shards as separate query-time banks + a
+// router, against the merged single-bank baseline (94.6% @ 20k).
+// ────────────────────────────────────────────────────────────────────────────
+
+async function routeBench(): Promise<void> {
+  console.log(
+    `[scale] SHARD-ROUTE bench (§3.2) — routed shards vs merged baseline; K ∈ {4, 8}, ` +
+      `${SHARD_WORDS} words/shard (deck-capped), ${PROBES} probes, fuzz ${RUN_FUZZ ? 'on' : 'off'}.`
+  );
+  const measurements = await runShardRouteBench({
+    wordsPerShard: SHARD_WORDS,
+    ks: [4, 8],
+    probeCount: PROBES,
+    fuzz: RUN_FUZZ,
+    // The parallel worker pool (the shard trainer's production path) — the
+    // engine's default is the sequential in-process loop that jest requires.
+    train: async (shards) => {
+      const trainer = new ShardTrainer(shards.length);
+      const records = await trainer.train(shards);
+      await trainer.dispose();
+      return records;
+    },
+    onProgress: (message) => {
+      console.log(message);
+    }
+  });
+  console.log('\n[scale] SHARD-ROUTE verdict (§3.6):');
+  for (const measurement of measurements) {
+    for (const line of summarize(measurement)) {
+      console.log(`[scale]   ${line}`);
+    }
+    const verdict =
+      measurement.effectiveComparableRecall >= measurement.mergedRecall
+        ? 'PASS — effective recall meets or exceeds the merged baseline'
+        : `REFUTE — effective recall ${(measurement.effectiveComparableRecall * 100).toFixed(1)}% below merged ${(measurement.mergedRecall * 100).toFixed(1)}%`;
+    console.log(`[scale]   → ${verdict}`);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // DENSE-BANK SEARCH BENCH — where the latency cliff lives
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -218,6 +273,7 @@ async function searchBench(): Promise<void> {
 async function main(): Promise<void> {
   if (BOTH || RUN_PRIME) await primeBench();
   if (BOTH || RUN_SHARD) await shardBench();
+  if (BOTH || RUN_ROUTE) await routeBench();
   if (BOTH || RUN_SEARCH) await searchBench();
 }
 
