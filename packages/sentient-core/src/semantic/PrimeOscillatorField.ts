@@ -409,6 +409,13 @@ export class PrimeOscillatorField implements Initializable {
   private model: TAKuramotoModel | null = null;
   private primeList: number[] = [];
   private primeIndex: Map<number, number> = new Map();
+  /**
+   * Natural frequency ω_i of each oscillator, parallel to `primeList`
+   * (§4.2: the co-rotating phase frame's θ_i = φ_i − ω_i·t needs the
+   * per-oscillator ω at BOTH store and cue time). Computed once at
+   * initialize; empty before.
+   */
+  private frequencyList: number[] = [];
   private elapsed = 0;
   private tickCount = 0;
   private lastMetrics: OscillatorFieldTick = { coherence: 0, entropy: 0, orderParameter: 0 };
@@ -465,6 +472,7 @@ export class PrimeOscillatorField implements Initializable {
     const frequencies = this.primeList.map(p =>
       requireFinite(this.kernel.primeToFrequency(p), `primeToFrequency(${p})`)
     );
+    this.frequencyList = frequencies;
     this.model = this.kernel.createKuramotoModel(frequencies, this.options.coupling);
     this.elapsed = 0;
     this.tickCount = 0;
@@ -489,6 +497,27 @@ export class PrimeOscillatorField implements Initializable {
   /** The prime assigned to each oscillator, in index order. */
   get primes(): readonly number[] {
     return this.primeList;
+  }
+
+  /**
+   * The natural frequency ω_i of each oscillator, parallel to `primes`
+   * (§4.2). Each oscillator advances at this frequency every tick, so the
+   * co-rotating phase θ_i = φ_i − ω_i·t strips the free drift out of any
+   * phase comparison. Empty before `initialize()`.
+   */
+  get frequencies(): readonly number[] {
+    return this.frequencyList;
+  }
+
+  /**
+   * The natural frequency ω_i of the oscillator bound to `prime`, or
+   * undefined when the prime is outside this field's basis (or the field
+   * is not initialized yet).
+   */
+  naturalFrequencyOf(prime: number): number | undefined {
+    const index = this.primeIndex.get(prime);
+    if (index === undefined) return undefined;
+    return this.frequencyList[index];
   }
 
   /** Oscillator count. */

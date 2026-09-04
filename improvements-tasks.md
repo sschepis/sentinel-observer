@@ -102,13 +102,24 @@ own justification. Do this before any routing change.
       candidate entropy that preceded storage.
       **Bench `surprise-stability-bench`:** 30-day sim vs. fixed-initial
       baseline; retention ≥ baseline at lower review load (else revert).
-- [ ] **C.2 Co-rotating phase frame** (§4.2) — store/compare phases as
+- [x] **C.2 Co-rotating phase frame** (§4.2) — store/compare phases as
       `θ_i = φ_i − ω_i·t (mod 2π)` so elapsed-time proximity drops out and only
       coupling-produced deviation remains. Touch `CompactMemoryBank.phaseOrderParameter`
       and the stored-phase capture in `SemanticObserver.storeMemory`. Weight the
       term by §5's judge-AUC rather than the hard 0.15 (`phaseWeight`).
       **Bench `phase-frame-bench`:** sibling (same-prime, different-content)
       separation AUC vs. elapsed time; AUC ≈ 0.5 → drop the term honestly.
+      **MEASURED (commit on `improve-phase-frame`):** frame implemented behind
+      `coRotatingPhases` (default off, bit-identical control asserted). Sibling
+      separation AUC vs. elapsed time: settled pipeline AUC = 0.500 exactly in
+      BOTH frames (same-prime siblings store identical phases; R_true = R_sibling
+      = 0.991 raw / 0.993 co — the co-rotating frame removes the settle-depth
+      offset but nothing content-like remains); free-run pipeline co-rotating
+      AUC 0.510 vs raw 0.512 across τ ∈ [0, 200] s (spread 0.078) — no
+      separation, not independent of elapsed. **REFUTED: the moment carries no
+      content beyond excitation. RECOMMENDATION: drop the phase term (set
+      `phaseWeight` → 0 / remove from the blend). The term and the frame option
+      are kept in code; this finding is the record.**
 - [ ] **C.3 Branching entropy along chain walks** (§4.3) — report path-count,
       path-mass, and path-entropy over the paths §A.3 retains; a claim resting
       on one hedged path is itself hedged.

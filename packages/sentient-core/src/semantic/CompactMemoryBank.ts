@@ -72,6 +72,19 @@ export interface TraceLike {
   readonly phases: readonly number[];
   /** The primes whose phases `phases` holds (parallel to `phases`). */
   readonly phasePrimes: readonly number[];
+  /**
+   * §4.2 (co-rotating phase frame): the observer's SIMULATED time — elapsed
+   * seconds of the oscillator clock — at the moment this trace was stored.
+   * This is the `t` in the stored co-rotating phase θ_i = φ_i − ω_i·t.
+   * Absent on legacy traces and on traces stored by callers that do not
+   * observe a simulated clock.
+   */
+  readonly storedSimTime?: number;
+  /**
+   * §4.2: the natural frequency ω_i of each stored phase prime, parallel to
+   * `phasePrimes`/`phases`. Absent when `storedSimTime` is absent.
+   */
+  readonly phaseFrequencies?: readonly number[];
   readonly createdAt: number;
   lastAccessAt: number;
   accessCount: number;
@@ -106,6 +119,18 @@ export interface RecallQuery {
    * half strength, a fully coherent moment keeps its full weight.
    */
   coherence?: number;
+  /**
+   * §4.2 (co-rotating phase frame): the observer's SIMULATED time — elapsed
+   * seconds of the oscillator clock — at the cue moment. Used only when the
+   * bank's `coRotatingPhases` option is on; ignored otherwise (the raw
+   * frame needs no clock).
+   */
+  simTime?: number;
+  /**
+   * §4.2: the natural frequency ω_i of each cue prime, index-aligned with
+   * `primes`/`phases`. Used only when `coRotatingPhases` is on.
+   */
+  phaseFrequencies?: readonly number[];
 }
 
 export interface RecallResultLike<TTrace extends TraceLike = TraceLike> {
@@ -139,6 +164,13 @@ export interface SerializedTraceData {
    */
   phasePrimes?: number[];
   phases?: number[];
+  /**
+   * §4.2 (co-rotating phase frame): the observer's simulated time at store
+   * and the natural frequency of each stored phase prime (parallel to
+   * `phasePrimes`). Absent = legacy trace.
+   */
+  storedSimTime?: number;
+  phaseFrequencies?: number[];
   createdAt: number;
   lastAccessAt: number;
   accessCount: number;
@@ -165,7 +197,23 @@ export interface MemoryBank {
     content: string,
     smf: SedenionMemoryField,
     primes: readonly number[],
-    options?: { amplitudes?: readonly number[]; phases?: readonly number[]; importance?: number; metadata?: Record<string, unknown> }
+    options?: {
+      amplitudes?: readonly number[];
+      phases?: readonly number[];
+      /**
+       * §4.2: the observer's simulated time (elapsed seconds) at store —
+       * the `t` of the stored co-rotating phase θ_i = φ_i − ω_i·t. Only
+       * consumed when the bank's `coRotatingPhases` option is on.
+       */
+      simTime?: number;
+      /**
+       * §4.2: natural frequency ω_i per stored prime, index-aligned with
+       * `primes`/`phases`. Only consumed when `coRotatingPhases` is on.
+       */
+      phaseFrequencies?: readonly number[];
+      importance?: number;
+      metadata?: Record<string, unknown>;
+    }
   ): TraceLike;
   recall(query: RecallQuery, topK?: number): RecallResultLike[];
   get(id: string): TraceLike | undefined;
@@ -224,6 +272,28 @@ export interface CompactMemoryBankOptions {
    * existing bootstrap records keep working.
    */
   centerSketches?: boolean;
+  /**
+   * CO-ROTATING PHASE FRAME (§4.2, default false — the honest control).
+   *
+   * The raw phase order parameter compares stored and cue phases directly,
+   * so the ensemble is dominated by the free drift each oscillator
+   * accumulates at its natural frequency ω_i over the elapsed time — a
+   * moment-proximity signal, not a content signal. When this option is on,
+   * the order parameter is computed over the CO-ROTATING differences
+   *
+   *     θ_trace − θ_cue,  with  θ_i = φ_i − ω_i·t (mod 2π),
+   *
+   * using each trace's stored sim time/frequencies and the cue's. Absent
+   * coupling θ is time-invariant, so elapsed-time proximity drops out and
+   * only the deviation produced by coupling during the moment remains.
+   *
+   * Requires the sim-time and frequency metadata on both sides: a trace
+   * stored without them (legacy records, the full bank) scores 0 on the
+   * phase term, and a cue without them disables the term — the honest
+   * absence reading, exactly like a missing phase configuration. OFF is
+   * bit-identical to the control: the new fields are stored but never read.
+   */
+  coRotatingPhases?: boolean;
 }
 
 const COMPACT_DEFAULTS = {
@@ -240,7 +310,8 @@ const COMPACT_DEFAULTS = {
   minAccessCount: 3,
   minLockStrength: 0.7,
   entropyLockThreshold: 0.9,
-  centerSketches: false
+  centerSketches: false,
+  coRotatingPhases: false
 };
 
 // ── P11 UTILITY-BASED PRUNING ───────────────────────────────────────────────
@@ -385,7 +456,14 @@ export class CompactMemoryBank implements MemoryBank {
     content: string,
     smf: SedenionMemoryField,
     primes: readonly number[],
-    options: { amplitudes?: readonly number[]; phases?: readonly number[]; importance?: number; metadata?: Record<string, unknown> } = {}
+    options: {
+      amplitudes?: readonly number[];
+      phases?: readonly number[];
+      simTime?: number;
+      phaseFrequencies?: readonly number[];
+      importance?: number;
+      metadata?: Record<string, unknown>;
+    } = {}
   ): CompactTrace {
     const primeList = Array.from(primes);
     if (primeList.length === 0) {
@@ -402,6 +480,12 @@ export class CompactMemoryBank implements MemoryBank {
     // phase order parameter).
     const phasePrimes: number[] = [];
     const phases: number[] = [];
+    // §4.2: the co-rotating frame needs each stored phase prime's natural
+    // frequency, picked by the SAME index so it stays parallel to
+    // `phasePrimes`. All-finite-or-absent: a partial or mismatched
+    // frequency array is not a reading and is dropped whole (mirroring the
+    // corrupt-phase-pair rule) — never a fabricated frame.
+    let phaseFrequencies: number[] = [];
     if (options.phases !== undefined) {
       for (let i = 0; i < primeList.length; i += 1) {
         const phase = options.phases[i];
@@ -409,6 +493,14 @@ export class CompactMemoryBank implements MemoryBank {
         if (amplitudes[i] < this.config.indexThreshold) continue;
         phasePrimes.push(primeList[i]);
         phases.push(phase);
+        const frequency = options.phaseFrequencies?.[i];
+        if (frequency !== undefined) phaseFrequencies.push(frequency);
+      }
+      if (
+        phaseFrequencies.length !== phasePrimes.length ||
+        !phaseFrequencies.every((f) => Number.isFinite(f))
+      ) {
+        phaseFrequencies = [];
       }
     }
 
@@ -421,6 +513,8 @@ export class CompactMemoryBank implements MemoryBank {
       amplitudes,
       phases,
       phasePrimes,
+      storedSimTime: options.simTime,
+      phaseFrequencies,
       pattern: null,
       createdAt: now,
       lastAccessAt: now,
@@ -531,7 +625,32 @@ export class CompactMemoryBank implements MemoryBank {
         cueAmpByPrime.set(query.primes[i], query.amplitudes?.[i] ?? 1);
       }
     }
+    // §4.2: the cue side of the co-rotating frame — the natural frequency of
+    // each cue prime (index-aligned with `primes`/`phases`) and the cue
+    // moment's simulated time. Only read when `coRotatingPhases` is on; the
+    // raw frame never needs them and stays bit-identical to the control.
+    let cueFreqByPrime: Map<number, number> | undefined;
+    if (this.config.coRotatingPhases && query.phaseFrequencies !== undefined && cuePhasesByPrime !== undefined && query.primes !== undefined) {
+      cueFreqByPrime = new Map();
+      for (let i = 0; i < query.primes.length; i += 1) {
+        const frequency = query.phaseFrequencies[i];
+        if (frequency === undefined || !Number.isFinite(frequency)) continue;
+        cueFreqByPrime.set(query.primes[i], frequency);
+      }
+    }
     const usePhase = cuePhasesByPrime !== undefined && cuePhasesByPrime.size > 0;
+    // §4.2: under the co-rotating frame the phase term additionally needs the
+    // cue moment's clock and its oscillators' natural frequencies — without
+    // them there is no co-rotating reading, and the term is honestly absent
+    // (mirroring the store-side rule that a moment without stored phases
+    // cannot phase-lock).
+    const phaseTermUsable =
+      usePhase &&
+      (!this.config.coRotatingPhases ||
+        (query.simTime !== undefined &&
+          Number.isFinite(query.simTime) &&
+          cueFreqByPrime !== undefined &&
+          cueFreqByPrime.size > 0));
     // W1: the cue moment's coherence gates the orientation term — an
     // incoherent moment has no reliable orientation, so its SMF weight
     // halves at coherence 0 and reaches full at coherence 1.
@@ -542,7 +661,7 @@ export class CompactMemoryBank implements MemoryBank {
     const weightTotal =
       (useSmf ? this.config.smfWeight * smfGate : 0) +
       (useOverlap ? this.config.overlapWeight : 0) +
-      (usePhase ? this.config.phaseWeight : 0);
+      (phaseTermUsable ? this.config.phaseWeight : 0);
 
     // SKETCH CENTERING (readout): the corpus mean carries most of a sketch's
     // magnitude, so the raw cosine floor sits high; centering both sides
@@ -565,10 +684,22 @@ export class CompactMemoryBank implements MemoryBank {
         traceNormSq += amplitude * amplitude;
       }
       let tracePhaseByPrime: Map<number, number> | undefined;
+      let traceFreqByPrime: Map<number, number> | undefined;
       if (usePhase) {
         tracePhaseByPrime = new Map();
         for (let i = 0; i < trace.phasePrimes.length; i += 1) {
           tracePhaseByPrime.set(trace.phasePrimes[i], trace.phases[i]);
+        }
+        if (this.config.coRotatingPhases) {
+          traceFreqByPrime = new Map();
+          const frequencies = trace.phaseFrequencies;
+          if (frequencies !== undefined) {
+            for (let i = 0; i < trace.phasePrimes.length && i < frequencies.length; i += 1) {
+              const frequency = frequencies[i];
+              if (!Number.isFinite(frequency)) continue;
+              traceFreqByPrime.set(trace.phasePrimes[i], frequency);
+            }
+          }
         }
       }
       const smfScore =
@@ -580,13 +711,27 @@ export class CompactMemoryBank implements MemoryBank {
       const overlapScore = useOverlap
         ? this.amplitudeOverlap(cuePrimes, traceAmpByPrime, traceNormSq)
         : 0;
-      const phaseScore = usePhase
-        ? this.phaseOrderParameter(cuePhasesByPrime!, cueAmpByPrime!, tracePhaseByPrime!, traceAmpByPrime)
-        : 0;
+      const phaseScore =
+        usePhase && this.config.coRotatingPhases
+          ? phaseTermUsable
+            ? this.phaseOrderParameterCoRotating(
+                cuePhasesByPrime!,
+                cueAmpByPrime!,
+                cueFreqByPrime!,
+                query.simTime!,
+                tracePhaseByPrime!,
+                traceAmpByPrime,
+                traceFreqByPrime ?? new Map(),
+                trace.storedSimTime
+              )
+            : 0
+          : usePhase
+            ? this.phaseOrderParameter(cuePhasesByPrime!, cueAmpByPrime!, tracePhaseByPrime!, traceAmpByPrime)
+            : 0;
       const weighted =
         (useSmf ? this.config.smfWeight * smfGate * smfScore : 0) +
         (useOverlap ? this.config.overlapWeight * overlapScore : 0) +
-        (usePhase ? this.config.phaseWeight * phaseScore : 0);
+        (phaseTermUsable ? this.config.phaseWeight * phaseScore : 0);
       scored.push({
         trace,
         score: requireFinite(safeDivide(weighted, weightTotal, 0), 'compact-recall.score'),
@@ -629,6 +774,21 @@ export class CompactMemoryBank implements MemoryBank {
       amplitudes: [...trace.amplitudes],
       phasePrimes: trace.phasePrimes.length > 0 ? [...trace.phasePrimes] : undefined,
       phases: trace.phases.length > 0 ? [...trace.phases] : undefined,
+      // §4.2: the co-rotating frame metadata survives the round trip only
+      // when it is complete — a stored clock without a parallel frequency
+      // array (or vice versa) is not a reading and stays absent on the wire.
+      storedSimTime:
+        trace.storedSimTime !== undefined &&
+        trace.phaseFrequencies !== undefined &&
+        trace.phaseFrequencies.length === trace.phasePrimes.length
+          ? trace.storedSimTime
+          : undefined,
+      phaseFrequencies:
+        trace.storedSimTime !== undefined &&
+        trace.phaseFrequencies !== undefined &&
+        trace.phaseFrequencies.length === trace.phasePrimes.length
+          ? [...trace.phaseFrequencies]
+          : undefined,
       createdAt: trace.createdAt,
       lastAccessAt: trace.lastAccessAt,
       accessCount: trace.accessCount,
@@ -648,6 +808,7 @@ export class CompactMemoryBank implements MemoryBank {
     const snapshot = data as {
       id?: string; content?: string; smf?: number[]; primes?: number[];
       amplitudes?: number[]; phasePrimes?: number[]; phases?: number[];
+      storedSimTime?: number; phaseFrequencies?: number[];
       createdAt?: number; lastAccessAt?: number;
       accessCount?: number; strength?: number; importance?: number;
       consolidated?: boolean; smfEntropy?: number; metadata?: Record<string, unknown>;
@@ -674,6 +835,18 @@ export class CompactMemoryBank implements MemoryBank {
     const phasePairValid =
       phasePrimes.length === phases.length &&
       phases.every((phase) => Number.isFinite(phase));
+    // §4.2: the co-rotating frame restores only as a complete, parallel
+    // triple (phases, frequencies, clock) — a partial record is not a
+    // reading and stays absent, mirroring the phase-pair rule.
+    const storedSimTime = Number.isFinite(snapshot.storedSimTime) ? snapshot.storedSimTime! : undefined;
+    const phaseFrequencies = Array.isArray(snapshot.phaseFrequencies)
+      ? Array.from(snapshot.phaseFrequencies)
+      : [];
+    const frameValid =
+      storedSimTime !== undefined &&
+      phasePairValid &&
+      phaseFrequencies.length === phasePrimes.length &&
+      phaseFrequencies.every((f) => Number.isFinite(f));
 
     const smfValues =
       snapshot.smfEncoding === 'q8'
@@ -689,6 +862,8 @@ export class CompactMemoryBank implements MemoryBank {
       amplitudes,
       phases: phasePairValid ? phases : [],
       phasePrimes: phasePairValid ? phasePrimes : [],
+      storedSimTime: frameValid ? storedSimTime : undefined,
+      phaseFrequencies: frameValid ? phaseFrequencies : undefined,
       pattern: null,
       createdAt,
       // lastAccessAt drives the retention/utility math: a non-finite value
@@ -894,6 +1069,60 @@ export class CompactMemoryBank implements MemoryBank {
       const weight = traceAmpByPrime.get(prime) ?? 0;
       if (weight < this.config.indexThreshold) continue;
       const delta = tracePhase - cuePhase;
+      sx += weight * Math.cos(delta);
+      sy += weight * Math.sin(delta);
+      weightSum += weight;
+    }
+    if (weightSum <= 0) return 0;
+    return Math.min(1, Math.hypot(sx, sy) / weightSum);
+  }
+
+  /**
+   * §4.2: the phase order parameter in the CO-ROTATING frame — the weighted
+   * mean resultant length of {θ_trace(p) − θ_cue(p)} over the primes both
+   * sides excited, where θ_i = φ_i − ω_i·t uses each side's OWN simulated
+   * time and natural frequencies:
+   *
+   *     θ_trace − θ_cue = (φ_trace − φ_cue) − (ω_trace·t_trace − ω_cue·t_cue).
+   *
+   * Absent coupling every oscillator's phase advances at exactly ω_i per
+   * tick, so a moment re-excited later differs from its stored self by the
+   * free drift ω_i·(t_cue − t_trace) — and this term cancels exactly that
+   * drift. What remains is the deviation COUPLING produced during each
+   * moment, which is what the phase term was meant to carry (see the raw
+   * term's honest reading in the file doc block).
+   *
+   * Honest absence rules mirror the raw term: a prime missing its natural
+   * frequency on either side (or a trace missing its store-time clock) does
+   * not join the ensemble — a reading needs the frame, and 0 is the absence
+   * reading, never a fabricated 1. The amplitude gating is identical to the
+   * raw term (index threshold on both sides).
+   */
+  private phaseOrderParameterCoRotating(
+    cuePhasesByPrime: Map<number, number>,
+    cueAmpByPrime: Map<number, number>,
+    cueFreqByPrime: Map<number, number>,
+    cueSimTime: number,
+    tracePhaseByPrime: Map<number, number>,
+    traceAmpByPrime: Map<number, number>,
+    traceFreqByPrime: Map<number, number>,
+    traceSimTime: number | undefined
+  ): number {
+    if (tracePhaseByPrime.size === 0) return 0;
+    if (traceSimTime === undefined || !Number.isFinite(traceSimTime)) return 0;
+    let sx = 0;
+    let sy = 0;
+    let weightSum = 0;
+    for (const [prime, cuePhase] of cuePhasesByPrime) {
+      if ((cueAmpByPrime.get(prime) ?? 1) < this.config.indexThreshold) continue;
+      const tracePhase = tracePhaseByPrime.get(prime);
+      if (tracePhase === undefined) continue;
+      const weight = traceAmpByPrime.get(prime) ?? 0;
+      if (weight < this.config.indexThreshold) continue;
+      const traceFreq = traceFreqByPrime.get(prime);
+      const cueFreq = cueFreqByPrime.get(prime);
+      if (traceFreq === undefined || cueFreq === undefined) continue;
+      const delta = (tracePhase - traceFreq * traceSimTime) - (cuePhase - cueFreq * cueSimTime);
       sx += weight * Math.cos(delta);
       sy += weight * Math.sin(delta);
       weightSum += weight;

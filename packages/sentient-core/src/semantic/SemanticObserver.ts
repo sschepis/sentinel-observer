@@ -856,6 +856,12 @@ export class SemanticObserver implements Initializable {
    * observer's own phase participates in its measurement, so recall can
    * later ask how well the cue's converged moment phase-locks with this
    * stored moment (the phase order parameter of the difference ensemble).
+   *
+   * §4.2: the trace additionally carries the oscillator clock's simulated
+   * time and each basis oscillator's natural frequency ω_i, so the compact
+   * bank can compare moments in the co-rotating frame θ_i = φ_i − ω_i·t
+   * when its `coRotatingPhases` option is on. The raw frame never reads
+   * them.
    */
   storeMemory(content: string, options: { metadata?: Record<string, unknown> } = {}): TraceLike | null {
     this.requireInitialized();
@@ -871,6 +877,19 @@ export class SemanticObserver implements Initializable {
       // phases into its holographic pattern only when the caller provides
       // them; it does not, so its behavior is unchanged.
       ...(this.momentPhasesInRetrieval ? { phases: state.phases } : {}),
+      // §4.2: the co-rotating frame's inputs ride with the phases — the
+      // OSCILLATOR clock at store (t) and the basis-aligned natural
+      // frequencies (ω_i). The clock is the FIELD's simulated time (`state.
+      // time`, accumulated since the last settle), not the observer's total
+      // elapsed: `settleField()` restarts every oscillator phase from 0
+      // together with the field clock, so the field clock is the coordinate
+      // in which φ = ω·t absent coupling — with the observer clock the
+      // co-rotation would reintroduce a per-lesson offset and the frame
+      // would measure proximity again. Banks that do not consume the fields
+      // ignore them.
+      ...(this.momentPhasesInRetrieval
+        ? { simTime: state.time, phaseFrequencies: this.field.frequencies }
+        : {}),
       ...(options.metadata !== undefined ? { metadata: options.metadata } : {})
     });
     this.signals.push({
@@ -910,6 +929,8 @@ export class SemanticObserver implements Initializable {
     let queryPhases: number[] | undefined;
     let queryAmplitudes: number[] | undefined;
     let queryCoherence: number | undefined;
+    let querySimTime: number | undefined;
+    let queryPhaseFrequencies: number[] | undefined;
     if (this.momentPhasesInRetrieval) {
       const state = this.field.getState();
       queryPhases =
@@ -927,6 +948,16 @@ export class SemanticObserver implements Initializable {
             })
           : undefined;
       queryCoherence = state.coherence;
+      // §4.2: the cue side of the co-rotating frame — the OSCILLATOR clock
+      // (see storeMemory: the field's simulated time since its last settle,
+      // the coordinate the phases live in) and each cue prime's natural
+      // frequency, index-aligned with the cue phases above. The raw frame
+      // never reads them.
+      querySimTime = state.time;
+      queryPhaseFrequencies =
+        queryPrimes !== undefined && queryPrimes.length > 0
+          ? queryPrimes.map(p => this.field.naturalFrequencyOf(p) ?? NaN)
+          : undefined;
     }
     const results = this.memory.recall(
       {
@@ -934,7 +965,9 @@ export class SemanticObserver implements Initializable {
         primes: queryPrimes,
         phases: queryPhases,
         amplitudes: queryAmplitudes,
-        coherence: queryCoherence
+        coherence: queryCoherence,
+        simTime: querySimTime,
+        phaseFrequencies: queryPhaseFrequencies
       },
       topK
     );
@@ -1381,6 +1414,27 @@ export class SemanticObserver implements Initializable {
   /** The oscillator field. */
   getOscillatorField(): PrimeOscillatorField {
     return this.field;
+  }
+
+  /**
+   * §4.2: the OSCILLATOR clock's simulated time in seconds — the `t` of the
+   * co-rotating phase frame θ_i = φ_i − ω_i·t, stored with traces and sent
+   * with cues. It is the field's elapsed time since its last reset
+   * (`settleField()` restarts every phase from 0 together with this clock),
+   * not the observer's total elapsed (`getState().time`): the phases live in
+   * the field's coordinate, and only there is θ time-invariant absent
+   * coupling.
+   */
+  getSimTime(): number {
+    return this.field.getState().time;
+  }
+
+  /**
+   * §4.2: the natural frequency ω_i of each basis oscillator, parallel to
+   * `getOscillatorField().primes`. Empty before `initialize()`.
+   */
+  getNaturalFrequencies(): readonly number[] {
+    return this.field.frequencies;
   }
 
   /** The hologram. */
