@@ -59,9 +59,54 @@ import {
   type SenseAssignment
 } from '../senseModel';
 import { PRIME_SPACE } from '../primeSignature';
+import {
+  induceConcepts,
+  joinList,
+  sharedEdgeKey,
+  type InducedConcept
+} from '../conceptSynthesis';
+
+/**
+ * H (Phase H): an induced concept node — MDL abstraction over the graph
+ * (§9). Re-derived deterministically from the asserted relations on every
+ * graph build; its lifecycle state (name binding, merge target, denials,
+ * stop) is session-scoped in `inducedConceptState`, keyed by the node's
+ * stable id (the sorted member set).
+ */
+export interface InducedConceptNode {
+  id: string;
+  members: string[];
+  edges: Array<{ predicate: RelationPredicate; object: string }>;
+  exceptions: Array<{ member: string; predicate: RelationPredicate; object: string }>;
+  gain: number;
+  /** The human-supplied name (naming ask answered), or null. */
+  name: string | null;
+  /** The existing word the node merged into (rediscovery), or null. */
+  mergedWord: string | null;
+  /** 'asserted' once every owned edge has been promoted into the graph. */
+  tier: 'hypothesis' | 'asserted';
+  denials: number;
+  /** Two world denials — the node stops chaining (never deleted). */
+  stopped: boolean;
+}
 
 export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
   return class RelationsFaculty extends Base {
+
+    // ── H (Phase H): concept synthesis (§9) ─────────────────────────────────
+    /** The experiment flag — assigned by TeacherAgent's constructor. */
+    protected conceptSynthesis = false;
+    /** The derived induced-concept nodes (rebuilt on every graph build). */
+    protected inducedConceptNodeList: InducedConceptNode[] = [];
+    /** Per-node lifecycle state that survives re-derivation, keyed by id. */
+    protected readonly inducedConceptState = new Map<
+      string,
+      { name: string | null; mergedWord: string | null; denials: number; stopped: boolean }
+    >();
+    /** The graph fingerprint the last induction ran on (skip no-op rebuilds). */
+    protected inducedFingerprint = '';
+    /** The §9.3 rediscovery ledger (recorded, never re-litigated). */
+    protected readonly conceptRediscoveryLedger: Array<{ nodeId: string; word: string; members: string[] }> = [];
 
     /** Drop the cached edge graph so the next read re-extracts (definitions
      *  may have changed, or chaperone edges arrived). Also drops the example
@@ -299,6 +344,9 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // precision graph intentionally drops become standing hypotheses, ready
       // for corroboration-driven promotion.
       this.refreshHypothesisEdges(this.relationsCache);
+      // H (Phase H): re-derive the induced concept nodes over the asserted
+      // graph (MDL abstraction, §9) — flag-gated, deterministic.
+      this.refreshInducedConcepts();
       this.rebuildRelationalHologram();
       return this.relationsCache;
     }
@@ -514,6 +562,12 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
     /** P14: drop a corroborating source class (e.g. the world later rejected
      *  the claim it had accepted). */
     removeEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void {
+      // H (Phase H): withdrawing world-feedback credit is the world's DENIAL
+      // signal — a denial on a concept-owned claim counts toward the node's
+      // stop gate (two denials stop the node from chaining, never delete it).
+      if (sourceClass === 'world-feedback') {
+        this.noteConceptWorldDenial(subject, predicate, object);
+      }
       const key = edgeKey(subject, predicate, object);
       const current = this.edgeSources.get(key) ?? [];
       if (!current.includes(sourceClass)) return;
@@ -711,6 +765,359 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      */
     noteConflictBelief(subject: string, content: string, basis: Record<string, unknown>): boolean {
       return this.storeBelief(subject, content, 'relation-conflict', basis, true);
+    }
+
+    // ── H (Phase H): concept synthesis — MDL abstraction (§9) ───────────────
+
+    /**
+     * H.2 — re-derive the induced concept nodes over the ASSERTED graph.
+     * Deterministic and idempotent: nodes are recomputed from the graph on
+     * every build, and lifecycle state (name/merge/denials/stop) is carried
+     * over from `inducedConceptState` by the node's stable id. A node whose
+     * edge set matches an existing word's is MERGED into that word (§9.3
+     * rediscovery) — its members' is-a edges materialize as hypothesis-tier
+     * edges so the recovered claim speaks hedged until corroborated. A node
+     * matching no word stands as a candidate DISCOVERY with a pending
+     * naming ask. Induced nodes enter the HYPOTHESIS tier only — never the
+     * asserted graph on their own strength.
+     */
+    protected refreshInducedConcepts(): void {
+      if (!this.conceptSynthesis) return;
+      const relations = this.relationsCache as Relation[];
+      const fingerprint = relations
+        .map((relation) => edgeKey(relation.subject, relation.predicate, relation.object))
+        .sort()
+        .join('\u0000');
+      if (fingerprint === this.inducedFingerprint) return;
+      this.inducedFingerprint = fingerprint;
+
+      const induced = induceConcepts(relations, {
+        costs: this.compositionCost,
+        negations: this.negations.map((negation) => ({
+          subject: negation.subject,
+          predicate: negation.predicate,
+          object: negation.object
+        }))
+      });
+
+      // Known words' asserted edge sets — the §9.3 merge targets.
+      const wordEdgeSets = new Map<string, Set<string>>();
+      for (const relation of relations) {
+        const set = wordEdgeSets.get(relation.subject) ?? new Set<string>();
+        set.add(sharedEdgeKey(relation.predicate, relation.object));
+        wordEdgeSets.set(relation.subject, set);
+      }
+
+      const next: InducedConceptNode[] = [];
+      for (const concept of induced) {
+        const state = this.inducedConceptState.get(concept.id) ?? {
+          name: null,
+          mergedWord: null,
+          denials: 0,
+          stopped: false
+        };
+        if (state.name === null && state.mergedWord === null) {
+          const edgeKeys = new Set(concept.edges.map((edge) => sharedEdgeKey(edge.predicate, edge.object)));
+          const match = [...wordEdgeSets.entries()].find(
+            ([, keys]) => keys.size === edgeKeys.size && [...edgeKeys].every((key) => keys.has(key))
+          );
+          if (match !== undefined) {
+            // §9.3 REDISCOVERY: the induced edge set matches a word the
+            // observer already has — the same concept, merged, and the event
+            // recorded (validation, not fabrication).
+            state.mergedWord = match[0];
+            this.conceptRediscoveryLedger.push({
+              nodeId: concept.id,
+              word: match[0],
+              members: concept.members.filter((member) => member !== match[0])
+            });
+          }
+        }
+        this.inducedConceptState.set(concept.id, state);
+        const ownedKeys = this.conceptOwnedKeys({
+          name: state.name,
+          mergedWord: state.mergedWord,
+          members: concept.members,
+          edges: concept.edges
+        });
+        const assertedKeys = new Set(
+          relations.map((relation) => edgeKey(relation.subject, relation.predicate, relation.object))
+        );
+        const asserted = ownedKeys.length > 0 && ownedKeys.every((key) => assertedKeys.has(key));
+        next.push({
+          id: concept.id,
+          members: concept.members,
+          edges: concept.edges,
+          exceptions: concept.exceptions,
+          gain: concept.gain,
+          name: state.name,
+          mergedWord: state.mergedWord,
+          tier: asserted ? 'asserted' : 'hypothesis',
+          denials: state.denials,
+          stopped: state.stopped
+        });
+        this.materializeConceptHypotheses(concept, state);
+      }
+      this.inducedConceptNodeList = next;
+    }
+
+    /**
+     * Materialize a node's hypothesis-tier edges: the members' is-a edges,
+     * and (for a human-named node) the node's own edges under its name.
+     * Skipped when the key is already asserted (a promoted edge never
+     * regresses) or already standing. The edges ride the EXISTING hypothesis
+     * machinery — hedged speech, promotion on corroboration, blocked by the
+     * confirmed-false store — so the §9.2 lifecycle reuses Phase 22's.
+     */
+    protected materializeConceptHypotheses(
+      concept: InducedConcept,
+      state: { name: string | null; mergedWord: string | null }
+    ): void {
+      const name = state.name ?? state.mergedWord;
+      if (name === null) return;
+      const assertedKeys = new Set(
+        (this.relationsCache as Relation[]).map((relation) =>
+          edgeKey(relation.subject, relation.predicate, relation.object)
+        )
+      );
+      const knownKeys = new Set(
+        this.hypothesisEdges.map((relation) => edgeKey(relation.subject, relation.predicate, relation.object))
+      );
+      const push = (subject: string, predicate: RelationPredicate, object: string): void => {
+        const key = edgeKey(subject, predicate, object);
+        if (assertedKeys.has(key) || knownKeys.has(key)) return;
+        if (this.negations.some((n) => n.subject === subject && n.predicate === predicate && n.object === object)) return;
+        knownKeys.add(key);
+        this.hypothesisEdges.push({
+          subject,
+          predicate,
+          object,
+          source: `concept-synthesis: ${concept.id}`,
+          origin: 'authored',
+          tier: 'hypothesis',
+          sourceClasses: ['curriculum']
+        });
+      };
+      if (state.name !== null) {
+        for (const edge of concept.edges) push(name, edge.predicate, edge.object);
+      }
+      for (const member of concept.members) {
+        if (member === name) continue;
+        push(member, 'is-a', name);
+      }
+    }
+
+    /** The edge keys a concept node owns — the claims the world can
+     *  corroborate or deny against the node. */
+    protected conceptOwnedKeys(node: {
+      name: string | null;
+      mergedWord: string | null;
+      members: readonly string[];
+      edges: ReadonlyArray<{ predicate: RelationPredicate; object: string }>;
+    }): string[] {
+      const name = node.name ?? node.mergedWord;
+      if (name === null) return [];
+      const keys = node.edges.map((edge) => edgeKey(name, edge.predicate, edge.object));
+      for (const member of node.members) {
+        if (member !== name) keys.push(edgeKey(member, 'is-a', name));
+      }
+      return keys;
+    }
+
+    /** The derived induced-concept nodes (tests + introspection). */
+    inducedConceptNodes(): readonly InducedConceptNode[] {
+      this.ensureRelationsBuilt();
+      return this.inducedConceptNodeList;
+    }
+
+    /** The §9.3 rediscovery ledger (tests + introspection). */
+    conceptRediscoveries(): ReadonlyArray<{ nodeId: string; word: string; members: string[] }> {
+      return this.conceptRediscoveryLedger;
+    }
+
+    /**
+     * §9.3 — the naming ask for induced DISCOVERIES (a node whose edge set
+     * matches no word): it names the members and the shared edges. The first
+     * goal in the system whose object the observer found in its own memory.
+     */
+    conceptNamingAsks(): Array<{ nodeId: string; ask: string }> {
+      this.ensureRelationsBuilt();
+      const asks: Array<{ nodeId: string; ask: string }> = [];
+      for (const node of this.inducedConceptNodeList) {
+        if (node.name !== null || node.mergedWord !== null || node.stopped) continue;
+        asks.push({ nodeId: node.id, ask: this.conceptNamingAskText(node) });
+      }
+      return asks;
+    }
+
+    protected conceptNamingAskText(node: InducedConceptNode): string {
+      const head = node.members.slice(0, 6);
+      const overflow = node.members.length - 6;
+      const tail = overflow > 0 ? `, and ${overflow} other${overflow > 1 ? 's' : ''}` : '';
+      const memberPhrase = joinList(head) + tail;
+      const edges = node.edges.map((edge) => this.conceptEdgePhrase(edge.predicate, edge.object));
+      const capitalized = memberPhrase.charAt(0).toUpperCase() + memberPhrase.slice(1);
+      return `${capitalized} share something I do not have a word for — they ${joinList(edges)}. What is that called?`;
+    }
+
+    /** The natural-language form of one shared edge ("have feathers"). */
+    protected conceptEdgePhrase(predicate: RelationPredicate, object: string): string {
+      switch (predicate) {
+        case 'has-part':
+          return `have ${object}`;
+        case 'capable-of':
+          return `can ${object}`;
+        case 'made-of':
+          return `are made of ${object}`;
+        case 'used-for':
+          return `are used for ${object}`;
+        case 'has-property':
+          return `are ${object}`;
+        default:
+          return `${predicateVerb(predicate, object)} ${object}`;
+      }
+    }
+
+    /**
+     * §9.3 — bind a human-supplied name to an induced discovery. A name that
+     * is an existing known word merges the node into that word (the §9.3
+     * merge rule); any other name is bound to the node, its edges and the
+     * members' is-a edges materialize as hypothesis-tier edges, and the node
+     * becomes answerable (hedged) at once.
+     */
+    bindConceptName(nodeId: string, name: string): 'bound' | 'merged' | 'not-found' {
+      this.ensureRelationsBuilt();
+      const node = this.inducedConceptNodeList.find((candidate) => candidate.id === nodeId);
+      if (node === undefined || node.stopped) return 'not-found';
+      const normalized = name.trim().toLowerCase();
+      if (normalized.length === 0) return 'not-found';
+      const state = this.inducedConceptState.get(nodeId) ?? {
+        name: null,
+        mergedWord: null,
+        denials: 0,
+        stopped: false
+      };
+      const known = this.knownWords.has(normalized);
+      state.name = known ? null : normalized;
+      state.mergedWord = known ? normalized : null;
+      this.inducedConceptState.set(nodeId, state);
+      if (known) {
+        this.conceptRediscoveryLedger.push({
+          nodeId,
+          word: normalized,
+          members: node.members.filter((member) => member !== normalized)
+        });
+      }
+      // The node list is re-derived only when the asserted graph changes —
+      // force the re-derivation so the bound name materializes at once.
+      this.inducedFingerprint = '';
+      this.invalidateRelations();
+      return known ? 'merged' : 'bound';
+    }
+
+    /**
+     * H.2 — an answer INHERITED through an induced concept node: the member
+     * lacks the edge itself, the node carries it, so the observer
+     * generalizes — and speaks HEDGED ("I think a finch can fly — it is
+     * like the other birds I know"), one hop deep, blocked by the member's
+     * confirmed-false exceptions and the negation store, and never from a
+     * stopped node. Consulted only after the asserted graph and the
+     * hypothesis tier declined, so asserted speech stays asserted.
+     */
+    protected inducedConceptAnswerFor(utterance: string): {
+      response: string;
+      node: InducedConceptNode;
+      operator: OperatorResult;
+      provenanceEdges: Array<{ subject: string; predicate: RelationPredicate; object: string }>;
+    } | null {
+      if (!this.conceptSynthesis) return null;
+      const form = questionFormOf(utterance);
+      if (form === null || form.object === undefined) return null;
+      const predicate = form.kind as RelationPredicate;
+      if (!['is-a', 'has-part', 'made-of', 'used-for', 'capable-of', 'has-property', 'opposite-of', 'requires', 'causes'].includes(predicate)) {
+        return null;
+      }
+      for (const node of this.inducedConceptNodeList) {
+        if (node.stopped) continue;
+        if (!node.members.includes(form.subject)) continue;
+        const edge = node.edges.find((candidate) => candidate.predicate === predicate && candidate.object === form.object);
+        if (edge === undefined) continue;
+        // A member's confirmed-false exception blocks inheritance of that edge.
+        if (node.exceptions.some((exception) => exception.member === form.subject && exception.predicate === predicate && exception.object === form.object)) continue;
+        // The confirmed-false store blocks everything.
+        if (this.negations.some((n) => n.subject === form.subject && n.predicate === predicate && n.object === form.object)) continue;
+        // The operator layer answered direct asserted edges and the hypothesis
+        // tier answered direct hypothesis edges — inheritance is the point.
+        const asserted = this.relationsCache as Relation[];
+        if (asserted.some((r) => r.subject === form.subject && r.predicate === predicate && r.object === form.object)) continue;
+        if (this.hypothesisEdges.some((r) => r.subject === form.subject && r.predicate === predicate && r.object === form.object)) continue;
+
+        const others = node.members.filter(
+          (member) => member !== form.subject && member !== node.name && member !== node.mergedWord
+        );
+        const likePhrase = others.length > 0 ? ` — it is like the other ${joinList(others.slice(0, 3))} I know` : '';
+        const response = `I think ${form.subject} ${predicateVerb(predicate, form.object)} ${form.object}${likePhrase}.`;
+        const operator = ((): OperatorResult => {
+          switch (predicate) {
+            case 'has-part':
+              return { kind: 'has-part', subject: form.subject, part: form.object, via: null, answer: response, score: 0.5 };
+            case 'made-of':
+              return { kind: 'made-of', subject: form.subject, material: form.object, answer: response, score: 0.5 };
+            case 'has-property':
+              return { kind: 'has-property', subject: form.subject, property: form.object, via: null, answer: response, score: 0.5 };
+            case 'capable-of':
+              return { kind: 'capable-of', subject: form.subject, action: form.object, via: null, answer: response, score: 0.5 };
+            case 'used-for':
+              return { kind: 'used-for', subject: form.subject, purpose: form.object, answer: response, score: 0.5 };
+            case 'causes':
+              return { kind: 'causes', subject: form.subject, effect: form.object, answer: response, score: 0.5 };
+            case 'opposite-of':
+              return { kind: 'opposite-of', subject: form.subject, opposite: form.object, answer: response, score: 0.5 };
+            case 'requires':
+              return { kind: 'requires', subject: form.subject, requirement: form.object, via: null, answer: response, score: 0.5 };
+            default:
+              return { kind: 'is-a', subject: form.subject, target: form.object, answer: response, score: 0.5 };
+          }
+        })();
+        // The claim rests on the member's is-a edge AND the node's edge —
+        // provenance cites both (under the node's name, or its id when the
+        // node is still unnamed).
+        const name = node.name ?? node.mergedWord ?? node.id;
+        return {
+          response,
+          node,
+          operator,
+          provenanceEdges: [
+            { subject: form.subject, predicate: 'is-a', object: name },
+            { subject: name, predicate, object: form.object }
+          ]
+        };
+      }
+      return null;
+    }
+
+    /**
+     * H.2 — world denials count against the node: each weak world grade that
+     * withdraws (or attempts to withdraw) world-feedback credit on a
+     * concept-owned claim is one denial; two stop the node from chaining.
+     * The node is NEVER deleted — the record is the record.
+     */
+    protected noteConceptWorldDenial(subject: string, predicate: string, object: string): void {
+      for (const node of this.inducedConceptNodeList) {
+        if (node.stopped) continue;
+        const owned = this.conceptOwnedKeys(node);
+        if (!owned.includes(edgeKey(subject, predicate, object))) continue;
+        const state = this.inducedConceptState.get(node.id);
+        if (state === undefined) continue;
+        state.denials += 1;
+        node.denials = state.denials;
+        if (state.denials >= 2 && !state.stopped) {
+          state.stopped = true;
+          node.stopped = true;
+          this.maybePersist();
+        }
+        break;
+      }
     }
   };
 }

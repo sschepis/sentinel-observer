@@ -428,7 +428,20 @@ export class TeacherAgent extends TeacherAgentComposed {
      * every existing behavior stays bit-identical. LAST parameter on
      * purpose: every positional call site stays valid.
      */
-    pathHedging = false
+    pathHedging = false,
+    /**
+     * H (Phase H, §9): CONCEPT SYNTHESIS — MDL abstraction. With the flag
+     * on, the relations faculty re-derives induced concept nodes over the
+     * asserted graph (greedy largest-gain-first biclique-cover search, §9.1)
+     * and they enter the HYPOTHESIS tier: answers inherited through a node
+     * speak hedged ("I think a finch can fly — it is like the other birds I
+     * know"), corroboration promotes, two world denials stop the node from
+     * chaining (never deleted), an edge-set match with an existing word is
+     * a §9.3 rediscovery-merge, and a node matching no word raises the
+     * naming ask. DEFAULT OFF: every existing behavior stays bit-identical.
+     * LAST parameter on purpose: every positional call site stays valid.
+     */
+    conceptSynthesis = false
   ) {
     super();
     this.session = session;
@@ -437,6 +450,7 @@ export class TeacherAgent extends TeacherAgentComposed {
     this.settleSteps = Math.max(0, Math.floor(settleSteps));
     this.settleCriterion = settleCriterion === 'peak' ? 'peak' : 'fixed';
     this.pathHedging = pathHedging;
+    this.conceptSynthesis = conceptSynthesis;
     this.hiddenRelationKeys = hiddenRelationKeys ?? null;
     this.curriculumConfig = curriculumConfig ?? {};
     this.rewriteInduction = rewriteInduction;
@@ -828,6 +842,30 @@ export class TeacherAgent extends TeacherAgentComposed {
           traceIds: [],
           edges: [{ subject: hypothesis.edge.subject, predicate: hypothesis.edge.predicate, object: hypothesis.edge.object }],
           operatorId: 'hypothesis'
+        }
+      });
+    }
+
+    // 2.56 H (Phase H) CONCEPT SYNTHESIS (§9.2): a claim INHERITED through
+    //      an induced concept node — the member lacks the edge, the node
+    //      carries it, and the observer generalizes HEDGED ("I think a
+    //      finch can fly — it is like the other birds I know"), one hop
+    //      deep, blocked by exceptions and the confirmed-false store. Its
+    //      provenance cites the chain's two edges, so a strong world grade
+    //      corroborates (promotes) them and a weak one counts as a denial —
+    //      two denials stop the node (never delete it).
+    const induced = this.inducedConceptAnswerFor(resolved);
+    if (induced !== null) {
+      this.workingMemory.note('observer', induced.response);
+      this.noteAnswerMode('operator');
+      return finish({
+        mode: 'operator',
+        response: induced.response,
+        operator: induced.operator,
+        provenance: {
+          traceIds: [],
+          edges: induced.provenanceEdges,
+          operatorId: 'concept-synthesis'
         }
       });
     }
