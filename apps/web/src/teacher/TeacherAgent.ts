@@ -143,6 +143,9 @@ export {
   FSRS_CONSOLIDATED_STABILITY,
   reviewRetrievability,
   applyRetentionDecay,
+  candidateDistributionEntropy,
+  storeSurprise,
+  surpriseInitialStability,
   type RetentionParams
 } from './fsrs';
 // The previously-public module-scope surface, frozen (see agent/support.ts).

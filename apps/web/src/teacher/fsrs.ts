@@ -12,7 +12,7 @@
  * holds the scheduler's constants and the trace-decay application.
  */
 import { retentionProbability, STABILITY_PRESETS } from './retention';
-import { clampRange } from '@sschepis/sentient-core';
+import { clampRange, normalizedEntropy, toDistribution } from '@sschepis/sentient-core';
 
 /** Initial stability (days) of a freshly taught word. */
 export const FSRS_INITIAL_STABILITY = 1;
@@ -39,6 +39,53 @@ export const FSRS_OVERDUE_BONUS = 1;
 export const FSRS_DIFFICULTY_SCALE = 8;
 /** Stability (days) beyond which a word reads as consolidated. */
 export const FSRS_CONSOLIDATED_STABILITY = 30;
+
+/**
+ * Candidate-distribution entropy of a ranked recall: the normalized Shannon
+ * entropy of the recall scores treated as a distribution over candidates
+ * (abs-magnitude weights, the same convention as the SMF's own entropy).
+ * A flat distribution — no clear winner — reads 1; a single dominant
+ * candidate reads 0. A list of fewer than two candidates carries no
+ * uncertainty and reads 0.
+ */
+export function candidateDistributionEntropy(scores: readonly number[]): number {
+  if (scores.length < 2) return 0;
+  return normalizedEntropy(toDistribution(scores));
+}
+
+/**
+ * Store-time surprise (Phase C.1 / §4.1): how poorly the bank predicts a new
+ * stimulus, measured from the recall of the word's cue that precedes storage.
+ *
+ * Two complementary readings of the ranked candidate list, both in [0, 1]:
+ *   · 1 − best-recall-score — how far the bank's best guess is from a perfect
+ *     prediction (the dominant signal);
+ *   · candidate-distribution entropy — how indecisive the bank is (a flat
+ *     list means no clear winner, so the bank is genuinely uncertain).
+ *
+ * Surprise averages the two. An EMPTY candidate list is not a failed
+ * prediction — the bank made no prediction at all — so it carries no surprise
+ * signal and reads as neutral (0.5), keeping the fixed initial stability for
+ * the first word stored into an empty bank.
+ */
+export function storeSurprise(scores: readonly number[]): number {
+  if (scores.length === 0) return 0.5;
+  const best = clampRange(Math.max(0, ...scores), 0, 1);
+  return clampRange(0.5 * (1 - best) + 0.5 * candidateDistributionEntropy(scores), 0, 1);
+}
+
+/**
+ * Initial stability (days) mapped from store-time surprise, anchored at the
+ * fixed default: surprise = 0.5 reproduces today's FSRS_INITIAL_STABILITY (a
+ * stimulus the bank half-predicts stores exactly as before). A near-duplicate
+ * (surprise → 0) halves it; an unpredicted stimulus (surprise → 1) doubles
+ * it. Bounded to a ×½–×2 window around the default — the success/failure
+ * update curves are untouched.
+ */
+export function surpriseInitialStability(surprise: number): number {
+  const s = clampRange(surprise, 0, 1);
+  return FSRS_INITIAL_STABILITY * Math.pow(2, 2 * s - 1);
+}
 
 /**
  * L1a (Phase 17.1): the retrievability of a word AT REVIEW TIME — the

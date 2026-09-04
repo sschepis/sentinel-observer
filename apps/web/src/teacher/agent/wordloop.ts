@@ -25,13 +25,14 @@ import {
   STABILITY_PRESETS
 } from '../retention';
 import {
-  FSRS_INITIAL_STABILITY,
   FSRS_INITIAL_DIFFICULTY,
   FSRS_CONSOLIDATED_STABILITY,
   FSRS_OVERDUE_BONUS,
   FSRS_DIFFICULTY_SCALE,
   reviewRetrievability,
   applyRetentionDecay,
+  storeSurprise,
+  surpriseInitialStability,
   type RetentionParams
 } from '../fsrs';
 import {
@@ -261,13 +262,25 @@ export function WordLoopMixin<TBase extends Constructor<TeacherAgentCore & Cross
       this.session.settleField();
       this.session.observeText(state.word.word);
       this.session.observer.tick(0.02);
-      const trace = this.session.storeMemory(lesson);
+      // Store-time surprise (§4.1): recall the word's cue BEFORE storing, so
+      // the bank's prediction of the stimulus — its best-recall-score and the
+      // candidate-distribution entropy — measures how poorly it already
+      // predicts the word. The surprise is recorded on the trace and seeds the
+      // FSRS stability instead of the fixed default.
+      const cueScores = this.session
+        .recall(state.word.word, 5)
+        .filter((result) => result.trace.metadata?.kind === undefined)
+        .map((result) => result.score);
+      const surprise = storeSurprise(cueScores);
+
+      const trace = this.session.storeMemory(lesson, { metadata: { surprise } });
       if (trace !== null) {
         state.traceId = trace.id;
         state.taughtAt = Date.now();
-        // P9: a freshly taught word starts on the default curve and is due for
-        // its first review immediately (the auto-loop quizzes right after).
-        state.stability = FSRS_INITIAL_STABILITY;
+        // P9: a freshly taught word starts on the surprise-scaled curve and is
+        // due for its first review immediately (the auto-loop quizzes right
+        // after).
+        state.stability = surpriseInitialStability(surprise);
         state.difficulty = FSRS_INITIAL_DIFFICULTY;
         state.dueAt = Date.now();
         state.lastIntervalDays = null;
