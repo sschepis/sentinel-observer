@@ -9,6 +9,8 @@
 import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base';
 import type { TeacherAgent } from '../TeacherAgent';
 import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from '../plan';
+import { unansweredSelfQuestions, type ElaborationOptions } from '../elaboration';
+import type { Relation } from '../relations';
 import { sleep, type AutoLoopOptions, type AutoLoopHandle } from './support';
 
 export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
@@ -99,6 +101,20 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
     /** Snapshot of the current goals (deep copies — the planner mutates them). */
     goalList(): LearningGoal[] {
       return this.goals.map((g) => ({ ...g, steps: [...g.steps] }));
+    }
+
+    /**
+     * §8.3 INWARD QUESTIONING — the follow-up questions the observer's own
+     * elaboration of `subject` raises, routed through its own stack: the
+     * ones it cannot answer become curiosity gaps through the existing
+     * recordGap path (the classroom loop fed by what the observer tried to
+     * say and could not). Answerable follow-ups are not gaps — grounded
+     * answers extend the elaboration. Returns the gaps recorded.
+     */
+    recordSelfQuestionGaps(subject: string, relations: readonly Relation[], options: ElaborationOptions = {}): string[] {
+      const gaps = unansweredSelfQuestions(subject, relations, options);
+      for (const gap of gaps) this.recordGap(gap);
+      return gaps;
     }
 
     /**
