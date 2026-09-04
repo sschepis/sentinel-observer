@@ -960,6 +960,51 @@ export const CONSTANTS: readonly ConstantEntry[] = [
       mass: null,
       note: 'E.2 §6.2 / priming-bench: the tilt must raise primed resolution without flipping a single unrelated probe (contamination 0).'
     }
+  },
+  {
+    name: 'PER_STORE_STABILITY_LEARNED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/retention.ts',
+    line: 118,
+    note: '0 = the decay presets 7/45/90/30 are the CONTROL; 1 = each store\'s stability is learned from that store\'s own retrieval outcomes under the FSRS update law (the preset is the prior the updates learn away from).',
+    evidence: { sources: ['fuzz', 'world-outcome'], mass: null, note: '§5.2 row 4: per-store stability exactly as FSRS learns per-word stability; the law-shape (success stretches, failure shrinks) is pinned per store by the programmatic storeStability bench, including parity with the FSRS update constants.' }
+  },
+  {
+    name: 'MDL_UNKNOWN_COST_MEASURED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/mdl.ts',
+    line: 35,
+    note: '0 = the 20-bit unknown-token cost is the CONTROL; 1 = −log₂ of the unseen-word mass under a Good–Turing estimate over the deck frequency table.',
+    evidence: { sources: ['math', 'fuzz'], mass: null, note: '§5.2 row 6: Good–Turing over the deck; the programmatic mdl bench pins the estimate finite and drifting correctly (unseen mass falls, cost rises) as the deck grows.' }
+  },
+  {
+    name: 'MDL_SLOT_COST_MEASURED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/mdl.ts',
+    line: 35,
+    note: '0 = the 15-bit slot annotation cost is the CONTROL; 1 = −log₂ P(slot position | shell grammar) estimated from the learned-operator library\'s templates.',
+    evidence: { sources: ['math', 'fuzz'], mass: null, note: '§5.2 row 5: the library\'s own statistics, Good–Turing smoothed; the programmatic mdl bench pins the estimate finite and matching the empirical position rates.' }
+  },
+  {
+    name: 'COUNCIL_GOAL_MDL_PROMOTION',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/network.ts',
+    line: 323,
+    note: '0 = the 2-miss goal threshold is the CONTROL; 1 = promote a goal when the recurring deficit\'s MDL gain as a goal is positive (a goal that saves more asks than it costs).',
+    evidence: { sources: ['chain', 'math'], mass: null, note: '§5.2 row 8: the same criterion as operators; the programmatic goalMdl bench pins promotion occurring only at positive gain.' }
+  },
+  {
+    name: 'WORLD_WEIGHT_MEASURED',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/trust.ts',
+    line: 72,
+    note: '0 = the 0.25 world-feedback weight is the CONTROL; 1 = the world channel\'s measured agreement with ground truth via the trust kernel\'s bucket machinery (Wilson lower bound at prior 0).',
+    evidence: { sources: ['fuzz', 'world-outcome'], mass: null, note: '§5.2 row 9: measured by the trust kernel itself; the programmatic trust bench pins the measured weight bounded and evidence-responsive.' }
   }
 ] as const;
 

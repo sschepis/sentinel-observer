@@ -51,6 +51,56 @@ export const FUSION_TEACHER_FLOOR = 0.05;
 /** The judges the kernel currently fuses. */
 export const JUDGE_LLM = 'llm';
 export const JUDGE_COMPOSITE = 'composite';
+/** D.8 (§5.2 row 9): the world-outcome channel as a junior judge — its
+ *  weight is its MEASURED agreement with ground truth, not an assignment. */
+export const JUDGE_WORLD = 'world';
+
+// ────────────────────────────────────────────────────────────────────────────
+// D.8 (§5.2 row 9) — the world-outcome weight, measured by the kernel itself
+// ────────────────────────────────────────────────────────────────────────────
+
+/** The hand world-feedback weight — the CONTROL (mirrors reliability.ts
+ *  WORLD_FEEDBACK_WEIGHT; the bench asserts parity). The world confirms
+ *  slowly, the teacher sharply. */
+export const WORLD_FEEDBACK_CONTROL = 0.25;
+
+/** The gate — OFF by default (the 0.25 constant is the CONTROL; the
+ *  measured weight switches on only behind its bench). */
+let worldWeightMeasured = false;
+
+/** Enable/disable the measured world-outcome weight. */
+export function setWorldWeightMeasured(enabled: boolean): void {
+  worldWeightMeasured = enabled;
+}
+
+/** Whether the measured world-outcome weight is currently live. */
+export function isWorldWeightMeasured(): boolean {
+  return worldWeightMeasured;
+}
+
+/**
+ * The world channel's measured agreement with ground truth in a bucket —
+ * the trust kernel's own machinery applied to the world judge: the Wilson
+ * lower bound on its recorded agreement rate at prior 0 (a newcomer earns
+ * everything). Bounded to [0, 1): 0 with no evidence, tightening toward the
+ * measured rate as ground-truth outcomes accrue, falling when the channel
+ * disagrees with the ground truth it is measured against.
+ */
+export function measuredWorldWeight(kernel: TrustKernel, criteria: TrustCriteria): number {
+  return kernel.trustLB(JUDGE_WORLD, criteria, 0);
+}
+
+/**
+ * The LIVE world-feedback weight: the world channel's measured agreement
+ * when the gate is on, else the fixed control (0.25). World outcomes that
+ * carry ground truth (rule checks, bench verdicts) are recorded into the
+ * world judge with kernel.record(JUDGE_WORLD, criteria, agree) — the same
+ * bucket machinery every judge accrues under.
+ */
+export function worldFeedbackWeight(kernel: TrustKernel, criteria: TrustCriteria): number {
+  if (worldWeightMeasured) return measuredWorldWeight(kernel, criteria);
+  return WORLD_FEEDBACK_CONTROL;
+}
 
 /** The criteria dimensions (structurally identical to GradeCriteria in
  *  reliability.ts — defined here so reliability.ts can depend on trust.ts
