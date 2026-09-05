@@ -147,6 +147,14 @@ export default function App() {
   }, [remote.server, summaryTick]);
 
   const trainingRunning = remote.server?.trainingRunning ?? false;
+  const offline = remoteAvailable === false || remote.status === 'error' || remote.server === null;
+  const [actionError, setActionError] = useState<string | null>(null);
+  const withError = (action: () => Promise<unknown>): void => {
+    setActionError(null);
+    void action().catch((reason: unknown) =>
+      setActionError(reason instanceof Error ? reason.message : String(reason))
+    );
+  };
 
   return (
     <div className="flex h-full bg-slate-950 text-slate-100">
@@ -228,21 +236,39 @@ export default function App() {
         )}
 
         <div className={`${view === 'chat' ? '' : 'mt-auto'} border-t border-slate-800/60 px-5 py-3`}>
-          <button
-            onClick={() => {
-              if (remote.server?.running === true) void remoteClient.sleep().then(() => remote.refresh());
-              else void remoteClient.wake().then(() => remote.refresh());
-            }}
-            className="w-full rounded-lg border border-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
-          >
-            {remote.server?.running === true ? 'Pause the server observer' : 'Resume the server observer'}
-          </button>
+          {offline ? (
+            <button
+              onClick={() => setProbeEpoch((n) => n + 1)}
+              className="w-full rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 transition hover:border-rose-400 hover:text-rose-200"
+            >
+              Observer server offline — retry
+            </button>
+          ) : (
+            <button
+              onClick={() =>
+                withError(() =>
+                  remoteClient.train(!trainingRunning).then(() => remote.refresh())
+                )
+              }
+              className={`w-full rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                trainingRunning
+                  ? 'border-rose-500/40 bg-rose-500/10 text-rose-300 hover:border-rose-400 hover:text-rose-200'
+                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:border-emerald-400 hover:text-emerald-200'
+              }`}
+            >
+              {trainingRunning ? 'Stop training' : 'Start training'}
+            </button>
+          )}
           <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
-            Learning on the observer server
-            {remote.server?.savedAt !== null && remote.server?.savedAt !== undefined
-              ? ` · saved ${new Date(remote.server!.savedAt!).toLocaleTimeString()}`
-              : ''}
+            {offline
+              ? 'Run `npm run server` — the observer trains there, never in this browser.'
+              : `Training on the server · ${remote.server?.training?.cycles ?? 0} cycles${
+                  remote.server?.savedAt !== null && remote.server?.savedAt !== undefined
+                    ? ` · saved ${new Date(remote.server!.savedAt!).toLocaleTimeString()}`
+                    : ''
+                }`}
           </p>
+          {actionError !== null && <p className="mt-1.5 text-[11px] text-rose-400">{actionError}</p>}
         </div>
       </aside>
 
@@ -254,15 +280,15 @@ export default function App() {
           totalWords={summary.total}
           competency={summary.competency}
           creativeUnlocked={summary.creativeUnlocked}
-          learning={remote.server?.running ?? false}
+          learning={trainingRunning}
           revision={0}
         />
 
         <div className="flex shrink-0 items-center gap-3 border-b border-slate-800/60 px-6 py-2.5">
           <h1 className="text-sm font-medium text-slate-200">{VIEW_TITLE[view]}</h1>
           <span className="flex items-center gap-1.5 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] text-sky-300">
-            <span className={`h-1.5 w-1.5 rounded-full ${remote.server?.running === true ? 'animate-pulse bg-sky-400' : 'bg-slate-500'}`} />
-            observer server · {remote.server?.running === true ? 'learning' : 'paused'}
+            <span className={`h-1.5 w-1.5 rounded-full ${trainingRunning ? 'animate-pulse bg-sky-400' : 'bg-slate-500'}`} />
+            observer server · {offline ? 'offline' : trainingRunning ? 'learning' : 'paused'}
           </span>
           {view !== 'training' && trainingRunning && (
             <button
@@ -281,7 +307,10 @@ export default function App() {
             ready={connected}
             creativeUnlocked={summary.creativeUnlocked}
             voice={voice}
-            onStartObserver={() => void remoteClient.wake().then(() => remote.refresh())}
+            onStartObserver={() => {
+              if (offline) setProbeEpoch((n) => n + 1);
+              else withError(() => remoteClient.wake().then(() => remote.refresh()));
+            }}
           />
         )}
 
