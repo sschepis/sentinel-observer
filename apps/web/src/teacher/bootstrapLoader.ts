@@ -71,24 +71,6 @@ export function assertImportable(record: BootstrapRecord): void {
   }
 }
 
-/** Fetch the record deployed alongside the app (written by `npm run train`). */
-export async function fetchDeployedBootstrap(): Promise<BootstrapRecord> {
-  const response = await fetch('bootstrap.json');
-  if (!response.ok) {
-    throw new Error(`bootstrap.json not found (HTTP ${response.status}) — run the batch trainer first (npm run train)`);
-  }
-  const contentLength = Number(response.headers.get('content-length') ?? 0);
-  if (contentLength > MAX_RECORD_BYTES) {
-    throw new Error(
-      `bootstrap.json is ${(contentLength / 1024 / 1024).toFixed(0)}MB — too large to import safely; regenerate it with npm run train`
-    );
-  }
-  const record = (await response.json()) as BootstrapRecord;
-  assertImportable(record);
-  assertVocabularyCompatible(record);
-  return record;
-}
-
 /** Import a record into the live session and persist it before returning. */
 export async function importRecord(
   teacher: TeacherAgent,
@@ -106,21 +88,3 @@ export async function importRecord(
   return result;
 }
 
-/**
- * Decide whether the deployed record should be imported automatically:
- * nothing has been learned yet, or a newer record has been deployed since
- * the last import.
- */
-export async function shouldAutoImportBootstrap(teacher: TeacherAgent): Promise<boolean> {
-  const learned = teacher.listWords().some((entry) => entry.traceId !== null);
-  try {
-    const response = await fetch('bootstrap.meta.json');
-    if (!response.ok) return !learned;
-    const meta = (await response.json()) as { generatedAt?: string };
-    const last = teacher.lastBootstrapImported();
-    const newer = meta.generatedAt !== undefined && (last === null || meta.generatedAt > last.generatedAt);
-    return !learned || newer;
-  } catch {
-    return !learned;
-  }
-}

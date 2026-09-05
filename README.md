@@ -80,6 +80,17 @@ parity) run under the named bench scripts.
 
 ## Status
 
+**Single-agent deployment.** The observer is ONE long-lived server process
+(`npm run server`): it owns the only teacher, runs the autonomous classroom
+loop continuously (with no browser attached), and persists its learning
+record plus a portable model snapshot to disk on a timer and on shutdown.
+The web app is a pure client — chat turns, teach replies, grades (computed
+server-side), definitions backfill, and record import/export all flow
+through the server's HTTP surface; the browser holds no model, no training
+loop, and no learned state (only conversation transcripts, voice settings,
+and the server URL). The headless trainer (`npm run train`) produces the
+same teacher-code-path record the server restores.
+
 The observer learns 20k-word decks and conversational exchanges, answers
 grounded questions by chained relational reasoning, acquires operators and
 procedures under an MDL criterion, composes from its own memories with a
