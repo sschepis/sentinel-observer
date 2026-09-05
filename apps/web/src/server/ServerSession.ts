@@ -11,6 +11,8 @@ import type { BootstrapRecord } from '../teacher/bootstrap';
 import { assertVocabularyCompatible } from '../teacher/bootstrapLoader';
 import { TrainingLoop, EMPTY_TRAINING_STATS, type TrainingStats } from './trainingLoop';
 import type { ChaperoneSettings } from '../teacher/chaperone';
+import { DefinitionsRunner } from './definitionsRunner';
+import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
 import type { LearningEvent } from '../learning/events';
 
 /**
@@ -86,6 +88,10 @@ export interface ServerState {
   /** The autonomous classroom loop (the ONLY trainer — the browser never
    *  trains). Null until the server boots with training enabled. */
   training: TrainingStats | null;
+  /** True when a chaperone endpoint is configured (server-side only). */
+  chaperoneConfigured: boolean;
+  /** The definitions backfill run (server-side; the browser's is gone). */
+  definitions: { running: boolean; progress: ChaperoneProgressState | null; result: string | null } | null;
 }
 
 export class ServerSession {
@@ -139,6 +145,7 @@ export class ServerSession {
   }
 
   private trainingLoop: TrainingLoop | null = null;
+  private definitionsRunner: DefinitionsRunner | null = null;
 
   async boot(): Promise<ServerState> {
     this.status = 'loading';
@@ -210,6 +217,9 @@ export class ServerSession {
     this.autosaveTimer = setInterval(() => {
       void this.saveNow('interval').catch(() => {});
     }, this.options.autosaveMs);
+    // The autosave cadence must never keep a process alive: the model is
+    // also saved on shutdown, so an unref'd timer costs nothing.
+    this.autosaveTimer.unref?.();
 
     this.status = 'ready';
     this.broadcast({
@@ -220,6 +230,87 @@ export class ServerSession {
     });
     await this.saveNow('boot');
     return this.state();
+  }
+
+  /** Start/stop the autonomous classroom loop (the ONLY trainer). */
+  setTraining(run: boolean): void {
+    if (run) {
+      if (this.trainingLoop === null && this.teacher !== null) {
+        this.trainingLoop = new TrainingLoop(this.teacher, {
+          settings: this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
+          cadenceMs: this.options.trainCadenceMs ?? 400,
+          onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
+          onError: (message) =>
+            this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
+        });
+      }
+      this.trainingLoop?.start();
+    } else {
+      this.trainingLoop?.stop();
+    }
+  }
+
+  /** Import a bootstrap record into the singular teacher (the browser's
+   *  import path is gone). Returns the same summary importBootstrap gives. */
+  async importRecord(record: BootstrapRecord): Promise<{ restored: number; conversations: number; definitions: number; droppedWords: number; stale: number }> {
+    if (this.teacher === null) throw new Error('observer not booted');
+    assertVocabularyCompatible(record);
+    const summary = this.teacher.importBootstrap(record);
+    await this.teacher.persistAll();
+    await this.saveNow('import');
+    return summary;
+  }
+
+  /** The portable model snapshot of the singular teacher. */
+  exportRecord(): BootstrapRecord {
+    if (this.teacher === null) throw new Error('observer not booted');
+    return this.teacher.exportBootstrap('en-20000');
+  }
+
+  /** Import the deployed bootstrap from the configured path (server-side). */
+  async loadDeployedBootstrap(): Promise<{ ok: boolean; summary?: { restored: number; conversations: number; definitions: number; droppedWords: number; stale: number }; error?: string }> {
+    const path = this.options.bootstrapPath;
+    if (path.length === 0 || !existsSync(path)) {
+      return { ok: false, error: 'no bootstrap path configured or file missing' };
+    }
+    try {
+      const record = JSON.parse(readFileSync(path, 'utf8')) as BootstrapRecord;
+      const summary = await this.importRecord(record);
+      return { ok: true, summary };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Start the server-side definitions backfill (false when nothing needs
+   *  it or a run is already active). */
+  startDefinitions(): boolean {
+    if (this.teacher === null) return false;
+    if (this.definitionsRunner === null) {
+      this.definitionsRunner = new DefinitionsRunner(
+        this.teacher,
+        this.store,
+        this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
+        (events) => this.broadcast({ kind: 'learning', at: Date.now(), events })
+      );
+    }
+    return this.definitionsRunner.start();
+  }
+
+  cancelDefinitions(): void {
+    this.definitionsRunner?.cancel();
+  }
+
+  definitionsRunnerRunning(): boolean {
+    return this.definitionsRunner?.running ?? false;
+  }
+
+  definitionsProgress(): ChaperoneProgressState | null {
+    return this.definitionsRunner?.progress() ?? null;
+  }
+
+  definitionsResult(): string | null {
+    return this.definitionsRunner?.result() ?? null;
   }
 
   /** Write the learning record + the portable model snapshot, atomically. */
@@ -311,7 +402,12 @@ export class ServerSession {
       modelPath: this.modelPath,
       tracesInModel: this.session?.observer.getMemoryBank().all().length ?? 0,
       tickCount: this.session?.observer.getState().tickCount ?? 0,
-      training: this.trainingLoop !== null ? this.trainingLoop.statistics() : (this.options.train ?? true ? EMPTY_TRAINING_STATS : null)
+      training: this.trainingLoop !== null ? this.trainingLoop.statistics() : (this.options.train ?? true ? EMPTY_TRAINING_STATS : null),
+      chaperoneConfigured: (this.options.chaperone?.endpoint ?? '').trim().length > 0,
+      definitions:
+        this.definitionsRunner !== null
+          ? { running: this.definitionsRunner.running, progress: this.definitionsRunner.progress(), result: this.definitionsRunner.result() }
+          : null
     };
   }
 }

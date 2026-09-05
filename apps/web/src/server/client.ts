@@ -34,6 +34,19 @@ export interface RemoteServerState {
   modelPath: string | null;
   tracesInModel: number;
   tickCount: number;
+  training: {
+    cycles: number;
+    wordsTaught: number;
+    wordsReviewed: number;
+    phrasesTaught: number;
+    llmCalls: number;
+    selfAnswered: number;
+    drillsRun: number;
+    drillsInduced: number;
+    drillsMemorized: number;
+  } | null;
+  chaperoneConfigured: boolean;
+  definitions: { running: boolean; progress: unknown; result: string | null } | null;
 }
 
 export interface RemoteWordEntry {
@@ -60,6 +73,7 @@ export type RemoteEvent =
   | { kind: 'signal'; signal: ObserverSignal }
   | { kind: 'snapshot'; snapshot: { at: number; traces: number; deck: string; bytes: number } }
   | { kind: 'lifecycle'; at: number; event: string; detail: string }
+  | { kind: 'learning'; at: number; events: Array<{ kind: string; text: string; label?: string }> }
   | { kind: 'state'; status: string };
 
 export class RemoteClient {
@@ -158,6 +172,30 @@ export class RemoteClient {
     return this.post('/api/save', {}).then(() => undefined);
   }
 
+  train(run: boolean): Promise<void> {
+    return this.post('/api/train', { run }).then(() => undefined);
+  }
+
+  importRecord(record: unknown): Promise<{ restored: number; conversations: number; definitions: number; droppedWords: number; stale: number }> {
+    return this.post<{ imported: { restored: number; conversations: number; definitions: number; droppedWords: number; stale: number } }>('/api/record/import', { record }).then((p) => p.imported);
+  }
+
+  loadBootstrap(): Promise<{ ok: boolean; error?: string; summary?: { restored: number; conversations: number; definitions: number; droppedWords: number; stale: number } }> {
+    return this.post<{ ok: boolean; error?: string; summary?: { restored: number; conversations: number; definitions: number; droppedWords: number; stale: number } }>('/api/bootstrap/load', {}).then((p) => p);
+  }
+
+  startDefinitions(): Promise<{ started: boolean }> {
+    return this.post<{ started: boolean }>('/api/definitions/start', {});
+  }
+
+  cancelDefinitions(): Promise<void> {
+    return this.post('/api/definitions/cancel', {}).then(() => undefined);
+  }
+
+  definitions(): Promise<{ running: boolean; progress: unknown; result: string | null }> {
+    return fetch(`${this.base}/api/definitions`).then((r) => r.json() as Promise<{ running: boolean; progress: unknown; result: string | null }>);
+  }
+
   /** The trained model as a browser download (bootstrap record). */
   downloadSnapshot(): void {
     const link = document.createElement('a');
@@ -171,7 +209,7 @@ export class RemoteClient {
   /** Subscribe to the live event stream (metrics, signals, saves). */
   connect(onEvent: (event: RemoteEvent) => void, onClose?: () => void): () => void {
     const source = new EventSource(`${this.base}/api/events`);
-    const kinds = ['metrics', 'signal', 'snapshot', 'lifecycle', 'state'] as const;
+    const kinds = ['metrics', 'signal', 'snapshot', 'lifecycle', 'learning', 'state'] as const;
     for (const kind of kinds) {
       source.addEventListener(kind, (message) => {
         try {

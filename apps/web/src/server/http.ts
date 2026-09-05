@@ -130,6 +130,25 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
     return;
   }
 
+  if (req.method === 'GET' && path === '/api/definitions') {
+    sendJson(res, 200, {
+      running: server.definitionsRunnerRunning(),
+      progress: server.definitionsProgress(),
+      result: server.definitionsResult()
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && path === '/api/record/export') {
+    try {
+      const record = server.exportRecord();
+      sendJson(res, 200, { record });
+    } catch (err) {
+      sendJson(res, 503, { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && path === '/api/events') {
     serveEventStream(req, res, server);
     return;
@@ -215,6 +234,41 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
 
       if (path === '/api/sleep') {
         server.sleep();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (path === '/api/train') {
+        server.setTraining(body.run === true);
+        sendJson(res, 200, { training: server.state().training });
+        return;
+      }
+
+      if (path === '/api/record/import') {
+        const record = body.record;
+        if (typeof record !== 'object' || record === null) {
+          sendJson(res, 400, { error: 'record required' });
+          return;
+        }
+        const summary = await server.importRecord(record as never);
+        sendJson(res, 200, { imported: summary });
+        return;
+      }
+
+      if (path === '/api/bootstrap/load') {
+        const loaded = await server.loadDeployedBootstrap();
+        sendJson(res, loaded.ok ? 200 : 400, loaded);
+        return;
+      }
+
+      if (path === '/api/definitions/start') {
+        const started = server.startDefinitions();
+        sendJson(res, 200, { started });
+        return;
+      }
+
+      if (path === '/api/definitions/cancel') {
+        server.cancelDefinitions();
         sendJson(res, 200, { ok: true });
         return;
       }
