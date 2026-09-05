@@ -528,3 +528,75 @@ describe('relations structured pass', () => {
     expect(result.errors[0]).toMatch(/no LLM provider configured/);
   });
 });
+
+describe('Chaperone.researchTopic (R17)', () => {
+  const stubProvider = (raw: string): ChaperoneProvider => ({
+    name: 'stub',
+    complete: async () => '',
+    completeRaw: async () => raw
+  });
+
+  const VALID_BRIEF = JSON.stringify({
+    facts: [
+      'A photon is a particle of light that carries energy.',
+      'Light travels at a constant speed in empty space.',
+      'Photons can be absorbed by atoms and re-emitted.'
+    ],
+    definitions: [
+      { word: 'photon', definition: 'a particle of light that carries energy', example: 'A photon leaves the sun.' }
+    ],
+    pairs: [{ cue: 'what is a photon', response: 'A photon is a particle of light.' }]
+  });
+
+  it('validates and returns a clean briefing', async () => {
+    const chaperone = new Chaperone(stubProvider(VALID_BRIEF));
+    const { brief, error } = await chaperone.researchTopic('light', { maxFacts: 4, maxDefinitions: 2, maxPairs: 2 });
+    expect(error).toBeNull();
+    expect(brief.facts).toHaveLength(3);
+    expect(brief.definitions).toHaveLength(1);
+    expect(brief.definitions[0].word).toBe('photon');
+    expect(brief.pairs).toHaveLength(1);
+    expect(brief.pairs[0].cue).toBe('what is a photon');
+    expect(brief.rejectedFacts).toHaveLength(0);
+  });
+
+  it('rejects junk facts and reports them, keeping only quality content', async () => {
+    const junk = JSON.stringify({
+      facts: [
+        'A photon is a particle of light that carries energy.',
+        'see https://example.com for more',
+        'what is a photon?',
+        'I think photons are great.',
+        'x'
+      ],
+      definitions: [],
+      pairs: []
+    });
+    const chaperone = new Chaperone(stubProvider(junk));
+    const { brief } = await chaperone.researchTopic('light');
+    expect(brief.facts).toHaveLength(1);
+    expect(brief.rejectedFacts.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('deduplicates exchanges against the existing cues', async () => {
+    const brief = JSON.stringify({
+      facts: [],
+      definitions: [],
+      pairs: [
+        { cue: 'what is a photon', response: 'A photon is a particle of light.' },
+        { cue: 'what is a photon', response: 'A different answer.' }
+      ]
+    });
+    const chaperone = new Chaperone(stubProvider(brief));
+    const result = await chaperone.researchTopic('light', { existingCues: new Set(['what is a photon']) });
+    expect(result.brief.pairs).toHaveLength(0);
+  });
+
+  it('reports an honest error when the provider cannot do structured output', async () => {
+    const provider: ChaperoneProvider = { name: 'stub', complete: async () => '' };
+    const chaperone = new Chaperone(provider);
+    const { brief, error } = await chaperone.researchTopic('light');
+    expect(brief.facts).toHaveLength(0);
+    expect(error).toContain('structured output');
+  });
+});

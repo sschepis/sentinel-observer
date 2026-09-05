@@ -666,6 +666,96 @@ export function validateGeneratedRelation(
   return { predicate, object };
 }
 
+export interface TopicBriefResult {
+  /** Validated declarative facts (the quality-gated briefing). */
+  facts: string[];
+  /** Validated key-term definitions (GeneratedEntry = accepted by the
+   *  generateBatch validator). */
+  definitions: GeneratedEntry[];
+  /** Validated exchanges (lowercase cue grammar, deduplicated). */
+  pairs: ConversationPairResult[];
+  /** Facts the provider offered that failed validation (reported). */
+  rejectedFacts: string[];
+}
+
+function emptyTopicBrief(): TopicBriefResult {
+  return { facts: [], definitions: [], pairs: [], rejectedFacts: [] };
+}
+
+/** A topic fact must be a bounded declarative learner-English sentence. */
+function validateTopicFact(text: string): string | null {
+  const fact = text.trim();
+  if (fact.length < 20 || fact.length > 240) return null;
+  if (!fact.endsWith('.')) return null;
+  if (/[\n\r\t]/.test(fact)) return null;
+  if (/https?:\/\//i.test(fact)) return null;
+  if (fact.endsWith('?')) return null;
+  if (/\b(i|we|you|me|my|our|your)\b/.test(fact.toLowerCase())) return null;
+  // No quotes smuggling, no all-caps shouting.
+  if (/["'`]/.test(fact)) return null;
+  if (fact === fact.toUpperCase() && /[A-Z]/.test(fact)) return null;
+  return fact;
+}
+
+/** Tolerantly parse a topic-brief payload (fence/prose-tolerant, like the
+ *  pair parser); every entry is validated, rejected entries are reported. */
+export function parseTopicBrief(
+  content: string,
+  existingCues: ReadonlySet<string>,
+  maxFacts: number,
+  maxDefinitions: number,
+  maxPairs: number
+): TopicBriefResult {
+  const brief = emptyTopicBrief();
+  if (typeof content !== 'string' || content.trim().length === 0) return brief;
+  let text = content.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) text = fence[1].trim();
+  const object = text.match(/\{\s*"facts"\s*:\s*\[([\s\S]*?)\]\s*,\s*"definitions"\s*:\s*\[([\s\S]*?)\]\s*,\s*"pairs"\s*:\s*\[([\s\S]*?)\]\s*\}/);
+  if (object === null) return brief;
+
+  const factsRaw = object[1].match(/"((?:[^"\\]|\\.)*)"/g) ?? [];
+  for (const raw of factsRaw) {
+    if (brief.facts.length >= maxFacts) break;
+    const unescaped = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    const valid = validateTopicFact(unescaped);
+    if (valid !== null) brief.facts.push(valid);
+    else brief.rejectedFacts.push(unescaped.slice(0, 80));
+  }
+
+  const defsRaw = object[2].match(/\{\s*"word"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"definition"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"example"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/g) ?? [];
+  const seen = new Set<string>();
+  for (const raw of defsRaw) {
+    if (brief.definitions.length >= maxDefinitions) break;
+    const match = raw.match(/\{\s*"word"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"definition"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"example"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/);
+    if (match === null) continue;
+    const word = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    const definition = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    const example = match[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    if (word.length === 0 || seen.has(word.toLowerCase())) continue;
+    const valid = validateGeneratedEntry({ word, definition, example }, word);
+    if (valid !== null) {
+      seen.add(word.toLowerCase());
+      brief.definitions.push(valid);
+    }
+  }
+
+  // The pairs key sits after a comma in a multi-key object; wrap its
+  // segment back into the single-key shape the pair parser expects.
+  const pairsSegment = text.match(/"pairs"\s*:\s*\[([\s\S]*?)\]\s*\}/);
+  const pairs = pairsSegment !== null ? parseConversationPairs(`{"pairs":[${pairsSegment[1]}]}`) : { pairs: [], rejected: [] };
+  const cueSet = new Set(existingCues);
+  for (const pair of pairs.pairs) {
+    if (brief.pairs.length >= maxPairs) break;
+    const valid = validateConversationPair(pair, cueSet);
+    if (valid !== null) {
+      cueSet.add(valid.cue);
+      brief.pairs.push(valid);
+    }
+  }
+  return brief;
+}
+
 export class Chaperone {
   constructor(private readonly provider: ChaperoneProvider) {}
 
@@ -677,6 +767,47 @@ export class Chaperone {
    * data — it is never evaluated, only parsed and then empirically
    * validated against the family's own oracle before adoption.
    */
+  /**
+   * R17 — TOPIC RESEARCH: the observer asks the chaperone for related
+   * information about a topic; the chaperone retrieves/structures it and
+   * presents it for training. Every piece is VALIDATED before the observer
+   * stores it (the same quality gate every chaperone output passes):
+   *   · facts: short declarative learner-English sentences (no questions,
+   *     no URLs, no first/second-person claims about the observer);
+   *   · definitions: the exact generateBatch validator (spelling preserved,
+   *     length-bounded);
+   *   · exchanges: the conversation-pair validator (lowercase cue grammar,
+   *     bounded response, cue deduplication).
+   * Rejected content is reported, never silently dropped — the observer
+   * trains only on what passed.
+   */
+  async researchTopic(
+    topic: string,
+    options: { signal?: AbortSignal; existingCues?: ReadonlySet<string>; maxFacts?: number; maxDefinitions?: number; maxPairs?: number } = {}
+  ): Promise<{ brief: TopicBriefResult; error: string | null }> {
+    const trimmed = topic.trim().toLowerCase();
+    if (trimmed.length === 0) return { brief: emptyTopicBrief(), error: 'empty topic' };
+    if (typeof this.provider.completeRaw !== 'function') {
+      return { brief: emptyTopicBrief(), error: 'provider does not support structured output' };
+    }
+    const maxFacts = Math.max(1, Math.floor(options.maxFacts ?? 6));
+    const maxDefinitions = Math.max(0, Math.floor(options.maxDefinitions ?? 6));
+    const maxPairs = Math.max(0, Math.floor(options.maxPairs ?? 2));
+    const prompt =
+      `The observer is learning about "${topic}". Return JSON with three arrays. ` +
+      `"facts": up to ${maxFacts} short declarative plain-English sentences about ${topic} (each 20-240 characters, ending with a period, no questions, no URLs, no opinions, no first or second person). ` +
+      `"definitions": up to ${maxDefinitions} key terms from ${topic} the observer may not know, each {word, definition, example} where the definition is a plain-English learner definition (5-200 characters) and the example is a short sentence containing the word. ` +
+      `"pairs": up to ${maxPairs} question-answer exchanges about ${topic} a learner would ask, each {cue, response} with a lowercase English cue. ` +
+      `Return exactly: {"facts": [...], "definitions": [...], "pairs": [...]}.`;
+    try {
+      const raw = await this.provider.completeRaw(prompt, { signal: options.signal });
+      const brief = parseTopicBrief(raw, options.existingCues ?? new Set(), maxFacts, maxDefinitions, maxPairs);
+      return { brief, error: null };
+    } catch (error) {
+      return { brief: emptyTopicBrief(), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   async proposeRule(options: {
     spec: TaughtRuleSpec;
     /** The family's instances as "input -> output" lines. */

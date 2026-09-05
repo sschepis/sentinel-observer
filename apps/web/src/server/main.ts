@@ -24,6 +24,14 @@
  *   --no-conversation     skip the conversation deck in the fresh fallback
  *   --autosave-ms N       save period (default 30000)
  *   --seed N              composition PRNG seed (default 0 = Math.random)
+ *   --chaperone-endpoint URL  LLM endpoint for the chaperone (training's
+ *                         LLM steps + grading; env OBSERVER_CHAPERONE_ENDPOINT)
+ *   --chaperone-key KEY   LLM API key (env OBSERVER_CHAPERONE_KEY)
+ *   --chaperone-model M   model name (env OBSERVER_CHAPERONE_MODEL)
+ *   --research-topics     each cycle also researches the subjects of the
+ *                         observer's unanswered gaps through the chaperone
+ *                         (env OBSERVER_RESEARCH_TOPICS=1)
+ *   --no-train            boot with the training loop stopped
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -44,6 +52,11 @@ const WORDS = Number(process.env.OBSERVER_WORDS ?? arg('--words', '200'));
 const CONVERSATION = !process.argv.includes('--no-conversation');
 const AUTOSAVE_MS = Number(process.env.OBSERVER_AUTOSAVE_MS ?? arg('--autosave-ms', '30000'));
 const SEED = Number(process.env.OBSERVER_SEED ?? arg('--seed', '0'));
+const CHAPERONE_ENDPOINT = process.env.OBSERVER_CHAPERONE_ENDPOINT ?? arg('--chaperone-endpoint', '');
+const CHAPERONE_KEY = process.env.OBSERVER_CHAPERONE_KEY ?? arg('--chaperone-key', '');
+const CHAPERONE_MODEL = process.env.OBSERVER_CHAPERONE_MODEL ?? arg('--chaperone-model', '');
+const RESEARCH_TOPICS = process.env.OBSERVER_RESEARCH_TOPICS === '1' || process.argv.includes('--research-topics');
+const TRAIN = !process.argv.includes('--no-train');
 
 async function main(): Promise<void> {
   if (!Number.isFinite(PORT) || PORT <= 0) throw new Error(`invalid port: ${process.env.OBSERVER_PORT ?? arg('--port', '8787')}`);
@@ -54,7 +67,10 @@ async function main(): Promise<void> {
     words: WORDS,
     conversation: CONVERSATION,
     autosaveMs: AUTOSAVE_MS,
-    compositionSeed: SEED
+    compositionSeed: SEED,
+    train: TRAIN,
+    researchTopics: RESEARCH_TOPICS,
+    chaperone: CHAPERONE_ENDPOINT.length > 0 ? { endpoint: CHAPERONE_ENDPOINT, apiKey: CHAPERONE_KEY, model: CHAPERONE_MODEL } : undefined
   });
 
   const state = await server.boot();

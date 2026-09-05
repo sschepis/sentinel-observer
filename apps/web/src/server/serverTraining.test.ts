@@ -129,3 +129,59 @@ describe('ServerSession trains at boot (the one trainer)', () => {
     }
   }, 180000);
 });
+
+describe('TrainingLoop topic research (R17)', () => {
+  it('researches the subject of an unanswered gap and trains only on validated content', async () => {
+    const session = new ObserverSession(OPTIONS, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, DECK);
+    teacher.teachConversationDeck(CONVERSATION_DECK.slice(0, 4));
+    teacher.recordGap('what is water');
+
+    const brief = JSON.stringify({
+      facts: [
+        'Water is a clear liquid that living things need.',
+        'Water boils at one hundred degrees celsius.',
+        'Water freezes into ice at zero degrees celsius.'
+      ],
+      definitions: [{ word: 'water', definition: 'a clear liquid that living things need', example: 'Water falls as rain.' }],
+      pairs: [{ cue: 'what is water', response: 'Water is a clear liquid.' }]
+    });
+    const events: LearningEvent[] = [];
+    let stopped = false;
+    const loop = new TrainingLoop(teacher, {
+      settings: { endpoint: '', apiKey: '', model: '' },
+      cadenceMs: 10,
+      wordsPerCycle: 1,
+      reviewsPerCycle: 0,
+      researchTopics: true,
+      providerFactory: () => ({
+        name: 'stub-research',
+        complete: async () => '',
+        completeRaw: async () => brief
+      }),
+      onEvents: (next) => {
+        events.push(...next);
+        if (events.some((event) => event.text.includes('facts taught'))) {
+          stopped = true;
+          loop.stop();
+        }
+      }
+    });
+    loop.start();
+    const deadline = Date.now() + 15000;
+    while (!stopped && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    expect(stopped).toBe(true);
+    expect(events.some((event) => event.text.includes('facts taught'))).toBe(true);
+    expect(events.some((event) => event.kind === 'definition' && event.label === 'water')).toBe(true);
+    // The observer trained on what passed: the defined word, a taught
+    // exchange, and the fact summary exchange.
+    expect(teacher.tryState('water')?.word.definition.length).toBeGreaterThan(0);
+    const cues = teacher.listConversationPairs().map((pair) => pair.cue);
+    expect(cues).toContain('what is water');
+    expect(cues).toContain('what do you know about water');
+    session.dispose();
+  }, 30000);
+});

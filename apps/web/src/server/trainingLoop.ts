@@ -6,7 +6,9 @@
  * the client used to run — gap teaching, new-word lessons, spaced-repetition
  * reviews, the technical drill, LLM conversation generation — against the
  * server's singular TeacherAgent, emitting the same LearningEvents the
- * client's training stream rendered.
+ * client's training stream rendered. When topic research is enabled, each
+ * cycle with unanswered gaps ALSO asks the chaperone for a validated
+ * briefing on the gap's subject and trains on what passed (R17).
  *
  * Chaperone settings come from SERVER configuration (env/CLI), never from
  * the browser. When no endpoint is configured the loop still runs its
@@ -15,11 +17,13 @@
  */
 import { TeacherAgent } from '../teacher/TeacherAgent';
 import { runAutonomousCycle } from '../teacher/autonomous';
+import { extractUnknownSubject, tokenizeText } from '../teacher/context';
 import {
   Chaperone,
   NullChaperoneProvider,
   OpenAICompatProvider,
   semanticGrader,
+  type ChaperoneProvider,
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { fromAutonomousEvent, makeEvent, type LearningEvent } from '../learning/events';
@@ -55,6 +59,12 @@ export interface TrainingLoopOptions {
   cadenceMs?: number;
   wordsPerCycle?: number;
   reviewsPerCycle?: number;
+  /** TOPIC RESEARCH (R17): each cycle with unanswered gaps also asks the
+   *  chaperone for a validated briefing on the gap's subject and trains on
+   *  it — the observer initiates its own curriculum. Default false. */
+  researchTopics?: boolean;
+  /** Provider factory (tests inject stubs; default: the settings' provider). */
+  providerFactory?: (settings: ChaperoneSettings) => ChaperoneProvider;
   onEvents?: (events: readonly LearningEvent[]) => void;
   onCycle?: (stats: Readonly<TrainingStats>) => void;
   onError?: (message: string) => void;
@@ -94,7 +104,11 @@ export class TrainingLoop {
   private async run(controller: AbortController): Promise<void> {
     const settings = this.options.settings;
     const provider =
-      settings.endpoint.trim().length > 0 ? new OpenAICompatProvider(settings) : new NullChaperoneProvider();
+      this.options.providerFactory !== undefined
+        ? this.options.providerFactory(settings)
+        : settings.endpoint.trim().length > 0
+          ? new OpenAICompatProvider(settings)
+          : new NullChaperoneProvider();
     const chaperone = new Chaperone(provider);
     const grader = semanticGrader(provider);
     try {
@@ -118,6 +132,13 @@ export class TrainingLoop {
         }
         this.options.onCycle?.(this.statistics());
         this.options.onEvents?.(cycle.events.map((event) => fromAutonomousEvent(event, at)));
+        if (this.options.researchTopics === true && !controller.signal.aborted) {
+          const researched = await this.researchTopicStep(chaperone, controller.signal);
+          if (researched !== null) {
+            this.stats.phrasesTaught += researched.phrasesTaught;
+            this.options.onEvents?.(researched.events);
+          }
+        }
         await pause(this.options.cadenceMs ?? 400, controller.signal);
       }
     } catch (reason) {
@@ -129,6 +150,86 @@ export class TrainingLoop {
     } finally {
       if (this.controller === controller) this.controller = null;
       this.options.onEvents?.([makeEvent({ kind: 'system', label: 'system', text: 'learning stopped' })]);
+    }
+  }
+
+  /**
+   * R17: the observer ASKS the chaperone about related information on a
+   * topic — picked from its own unanswered gaps — and trains only on what
+   * passed validation: new key terms become hedged single-source
+   * definitions, exchanges are taught, and the facts become a bounded
+   * "what do you know about X" exchange. A failure is reported and never
+   * kills the loop.
+   */
+  private async researchTopicStep(
+    chaperone: Chaperone,
+    signal: AbortSignal
+  ): Promise<{ phrasesTaught: number; events: LearningEvent[] } | null> {
+    try {
+      const gaps = this.teacher.listGaps(); // string[] (unanswered utterances)
+      if (gaps.length === 0) return null;
+      // The topic is the gap utterance's own content (its unknown subject
+      // among the taught words, or the raw utterance when none parses).
+      const gap = gaps[0];
+      const known = new Set(this.teacher.listWords().map((entry) => entry.word.word));
+      // The subject to research: the unknown word the gap names, or — when
+      // every word is already known — the last known content word (the
+      // thing the question was ABOUT); the raw utterance is the last resort.
+      const knownTokens = tokenizeText(gap).filter((token) => known.has(token));
+      const topic = extractUnknownSubject(gap, known) ?? knownTokens[knownTokens.length - 1] ?? gap;
+      const existingCues = new Set(this.teacher.listConversationPairs().map((pair) => pair.cue));
+      const run = await chaperone.researchTopic(topic, { signal, existingCues });
+      if (run.error !== null) {
+        return {
+          phrasesTaught: 0,
+          events: [makeEvent({ kind: 'system', label: 'research', text: `research on "${topic}" failed: ${run.error}` })]
+        };
+      }
+      const brief = run.brief;
+      let phrasesTaught = 0;
+      const events: LearningEvent[] = [];
+
+      if (brief.definitions.length > 0) {
+        this.teacher.applyDefinitions(brief.definitions);
+        for (const entry of brief.definitions) {
+          events.push(makeEvent({ kind: 'definition', label: entry.word, text: entry.definition }));
+        }
+      }
+      for (const pair of brief.pairs) {
+        if (this.teacher.teachResponse(pair) !== null) {
+          this.teacher.respond(pair.cue);
+          phrasesTaught += 1;
+          events.push(
+            makeEvent({ kind: 'system', label: 'research', text: `learned about ${topic}: "${pair.cue}" → "${pair.response}"` })
+          );
+        }
+      }
+      if (brief.facts.length > 0) {
+        const cue = `what do you know about ${topic}`;
+        if (!existingCues.has(cue)) {
+          const response = `${brief.facts.slice(0, 3).join(' ')}`.slice(0, 198);
+          const responseFinished = response.endsWith('.') ? response : `${response}.`;
+          if (this.teacher.teachResponse({ cue, response: responseFinished }) !== null) {
+            this.teacher.respond(cue);
+            phrasesTaught += 1;
+            events.push(
+              makeEvent({ kind: 'system', label: 'research', text: `researched ${topic}: ${brief.facts.length} facts taught` })
+            );
+          }
+        }
+      }
+      return phrasesTaught > 0 || events.length > 0 ? { phrasesTaught, events } : null;
+    } catch (reason) {
+      return {
+        phrasesTaught: 0,
+        events: [
+          makeEvent({
+            kind: 'error',
+            label: 'research',
+            text: `topic research failed: ${reason instanceof Error ? reason.message : String(reason)}`
+          })
+        ]
+      };
     }
   }
 }

@@ -58,6 +58,9 @@ export interface ServerSessionOptions {
   /** Chaperone settings for LLM-assisted training steps (server-configured —
    *  never browser state; absent = the deterministic steps only). */
   chaperone?: ChaperoneSettings;
+  /** R17: the loop also researches the subjects of its unanswered gaps
+   *  through the chaperone each cycle (default false). */
+  researchTopics?: boolean;
 }
 
 export interface ServerSnapshot {
@@ -133,7 +136,8 @@ export class ServerSession {
       tickImmediately: options.tickImmediately ?? true,
       train: options.train ?? true,
       trainCadenceMs: options.trainCadenceMs ?? 400,
-      chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' }
+      chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
+      researchTopics: options.researchTopics ?? false
     };
     this.store = new FilePersistenceStore(this.options.dataDir);
   }
@@ -248,6 +252,7 @@ export class ServerSession {
         this.trainingLoop = new TrainingLoop(this.teacher, {
           settings: this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
           cadenceMs: this.options.trainCadenceMs ?? 400,
+          researchTopics: this.options.researchTopics ?? false,
           onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
           onError: (message) =>
             this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
