@@ -10,7 +10,13 @@ import { FilePersistenceStore } from './FilePersistenceStore';
 import type { BootstrapRecord } from '../teacher/bootstrap';
 import { assertVocabularyCompatible } from '../teacher/bootstrapLoader';
 import { TrainingLoop, EMPTY_TRAINING_STATS, type TrainingStats } from './trainingLoop';
-import type { ChaperoneSettings } from '../teacher/chaperone';
+import {
+  Chaperone,
+  NullChaperoneProvider,
+  OpenAICompatProvider,
+  semanticGrader,
+  type ChaperoneSettings
+} from '../teacher/chaperone';
 import { DefinitionsRunner } from './definitionsRunner';
 import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
 import type { LearningEvent } from '../learning/events';
@@ -279,6 +285,54 @@ export class ServerSession {
       return { ok: true, summary };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * Grade a creative answer SERVER-SIDE (the browser never grades). The
+   * score comes from the server's configured chaperone; without an endpoint
+   * the grade is honestly unavailable (score null, band unapplied). The
+   * returned shape mirrors what the chat expects: score, feedback, and the
+   * applied reliability-weighted grade result.
+   */
+  async gradeCreative(
+    provenance: Parameters<TeacherAgent['gradeCreativeWithReliability']>[0],
+    utterance: string,
+    answer: string
+  ): Promise<{
+    score: number | null;
+    feedback: string | null;
+    graded: ReturnType<TeacherAgent['gradeCreativeWithReliability']> | null;
+  }> {
+    if (this.teacher === null) throw new Error('observer not booted');
+    const settings = this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' };
+    if (settings.endpoint.trim().length === 0) {
+      return {
+        score: null,
+        feedback: 'grading unavailable — configure a teacher model on the server',
+        graded: null
+      };
+    }
+    try {
+      const grader = semanticGrader(new OpenAICompatProvider(settings));
+      if (grader === null) {
+        return { score: null, feedback: 'grading unavailable', graded: null };
+      }
+      const outcome = await grader.grade(utterance, answer);
+      const graded = this.teacher.gradeCreativeWithReliability(
+        provenance,
+        outcome?.score ?? null,
+        utterance,
+        answer,
+        settings.model || settings.endpoint
+      );
+      return { score: outcome?.score ?? null, feedback: outcome?.feedback ?? null, graded };
+    } catch (reason) {
+      return {
+        score: null,
+        feedback: `grading unavailable: ${reason instanceof Error ? reason.message : String(reason)}`,
+        graded: null
+      };
     }
   }
 

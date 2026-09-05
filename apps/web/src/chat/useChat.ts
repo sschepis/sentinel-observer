@@ -147,7 +147,23 @@ export function useChat(
       setStatus('the observer is composing from its own memories…');
       let score: number | null = null;
       let feedback: string | null = null;
-      if (settings.endpoint.trim().length > 0) {
+      let serverGraded: ReturnType<TeacherAgent['gradeCreativeWithReliability']> | null = null;
+      if (teacher.gradeServerSide !== undefined) {
+        // The SERVER grades (the browser never computes a score).
+        const full = await teacher.gradeServerSide(
+          {
+            traceIds: reply.seedTraceIds,
+            edges: reply.edges ?? [],
+            templateIds: reply.templateIds,
+            ruleIds: reply.ruleIds
+          },
+          utterance,
+          reply.sentence
+        );
+        score = full.score;
+        feedback = full.feedback;
+        serverGraded = full.graded;
+      } else if (settings.endpoint.trim().length > 0) {
         const grader = semanticGrader(new OpenAICompatProvider(settings));
         if (grader !== null) {
           try {
@@ -170,15 +186,17 @@ export function useChat(
       // edges ride along so the world-feedback class is credited on them;
       // the template ids ride along so the learned-frame induction credits
       // the structures the accepted answer demonstrated.
-      const graded = await awaitable(
-        teacher.gradeCreativeWithReliability(
-          { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds, ruleIds: reply.ruleIds },
-          score,
-          utterance,
-          reply.sentence,
-          settings.model || settings.endpoint
-        )
-      );
+      const graded =
+        serverGraded ??
+        (await awaitable(
+          teacher.gradeCreativeWithReliability(
+            { traceIds: reply.seedTraceIds, edges: reply.edges ?? [], templateIds: reply.templateIds, ruleIds: reply.ruleIds },
+            score,
+            utterance,
+            reply.sentence,
+            settings.model || settings.endpoint
+          )
+        ));
       if (graded.regradeId !== null) {
         feedback = `${feedback !== null && feedback.length > 0 ? feedback : `graded ${score?.toFixed(2)}`} — the internal check disagrees (re-grade pending)`;
       }

@@ -148,6 +148,19 @@ export class RemoteClient {
     }).then((p) => p.graded);
   }
 
+  /** Grade a creative answer SERVER-SIDE (the browser never grades). */
+  gradeServerSide(
+    provenance: { traceIds: string[]; edges: unknown[]; templateIds: string[]; ruleIds?: string[] },
+    utterance: string,
+    answer: string
+  ): Promise<{ score: number | null; feedback: string | null; graded: ReturnType<TeacherAgent['gradeCreativeWithReliability']> | null }> {
+    return this.post<{ score: number | null; feedback: string | null; graded: ReturnType<TeacherAgent['gradeCreativeWithReliability']> | null }>('/api/grade', {
+      ...provenance,
+      utterance,
+      answer
+    });
+  }
+
   teachWord(word: string): Promise<{ traceId: string | null }> {
     return this.post<{ taught: { traceId: string | null } }>('/api/teach', { word }).then((p) => p.taught);
   }
@@ -248,6 +261,14 @@ export interface ChatTeacher {
     answer: string,
     provider: string
   ): ReturnType<TeacherAgent['gradeCreativeWithReliability']> | Promise<ReturnType<TeacherAgent['gradeCreativeWithReliability']>>;
+  /** Server-side grading: the SERVER computes the score with its own
+   *  chaperone (present only on the remote teacher — the browser never
+   *  grades). */
+  gradeServerSide?(
+    provenance: Parameters<TeacherAgent['gradeCreativeWithReliability']>[0],
+    utterance: string,
+    answer: string
+  ): Promise<{ score: number | null; feedback: string | null; graded: ReturnType<TeacherAgent['gradeCreativeWithReliability']> | null }>;
 }
 
 export function awaitable<T>(value: T | Promise<T>): Promise<T> {
@@ -278,6 +299,13 @@ export function remoteChatTeacher(client: RemoteClient): ChatTeacher {
       const templateIds = 'traceIds' in provenance ? (provenance.templateIds ?? []) : [];
       const ruleIds = 'traceIds' in provenance ? (provenance.ruleIds ?? []) : [];
       return client.grade({ traceIds, edges, templateIds, ruleIds }, score, utterance, answer, provider);
+    },
+    gradeServerSide: (provenance, utterance, answer) => {
+      const traceIds = 'traceIds' in provenance ? provenance.traceIds : [...provenance];
+      const edges = 'traceIds' in provenance ? (provenance.edges ?? []) : [];
+      const templateIds = 'traceIds' in provenance ? (provenance.templateIds ?? []) : [];
+      const ruleIds = 'traceIds' in provenance ? (provenance.ruleIds ?? []) : [];
+      return client.gradeServerSide({ traceIds, edges, templateIds, ruleIds }, utterance, answer);
     }
   };
 }

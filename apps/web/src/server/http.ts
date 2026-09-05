@@ -184,20 +184,29 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
       if (path === '/api/grade') {
         const traceIds = Array.isArray(body.traceIds) ? body.traceIds.map(String) : [];
         const edges = Array.isArray(body.edges) ? body.edges : [];
-        const score = typeof body.score === 'number' ? body.score : null;
-        const graded = teacher.gradeCreativeWithReliability(
-          {
-            traceIds,
-            edges,
-            templateIds: Array.isArray(body.templateIds) ? body.templateIds.map(String) : [],
-            ruleIds: Array.isArray(body.ruleIds) ? body.ruleIds.map(String) : undefined
-          },
-          score,
-          String(body.utterance ?? ''),
-          String(body.answer ?? ''),
-          String(body.provider ?? 'server')
-        );
-        sendJson(res, 200, { graded });
+        const provenance = {
+          traceIds,
+          edges,
+          templateIds: Array.isArray(body.templateIds) ? body.templateIds.map(String) : [],
+          ruleIds: Array.isArray(body.ruleIds) ? body.ruleIds.map(String) : undefined
+        };
+        // The server grades: the browser never computes a score. (A
+        // client-supplied score is still accepted for the parity/legacy
+        // paths that feed pre-graded outcomes back.)
+        const supplied = typeof body.score === 'number' ? body.score : null;
+        if (supplied !== null) {
+          const graded = teacher.gradeCreativeWithReliability(
+            provenance,
+            supplied,
+            String(body.utterance ?? ''),
+            String(body.answer ?? ''),
+            String(body.provider ?? 'server')
+          );
+          sendJson(res, 200, { graded });
+          return;
+        }
+        const full = await server.gradeCreative(provenance, String(body.utterance ?? ''), String(body.answer ?? ''));
+        sendJson(res, 200, { score: full.score, feedback: full.feedback, graded: full.graded });
         return;
       }
 
