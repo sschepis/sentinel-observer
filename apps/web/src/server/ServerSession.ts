@@ -9,6 +9,9 @@ import { ALL_CONVERSATION_PAIRS } from '../teacher/conversation';
 import { FilePersistenceStore } from './FilePersistenceStore';
 import type { BootstrapRecord } from '../teacher/bootstrap';
 import { assertVocabularyCompatible } from '../teacher/bootstrapLoader';
+import { TrainingLoop, EMPTY_TRAINING_STATS, type TrainingStats } from './trainingLoop';
+import type { ChaperoneSettings } from '../teacher/chaperone';
+import type { LearningEvent } from '../learning/events';
 
 /**
  * The server-side observer: a long-lived ObserverSession + TeacherAgent that
@@ -39,6 +42,13 @@ export interface ServerSessionOptions {
    *  parity gate so both arms measure from the identical restored state with
    *  zero background ticks — the restore itself is what is being gated. */
   tickImmediately?: boolean;
+  /** Run the autonomous classroom training loop at boot (default true). */
+  train?: boolean;
+  /** Pause between training cycles (default 400 ms). */
+  trainCadenceMs?: number;
+  /** Chaperone settings for LLM-assisted training steps (server-configured —
+   *  never browser state; absent = the deterministic steps only). */
+  chaperone?: ChaperoneSettings;
 }
 
 export interface ServerSnapshot {
@@ -55,7 +65,8 @@ export type ServerEvent =
   | { kind: 'metrics'; at: number; state: SemanticObserverState }
   | { kind: 'signal'; signal: ObserverSignal }
   | { kind: 'snapshot'; snapshot: ServerSnapshot }
-  | { kind: 'lifecycle'; at: number; event: 'booted' | 'saved' | 'shutdown' | 'sleep' | 'wake'; detail: string };
+  | { kind: 'lifecycle'; at: number; event: 'booted' | 'saved' | 'shutdown' | 'sleep' | 'wake'; detail: string }
+  | { kind: 'learning'; at: number; events: readonly LearningEvent[] };
 
 export interface ServerState {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -72,6 +83,9 @@ export interface ServerState {
   modelPath: string | null;
   tracesInModel: number;
   tickCount: number;
+  /** The autonomous classroom loop (the ONLY trainer — the browser never
+   *  trains). Null until the server boots with training enabled. */
+  training: TrainingStats | null;
 }
 
 export class ServerSession {
@@ -101,7 +115,10 @@ export class ServerSession {
       conversation: options.conversation ?? true,
       autosaveMs: options.autosaveMs ?? 30000,
       compositionSeed: options.compositionSeed ?? 0,
-      tickImmediately: options.tickImmediately ?? true
+      tickImmediately: options.tickImmediately ?? true,
+      train: options.train ?? true,
+      trainCadenceMs: options.trainCadenceMs ?? 400,
+      chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' }
     };
     this.store = new FilePersistenceStore(this.options.dataDir);
   }
@@ -120,6 +137,8 @@ export class ServerSession {
       }
     }
   }
+
+  private trainingLoop: TrainingLoop | null = null;
 
   async boot(): Promise<ServerState> {
     this.status = 'loading';
@@ -175,6 +194,17 @@ export class ServerSession {
         this.broadcast({ kind: 'metrics', at: Date.now(), state });
       });
       this.running = true;
+    }
+
+    if ((this.options.train ?? true) && this.teacher !== null) {
+      this.trainingLoop = new TrainingLoop(this.teacher, {
+        settings: this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
+        cadenceMs: this.options.trainCadenceMs ?? 400,
+        onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
+        onError: (message) =>
+          this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
+      });
+      this.trainingLoop.start();
     }
 
     this.autosaveTimer = setInterval(() => {
@@ -243,6 +273,8 @@ export class ServerSession {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
     }
+    this.trainingLoop?.stop();
+    this.trainingLoop = null;
     this.signalUnsubscribe?.();
     this.signalUnsubscribe = null;
     if (this.teacher !== null) {
@@ -278,7 +310,8 @@ export class ServerSession {
       lastSaveMs: this.lastSaveMs,
       modelPath: this.modelPath,
       tracesInModel: this.session?.observer.getMemoryBank().all().length ?? 0,
-      tickCount: this.session?.observer.getState().tickCount ?? 0
+      tickCount: this.session?.observer.getState().tickCount ?? 0,
+      training: this.trainingLoop !== null ? this.trainingLoop.statistics() : (this.options.train ?? true ? EMPTY_TRAINING_STATS : null)
     };
   }
 }

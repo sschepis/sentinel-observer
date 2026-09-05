@@ -136,7 +136,7 @@ describe('observer server parity gate', () => {
       sessionReload.dispose();
 
       // ── ARM B: the server path boots the same disk ───────────────────────
-      const serverB = new ServerSession({ dataDir: dir, words: 0, autosaveMs: 60000, tickImmediately: false });
+      const serverB = new ServerSession({ dataDir: dir, words: 0, autosaveMs: 60000, tickImmediately: false, train: false });
       await serverB.boot();
       try {
         const stateB = serverB.state();
