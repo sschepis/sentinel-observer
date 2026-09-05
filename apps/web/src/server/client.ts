@@ -46,6 +46,7 @@ export interface RemoteServerState {
     drillsMemorized: number;
   } | null;
   chaperoneConfigured: boolean;
+  trainingRunning: boolean;
   definitions: { running: boolean; progress: unknown; result: string | null } | null;
 }
 
@@ -203,6 +204,12 @@ export class RemoteClient {
 
   cancelDefinitions(): Promise<void> {
     return this.post('/api/definitions/cancel', {}).then(() => undefined);
+  }
+
+  rules(): Promise<unknown> {
+    return fetch(`${this.base}/api/rules`)
+      .then((r) => r.json())
+      .then((p) => (p as { snapshot: unknown }).snapshot);
   }
 
   definitions(): Promise<{ running: boolean; progress: unknown; result: string | null }> {

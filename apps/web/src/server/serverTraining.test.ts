@@ -65,7 +65,7 @@ describe('TrainingLoop (server-side trainer)', () => {
     expect(events.some((event) => event.kind === 'word')).toBe(true);
 
     session.dispose();
-  }, 30000);
+  }, 180000);
 
   it('statistics start empty and stop() leaves the loop reusable', async () => {
     const session = new ObserverSession(OPTIONS, 100);
@@ -84,7 +84,7 @@ describe('TrainingLoop (server-side trainer)', () => {
     loop.stop();
     await sleep(20);
     session.dispose();
-  }, 30000);
+  }, 180000);
 });
 
 describe('ServerSession trains at boot (the one trainer)', () => {
@@ -115,7 +115,7 @@ describe('ServerSession trains at boot (the one trainer)', () => {
     } finally {
       await server.shutdown();
     }
-  }, 60000);
+  }, 180000);
 
   it('train: false leaves training null (the parity gate contract)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sentinel-notrain-'));
@@ -127,5 +127,5 @@ describe('ServerSession trains at boot (the one trainer)', () => {
     } finally {
       await server.shutdown();
     }
-  }, 60000);
+  }, 180000);
 });

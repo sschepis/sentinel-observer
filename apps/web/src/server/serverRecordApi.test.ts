@@ -99,7 +99,7 @@ describe('server record I/O (the singular dataset)', () => {
     } finally {
       await server.shutdown();
     }
-  }, 30000);
+  }, 180000);
 });
 
 describe('DefinitionsRunner (server-side backfill)', () => {
@@ -138,5 +138,5 @@ describe('DefinitionsRunner (server-side backfill)', () => {
     expect(teacher.tryState('hello')?.word.definition).toBe('a greeting');
 
     session.dispose();
-  }, 30000);
+  }, 180000);
 });

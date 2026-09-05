@@ -18,6 +18,7 @@ import {
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { DefinitionsRunner } from './definitionsRunner';
+import { ruleStoreSnapshot } from '../components/RulesPanel';
 import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
 import type { LearningEvent } from '../learning/events';
 
@@ -94,6 +95,8 @@ export interface ServerState {
   /** The autonomous classroom loop (the ONLY trainer — the browser never
    *  trains). Null until the server boots with training enabled. */
   training: TrainingStats | null;
+  /** Whether the loop is actively cycling right now. */
+  trainingRunning: boolean;
   /** True when a chaperone endpoint is configured (server-side only). */
   chaperoneConfigured: boolean;
   /** The definitions backfill run (server-side; the browser's is gone). */
@@ -355,6 +358,12 @@ export class ServerSession {
     this.definitionsRunner?.cancel();
   }
 
+  /** The rule-store snapshot for the UI (compiled + rewrite + learned). */
+  rulesSnapshot(): ReturnType<typeof ruleStoreSnapshot> {
+    if (this.teacher === null) throw new Error('observer not booted');
+    return ruleStoreSnapshot(this.teacher);
+  }
+
   definitionsRunnerRunning(): boolean {
     return this.definitionsRunner?.running ?? false;
   }
@@ -457,6 +466,7 @@ export class ServerSession {
       tracesInModel: this.session?.observer.getMemoryBank().all().length ?? 0,
       tickCount: this.session?.observer.getState().tickCount ?? 0,
       training: this.trainingLoop !== null ? this.trainingLoop.statistics() : (this.options.train ?? true ? EMPTY_TRAINING_STATS : null),
+      trainingRunning: this.trainingLoop?.running ?? false,
       chaperoneConfigured: (this.options.chaperone?.endpoint ?? '').trim().length > 0,
       definitions:
         this.definitionsRunner !== null

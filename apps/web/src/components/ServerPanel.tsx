@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RemoteClient, type RemoteWordEntry } from '../server/client';
+import { RemoteClient, type RemoteServerState, type RemoteWordEntry } from '../server/client';
 import type { ObserverSignal } from '@sschepis/sentient-core';
+import type { VoiceSettings } from '../speech/voiceSettings';
+import { ELEVENLABS_DEFAULT_VOICE_ID } from '../speech/voiceSettings';
+import { ChaperoneProgress } from './ChaperoneProgress';
 
 /**
  * The remote-mode panels: server status, its live signal feed, and the
@@ -14,9 +17,12 @@ export interface ServerPanelProps {
   error: string | null;
   signals: ObserverSignal[];
   refresh: () => Promise<void>;
+  /** The server's training loop stats (the ONLY trainer). */
+  training: RemoteServerState['training'];
+  trainingRunning: boolean;
 }
 
-function ServerPanel({ client, status, error, signals, refresh }: ServerPanelProps) {
+function ServerPanel({ client, status, error, signals, refresh, training, trainingRunning }: ServerPanelProps) {
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState('');
 
@@ -41,6 +47,17 @@ function ServerPanel({ client, status, error, signals, refresh }: ServerPanelPro
           <span className="ml-auto text-[11px] text-slate-500">{status === 'ready' ? 'the observer is learning on the server' : error ?? 'connecting…'}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => client.train(!trainingRunning).then(() => refresh())}
+            disabled={status !== 'ready'}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-40 ${
+              trainingRunning
+                ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
+                : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+            }`}
+          >
+            {trainingRunning ? 'Stop training' : 'Start training'}
+          </button>
           <button
             onClick={saveNow}
             disabled={saving || status !== 'ready'}
@@ -76,6 +93,15 @@ function ServerPanel({ client, status, error, signals, refresh }: ServerPanelPro
           regularly, and reloads the trained model when the server restarts. Reloading this page changes nothing — the
           model is not in the browser.
         </p>
+        {training !== null && (
+          <p className="text-[11px] text-slate-500">
+            classroom: <span className="text-slate-300">{training.cycles} cycles</span> ·{' '}
+            <span className="text-slate-300">{training.wordsTaught}</span> words taught ·{' '}
+            <span className="text-slate-300">{training.wordsReviewed}</span> reviews ·{' '}
+            <span className="text-slate-300">{training.phrasesTaught}</span> phrases ·{' '}
+            <span className="text-slate-300">{training.drillsInduced}</span> rules induced
+          </p>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
@@ -235,13 +261,41 @@ export interface RemoteSettingsProps {
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   refresh: () => Promise<void>;
+  voiceSettings?: VoiceSettings;
+  onVoiceSettingsChange?: (next: VoiceSettings) => void;
 }
 
 /** Settings view in remote mode: where the observer server lives, and how to
  *  get the trained model out of it. */
-export function RemoteSettings({ url, saveUrl, client, status, error, refresh }: RemoteSettingsProps) {
+export function RemoteSettings({
+  url,
+  saveUrl,
+  client,
+  status,
+  error,
+  refresh,
+  voiceSettings,
+  onVoiceSettingsChange
+}: RemoteSettingsProps) {
   const [draft, setDraft] = useState(url);
   const [saved, setSaved] = useState(false);
+  const [definitions, setDefinitions] = useState<{ running: boolean; progress: unknown; result: string | null } | null>(null);
+  const [definitionsError, setDefinitionsError] = useState<string | null>(null);
+  const [recordStatus, setRecordStatus] = useState('');
+
+  const refreshDefinitions = useCallback(() => {
+    if (status !== 'ready') return;
+    client
+      .definitions()
+      .then(setDefinitions)
+      .catch(() => {});
+  }, [client, status]);
+
+  useEffect(() => {
+    refreshDefinitions();
+    const id = setInterval(refreshDefinitions, 2000);
+    return () => clearInterval(id);
+  }, [refreshDefinitions]);
 
   const apply = () => {
     const next = draft.trim().replace(/\/$/, '');
@@ -300,9 +354,134 @@ export function RemoteSettings({ url, saveUrl, client, status, error, refresh }:
         </button>
         <p className="text-[11px] leading-relaxed text-slate-600">
           The server also saves automatically on a timer and on shutdown. The download is the same record the batch
-          trainer exports — importable by the in-browser observer and by `npm run chat -- --load`.
+          trainer exports.
         </p>
+        <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-700">
+          Import a record into the server…
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file !== undefined) {
+                void file
+                  .text()
+                  .then((text) => JSON.parse(text) as unknown)
+                  .then((record) => client.importRecord(record))
+                  .then((summary) => {
+                    setRecordStatus(`imported ${summary.restored} traces · ${summary.conversations} exchanges`);
+                    return refresh();
+                  })
+                  .catch((reason: unknown) =>
+                    setRecordStatus(reason instanceof Error ? reason.message : String(reason))
+                  );
+              }
+              event.target.value = '';
+            }}
+          />
+        </label>
+        <button
+          onClick={() => client.loadBootstrap().then(() => refresh()).catch(() => setRecordStatus('bootstrap load failed'))}
+          disabled={status !== 'ready'}
+          className="mt-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-700 disabled:opacity-40"
+        >
+          Load the deployed bootstrap on the server
+        </button>
+        {recordStatus.length > 0 && <p className="mt-1.5 text-xs text-slate-500">{recordStatus}</p>}
       </div>
+      <div className="space-y-2">
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Definition backfill</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => client.startDefinitions().then(refreshDefinitions).catch((reason: unknown) => setDefinitionsError(reason instanceof Error ? reason.message : String(reason)))}
+            disabled={status !== 'ready' || definitions?.running === true}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-700 disabled:opacity-40"
+          >
+            Fill missing definitions (server)
+          </button>
+          {definitions?.running === true && (
+            <button
+              onClick={() => client.cancelDefinitions().then(refreshDefinitions)}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:border-slate-500"
+            >
+              Stop
+            </button>
+          )}
+        </div>
+        {definitionsError !== null && <p className="text-xs text-rose-400">{definitionsError}</p>}
+        {definitions !== null && (
+          <ChaperoneProgress progress={definitions.progress as never} result={definitions.result} onCancel={() => client.cancelDefinitions().then(refreshDefinitions)} />
+        )}
+      </div>
+      {voiceSettings !== undefined && onVoiceSettingsChange !== undefined && (
+        <div className="space-y-3">
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Voice</h3>
+          <label className="flex items-center justify-between gap-4">
+            <span className="text-xs text-slate-300">Speak answers aloud</span>
+            <input
+              type="checkbox"
+              checked={voiceSettings.enabled}
+              onChange={(event) => onVoiceSettingsChange({ ...voiceSettings, enabled: event.target.checked })}
+              aria-label="Speak answers aloud"
+              className="h-4 w-4 accent-emerald-500"
+            />
+          </label>
+          <div>
+            <p className="text-xs text-slate-300">Voice engine</p>
+            <div className="mt-2 flex gap-2">
+              {(['browser', 'elevenlabs'] as const).map((provider) => (
+                <button
+                  key={provider}
+                  onClick={() => onVoiceSettingsChange({ ...voiceSettings, provider })}
+                  className={`rounded-lg border px-3 py-1.5 text-xs transition ${
+                    voiceSettings.provider === provider
+                      ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
+                      : 'border-slate-700 text-slate-300 hover:border-slate-500'
+                  }`}
+                >
+                  {provider === 'browser' ? 'Browser speech' : 'ElevenLabs'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {voiceSettings.provider === 'elevenlabs' && (
+            <div className="grid gap-3">
+              <label className="block">
+                <span className="text-xs text-slate-300">ElevenLabs API key</span>
+                <input
+                  type="password"
+                  value={voiceSettings.elevenlabs.apiKey}
+                  onChange={(event) =>
+                    onVoiceSettingsChange({
+                      ...voiceSettings,
+                      elevenlabs: { ...voiceSettings.elevenlabs, apiKey: event.target.value }
+                    })
+                  }
+                  placeholder="elevenlabs api key"
+                  className="mt-1.5 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-slate-600"
+                  autoComplete="off"
+                />
+                <span className="mt-1 block text-[11px] text-slate-500">Stored in this browser only; sent only to ElevenLabs.</span>
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-300">Voice id</span>
+                <input
+                  value={voiceSettings.elevenlabs.voiceId}
+                  onChange={(event) =>
+                    onVoiceSettingsChange({
+                      ...voiceSettings,
+                      elevenlabs: { ...voiceSettings.elevenlabs, voiceId: event.target.value }
+                    })
+                  }
+                  placeholder={ELEVENLABS_DEFAULT_VOICE_ID}
+                  className="mt-1.5 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-slate-600"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
