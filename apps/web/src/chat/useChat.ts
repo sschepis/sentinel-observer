@@ -30,6 +30,9 @@ export interface ChatController {
   pending: boolean;
   send: (text: string) => void;
   compose: (text: string) => void;
+  /** Append an observer message (the teacher-answer affordance writes the
+   *  learned answer directly into the transcript). */
+  appendAssistant: (text: string) => void;
   selectConversation: (id: string) => void;
   newConversation: () => void;
   removeConversation: (id: string) => void;
@@ -38,8 +41,8 @@ export interface ChatController {
 /** R11: only the LOCAL teacher closes the ask → told → own loop (the
  *  remote observer answers on the server; the teach-reply surface lives on
  *  the local session for now). */
-function isTeachCapable(teacher: ChatTeacher | null): teacher is TeacherAgent {
-  return teacher !== null && typeof (teacher as Partial<TeacherAgent>).tryTeachReply === 'function';
+function isTeachCapable(teacher: ChatTeacher | null): teacher is ChatTeacher & { tryTeachReply: NonNullable<ChatTeacher['tryTeachReply']> } {
+  return teacher !== null && typeof teacher.tryTeachReply === 'function';
 }
 
 /**
@@ -238,8 +241,8 @@ export function useChat(
       // parses as the procedure, the R10 pipeline validates and adopts it —
       // the observer answers with its own summary or the counterexample.
       // A reply that does not parse falls through to the normal dispatch.
-      // (Local teacher only: the server's observer answers remotely, so the
-      // teach-reply surface lives on the local session for now.)
+      // (Both teachers: the server carries the same teach-reply surface
+      // through /api/teach-reply — rule questions AND unanswered gaps.)
       const teachCapable = isTeachCapable(teacher);
       if (teachCapable) {
         const taught = await awaitable(teacher.tryTeachReply(utterance));
@@ -381,6 +384,24 @@ export function useChat(
     [sync]
   );
 
+  const appendAssistant = useCallback(
+    (text: string) => {
+      if (activeId === null) return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + Math.floor(Math.random() * 1e6),
+          role: 'observer' as const,
+          text,
+          mode: 'hybrid' as const,
+          confidence: null,
+          at: Date.now()
+        }
+      ]);
+    },
+    [activeId]
+  );
+
   return {
     conversations,
     activeId,
@@ -389,6 +410,7 @@ export function useChat(
     pending,
     send,
     compose,
+    appendAssistant,
     selectConversation,
     newConversation,
     removeConversation

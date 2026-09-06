@@ -265,6 +265,18 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
         return;
       }
 
+      if (path === '/api/teach-reply') {
+        const reply = server.tryTeachReply(String(body.utterance ?? ''));
+        sendJson(res, 200, reply === null ? { handled: false } : reply);
+        return;
+      }
+
+      if (path === '/api/answer-gap') {
+        const gap = await server.answerGap(String(body.cue ?? ''));
+        sendJson(res, 200, gap);
+        return;
+      }
+
       if (path === '/api/train') {
         server.setTraining(body.run === true);
         sendJson(res, 200, { training: server.state().training });

@@ -149,6 +149,18 @@ export class RemoteClient {
     }).then((p) => p.graded);
   }
 
+  /** The reply-teaching surface: the utterance may BE the answer to a
+   *  question the observer is waiting on (rule or gap). */
+  tryTeachReply(utterance: string): Promise<{ handled: boolean; message: string } | null> {
+    return this.post<{ handled: boolean; message: string } | null>('/api/teach-reply', { utterance });
+  }
+
+  /** Ask the server's chaperone to answer an outstanding gap, which the
+   *  observer then learns (validated, never guessed). */
+  answerGap(cue: string): Promise<{ answered: boolean; cue: string; response: string | null; error: string | null }> {
+    return this.post<{ answered: boolean; cue: string; response: string | null; error: string | null }>('/api/answer-gap', { cue });
+  }
+
   /** Grade a creative answer SERVER-SIDE (the browser never grades). */
   gradeServerSide(
     provenance: { traceIds: string[]; edges: unknown[]; templateIds: string[]; ruleIds?: string[] },
@@ -276,6 +288,9 @@ export interface ChatTeacher {
     answer: string,
     provider: string
   ): ReturnType<TeacherAgent['gradeCreativeWithReliability']> | Promise<ReturnType<TeacherAgent['gradeCreativeWithReliability']>>;
+  /** The reply-teaching surface (remote + local): the utterance may BE the
+   *  answer to a question the observer is waiting on. */
+  tryTeachReply?(utterance: string): Promise<{ handled: boolean; message: string } | null> | { handled: boolean; message: string } | null;
   /** Server-side grading: the SERVER computes the score with its own
    *  chaperone (present only on the remote teacher — the browser never
    *  grades). */
@@ -308,6 +323,7 @@ export function remoteChatTeacher(client: RemoteClient): ChatTeacher {
   return {
     chatAnswer: (utterance) => client.chat(utterance),
     creativeReply: (utterance) => client.compose(utterance),
+    tryTeachReply: (utterance) => client.tryTeachReply(utterance),
     gradeCreativeWithReliability: (provenance, score, utterance, answer, provider) => {
       const traceIds = 'traceIds' in provenance ? provenance.traceIds : [...provenance];
       const edges = 'traceIds' in provenance ? (provenance.edges ?? []) : [];

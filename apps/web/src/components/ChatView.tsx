@@ -11,6 +11,10 @@ export interface ChatViewProps {
   creativeUnlocked: boolean;
   voice: VoiceService;
   onStartObserver?: () => void;
+  /** The "have the teacher answer" affordance: asks the server's chaperone
+   *  to answer an outstanding gap; the learned answer is appended by the
+   *  caller. */
+  onTeacherAnswer?: (cue: string) => Promise<void>;
 }
 
 const MODE_BADGE: Record<NonNullable<ConversationMessage['mode']>, { label: string; tone: string } | null> = {
@@ -144,7 +148,7 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
  * to the bottom — the conventional assistant layout. The conversation list
  * lives in the app sidebar; the model summary lives in the strip above.
  */
-export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver }: ChatViewProps) {
+export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver, onTeacherAnswer }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [listening, setListening] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -245,7 +249,7 @@ export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver
             </div>
           ) : (
             <div className="space-y-6">
-              {chat.messages.map((message) =>
+              {chat.messages.map((message, index) =>
                 message.role === 'user' ? (
                   <div key={message.id} className="flex justify-end">
                     <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-slate-800 px-4 py-2.5 text-[15px] leading-relaxed text-slate-100">
@@ -253,7 +257,20 @@ export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver
                     </div>
                   </div>
                 ) : (
-                  <ObserverMessage key={message.id} message={message} />
+                  <div key={message.id} className="flex flex-col items-start gap-1.5">
+                    <ObserverMessage message={message} />
+                    {onTeacherAnswer !== undefined && (message.mode === 'ask' || message.mode === 'decline') && (
+                      <button
+                        onClick={() => {
+                          const cue = chat.messages[index - 1]?.role === 'user' ? chat.messages[index - 1].text : message.text;
+                          void onTeacherAnswer(cue);
+                        }}
+                        className="ml-8 rounded-full border border-violet-500/40 bg-violet-500/10 px-3 py-1 text-[11px] text-violet-300 transition hover:border-violet-400 hover:text-violet-200"
+                      >
+                        ask the teacher model to answer
+                      </button>
+                    )}
+                  </div>
                 )
               )}
             </div>

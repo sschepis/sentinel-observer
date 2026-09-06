@@ -15,6 +15,7 @@ function chatStub(overrides: Partial<ChatController> = {}): ChatController {
     pending: false,
     send: () => {},
     compose: () => {},
+  appendAssistant: () => {},
     selectConversation: () => {},
     newConversation: () => {},
     removeConversation: () => {},

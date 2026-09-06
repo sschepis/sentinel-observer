@@ -323,6 +323,15 @@ export default function App() {
               if (offline) setProbeEpoch((n) => n + 1);
               else withError(() => remoteClient.wake().then(() => remote.refresh()));
             }}
+            onTeacherAnswer={(cue) =>
+              remoteClient.answerGap(cue).then((result) => {
+                chat.appendAssistant(
+                  result.answered && result.response !== null
+                    ? result.response
+                    : `the teacher model could not answer yet${result.error !== null ? ` — ${result.error}` : ''}`
+                );
+              })
+            }
           />
         )}
 

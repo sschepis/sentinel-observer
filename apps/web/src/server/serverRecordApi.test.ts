@@ -179,3 +179,59 @@ describe('server introspection snapshot', () => {
     }
   }, 60000);
 });
+
+describe('teach-reply closes the ask → told → own loop', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('the reply to an unanswered gap is adopted as the taught answer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-teachreply-'));
+    dirs.push(dir);
+    const server = new ServerSession({ dataDir: dir, words: 12, conversation: false, tickImmediately: false, train: false });
+    await server.boot();
+    try {
+      const asked = await server.teacher!.chatAnswer('what is a friend');
+      expect(asked.mode).toBe('ask');
+
+      const reply = server.tryTeachReply('A friend is a person you like and trust.');
+      expect(reply).not.toBeNull();
+      expect(reply!.handled).toBe(true);
+
+      const again = await server.teacher!.chatAnswer('what is a friend');
+      expect(again.mode).toBe('memorized');
+      expect(again.response).toContain('A friend is a person you like and trust.');
+    } finally {
+      await server.shutdown();
+    }
+  }, 60000);
+
+  it('a reply that does not name the asked subject is not adopted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-teachreply-no-'));
+    dirs.push(dir);
+    const server = new ServerSession({ dataDir: dir, words: 12, conversation: false, tickImmediately: false, train: false });
+    await server.boot();
+    try {
+      await server.teacher!.chatAnswer('what is a friend');
+      const reply = server.tryTeachReply('The weather is nice today.');
+      expect(reply).toBeNull();
+    } finally {
+      await server.shutdown();
+    }
+  }, 60000);
+
+  it('answerGap reports honestly when no teacher model is configured', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-answergap-'));
+    dirs.push(dir);
+    const server = new ServerSession({ dataDir: dir, words: 12, conversation: false, tickImmediately: false, train: false });
+    await server.boot();
+    try {
+      const result = await server.answerGap('what is a quasar');
+      expect(result.answered).toBe(false);
+      expect(result.error).toContain('no teacher model configured');
+    } finally {
+      await server.shutdown();
+    }
+  }, 60000);
+});

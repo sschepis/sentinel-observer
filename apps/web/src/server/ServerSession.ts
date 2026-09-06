@@ -20,6 +20,7 @@ import {
 } from '../teacher/chaperone';
 import { DefinitionsRunner } from './definitionsRunner';
 import { ruleStoreSnapshot } from '../components/RulesPanel';
+import { extractUnknownSubject, tokenizeText } from '../teacher/context';
 import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
 import type { LearningEvent } from '../learning/events';
 
@@ -349,6 +350,67 @@ export class ServerSession {
         feedback: `grading unavailable: ${reason instanceof Error ? reason.message : String(reason)}`,
         graded: null
       };
+    }
+  }
+
+  /**
+   * CLOSE THE ASK → TOLD → OWN LOOP (the reply-teaching surface): when the
+   * observer is waiting on an answer — a pending rule question, or an
+   * unanswered gap whose subject the human's reply names — the reply IS the
+   * answer and is taught, not answered as a new utterance.
+   */
+  tryTeachReply(utterance: string): { handled: boolean; message: string } | null {
+    if (this.teacher === null) throw new Error('observer not booted');
+    const teacher = this.teacher;
+
+    const ruleReply = teacher.tryTeachReply(utterance);
+    if (ruleReply !== null) return { handled: true, message: ruleReply.message };
+
+    const gaps = teacher.listGaps();
+    if (gaps.length === 0) return null;
+    const gap = gaps[gaps.length - 1];
+    const known = new Set(teacher.listWords().map((entry) => entry.word.word));
+    // The subject the observer asked about: the unknown word the question
+    // names — or, when every word already exists in the deck (the common
+    // case: the word is KNOWN but untaught), the question's last content
+    // word. The reply must name that subject to be adopted as the answer.
+    const gapTokens = tokenizeText(gap).filter((token) => /^[a-z]{2,}$/.test(token));
+    const subject = extractUnknownSubject(gap, known) ?? gapTokens[gapTokens.length - 1] ?? null;
+    if (subject === null) return null;
+    if (!tokenizeText(utterance).includes(subject)) return null;
+
+    const response = utterance.trim();
+    if (response.length < 5 || response.length > 200) return null;
+    if (teacher.teachResponse({ cue: gap, response }) === null) return null;
+    teacher.respond(gap);
+    return { handled: true, message: `I'll remember that. ${response}` };
+  }
+
+  /**
+   * The chaperone answers an outstanding gap and the observer learns the
+   * answer (the "have the teacher answer" affordance). Requires a
+   * server-configured chaperone; the response is validated as a taught
+   * exchange before adoption — never guessed content.
+   */
+  async answerGap(cue: string): Promise<{ answered: boolean; cue: string; response: string | null; error: string | null }> {
+    if (this.teacher === null) throw new Error('observer not booted');
+    const settings = this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' };
+    if (settings.endpoint.trim().length === 0) {
+      return { answered: false, cue, response: null, error: 'no teacher model configured on the server' };
+    }
+    try {
+      const provider = new OpenAICompatProvider(settings);
+      const chaperone = new Chaperone(provider);
+      const existingCues = this.teacher.listConversationPairs().map((pair) => pair.cue);
+      const run = await chaperone.answerGaps({ gaps: [cue], existingCues, signal: undefined });
+      const pair = run.pairs[0];
+      if (pair === undefined || this.teacher.teachResponse(pair) === null) {
+        return { answered: false, cue, response: null, error: run.error ?? 'the teacher model produced no valid answer' };
+      }
+      this.teacher.respond(pair.cue);
+      return { answered: true, cue: pair.cue, response: pair.response, error: null };
+    } catch (error) {
+      return { answered: false, cue, response: null, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
