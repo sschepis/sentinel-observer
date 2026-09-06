@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RemoteClient, type RemoteServerState, type RemoteWordEntry } from '../server/client';
-import type { ObserverSignal } from '@sschepis/sentient-core';
+import type { RemoteLearningEvent } from '../server/useRemoteObserver';
 import type { VoiceSettings } from '../speech/voiceSettings';
 import { ELEVENLABS_DEFAULT_VOICE_ID } from '../speech/voiceSettings';
 import { ChaperoneProgress } from './ChaperoneProgress';
@@ -15,16 +15,18 @@ export interface ServerPanelProps {
   client: RemoteClient;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
-  signals: ObserverSignal[];
+  /** The live classroom feed (what the loop is doing right now). */
+  learningEvents: RemoteLearningEvent[];
   refresh: () => Promise<void>;
   /** The server's training loop stats (the ONLY trainer). */
   training: RemoteServerState['training'];
   trainingRunning: boolean;
 }
 
-function ServerPanel({ client, status, error, signals, refresh, training, trainingRunning }: ServerPanelProps) {
+function ServerPanel({ client, status, error, learningEvents, refresh, training, trainingRunning }: ServerPanelProps) {
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const saveNow = () => {
     setSaving(true);
@@ -48,7 +50,12 @@ function ServerPanel({ client, status, error, signals, refresh, training, traini
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => client.train(!trainingRunning).then(() => refresh())}
+            onClick={() =>
+              client
+                .train(!trainingRunning)
+                .then(() => refresh())
+                .catch((reason: unknown) => setActionError(reason instanceof Error ? reason.message : String(reason)))
+            }
             disabled={status !== 'ready'}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-40 ${
               trainingRunning
@@ -88,6 +95,7 @@ function ServerPanel({ client, status, error, signals, refresh, training, traini
           </button>
           {saveResult.length > 0 && <span className="text-xs text-slate-500">{saveResult}</span>}
         </div>
+        {actionError !== null && <p className="mt-1.5 text-xs text-rose-400">{actionError}</p>}
         <p className="text-[11px] leading-relaxed text-slate-600">
           The observer runs as a server process: it keeps learning while this page is closed, saves its model to disk
           regularly, and reloads the trained model when the server restarts. Reloading this page changes nothing — the
@@ -105,16 +113,22 @@ function ServerPanel({ client, status, error, signals, refresh, training, traini
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        <h3 className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Live signals</h3>
-        {signals.length === 0 ? (
-          <p className="text-xs text-slate-600">Waiting for the server&apos;s signal stream…</p>
+        <h3 className="mb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">
+          Training feed {trainingRunning ? '· running' : '· stopped'}
+        </h3>
+        {learningEvents.length === 0 ? (
+          <p className="text-xs text-slate-600">
+            {trainingRunning
+              ? 'The classroom is cycling — events appear here as they happen.'
+              : 'The training loop is stopped. Start it to see lessons, reviews, and drills here.'}
+          </p>
         ) : (
           <ul className="space-y-1">
-            {[...signals].reverse().map((signal, index) => (
-              <li key={`${signal.at}-${index}`} className="text-xs text-slate-500">
-                <span className="text-slate-600">{new Date(signal.at).toLocaleTimeString()} </span>
-                <span className="text-slate-400">{signal.kind}</span>
-                <span className="text-slate-600"> · {String(signal.causeId ?? '')}</span>
+            {learningEvents.map((event, index) => (
+              <li key={`${event.at}-${index}`} className="text-xs text-slate-500">
+                <span className="text-slate-600">{new Date(event.at).toLocaleTimeString()} </span>
+                <span className="text-slate-400">{event.label ?? event.kind}</span>
+                <span className="text-slate-600"> · {event.text}</span>
               </li>
             ))}
           </ul>

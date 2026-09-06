@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Dashboard } from './components/Dashboard';
+
 import { ChatView } from './components/ChatView';
 import { RulesPanel } from './components/RulesPanel';
 import { ModelStateBar } from './components/ModelStateBar';
@@ -20,14 +20,13 @@ import { useRemoteObserver } from './server/useRemoteObserver';
  * and the server URL.
  */
 
-type View = 'chat' | 'training' | 'vocabulary' | 'rules' | 'mind' | 'introspect' | 'settings';
+type View = 'chat' | 'training' | 'vocabulary' | 'rules' | 'introspect' | 'settings';
 
 const NAV: ReadonlyArray<{ key: View; label: string; icon: string; hint: string }> = [
   { key: 'chat', label: 'Chat', icon: '◍', hint: 'Talk to the observer' },
   { key: 'training', label: 'Training', icon: '⁘', hint: 'Watch it learn, live' },
   { key: 'vocabulary', label: 'Vocabulary', icon: '≡', hint: 'What it knows' },
   { key: 'rules', label: 'Rules', icon: '⌬', hint: 'Its procedures' },
-  { key: 'mind', label: 'Mind', icon: '◎', hint: 'Raw observer physics' },
   { key: 'introspect', label: 'Introspect', icon: '◬', hint: 'Its objectives, drives, beliefs, and trust' },
   { key: 'settings', label: 'Settings', icon: '⚙', hint: 'Server and voice' }
 ];
@@ -37,7 +36,6 @@ const VIEW_TITLE: Record<View, string> = {
   training: 'Training',
   vocabulary: 'Vocabulary',
   rules: 'Rules',
-  mind: "The observer's mind",
   introspect: 'Introspection',
   settings: 'Settings'
 };
@@ -340,10 +338,10 @@ export default function App() {
             client={remoteClient}
             status={remote.status}
             error={remote.error}
-            signals={remote.signals}
             refresh={remote.refresh}
             training={remote.server?.training ?? null}
             trainingRunning={trainingRunning}
+            learningEvents={remote.learningEvents}
           />
         )}
 
@@ -352,20 +350,6 @@ export default function App() {
         {view === 'rules' && <RulesPanel snapshot={rulesSnapshot as never} />}
 
         {view === 'introspect' && <IntrospectView client={remoteClient} revision={summaryTick} />}
-
-        {view === 'mind' && (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <Dashboard
-              status={remote.status}
-              error={remote.error}
-              metrics={remote.metrics}
-              lastStimulus={null}
-              signals={remote.signals}
-              onStart={() => void remoteClient.wake().then(() => remote.refresh())}
-              onStop={() => void remoteClient.sleep().then(() => remote.refresh())}
-            />
-          </div>
-        )}
 
         {view === 'settings' && (
           <RemoteSettings

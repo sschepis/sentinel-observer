@@ -2,6 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';
 import { RemoteClient, type RemoteServerState } from './client';
 
+/** A bounded live feed of the server's classroom events (what the training
+ *  loop is doing RIGHT NOW — the Training tab's heartbeat). */
+export interface RemoteLearningEvent {
+  at: number;
+  kind: string;
+  text: string;
+  label?: string;
+}
+
 /**
  * React binding for the observer server.
  *
@@ -15,6 +24,7 @@ export interface RemoteObserverState {
   error: string | null;
   metrics: SemanticObserverState | null;
   signals: ObserverSignal[];
+  learningEvents: RemoteLearningEvent[];
   server: RemoteServerState | null;
   client: RemoteClient;
   connect: () => void;
@@ -33,6 +43,7 @@ export function useRemoteObserver(url: string): RemoteObserverState {
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<SemanticObserverState | null>(null);
   const [signals, setSignals] = useState<ObserverSignal[]>([]);
+  const [learningEvents, setLearningEvents] = useState<RemoteLearningEvent[]>([]);
   const [server, setServer] = useState<RemoteServerState | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -55,6 +66,12 @@ export function useRemoteObserver(url: string): RemoteObserverState {
       (event) => {
         if (event.kind === 'metrics') {
           setMetrics(event.state);
+          return;
+        }
+        if (event.kind === 'learning') {
+          setLearningEvents((prev) =>
+            [...event.events, ...prev].slice(0, 80).map((item) => ({ at: event.at, kind: item.kind, text: item.text, label: item.label }))
+          );
           return;
         }
         if (event.kind === 'signal') {
@@ -87,5 +104,5 @@ export function useRemoteObserver(url: string): RemoteObserverState {
 
   useEffect(() => () => disconnect(), [disconnect]);
 
-  return { status, error, metrics, signals, server, client, connect, disconnect, refresh };
+  return { status, error, metrics, signals, learningEvents, server, client, connect, disconnect, refresh };
 }

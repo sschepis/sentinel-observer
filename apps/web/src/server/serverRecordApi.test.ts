@@ -201,7 +201,8 @@ describe('teach-reply closes the ask → told → own loop', () => {
 
       const again = await server.teacher!.chatAnswer('what is a friend');
       expect(again.mode).toBe('memorized');
-      expect(again.response).toContain('A friend is a person you like and trust.');
+      const text = again.mode === 'decline' ? '' : again.response;
+      expect(text).toContain('A friend is a person you like and trust.');
     } finally {
       await server.shutdown();
     }

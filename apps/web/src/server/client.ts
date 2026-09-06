@@ -101,11 +101,16 @@ export class RemoteClient {
   }
 
   private async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const response = await fetch(`${this.base}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    } catch {
+      throw new Error(`observer server unreachable at ${this.base} — is \`npm run server\` running?`);
+    }
     const payload = (await response.json()) as T & { error?: string };
     if (!response.ok) throw new Error(payload.error ?? `server error ${response.status}`);
     return payload;
