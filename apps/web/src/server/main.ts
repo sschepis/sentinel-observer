@@ -33,10 +33,34 @@
  *                         (env OBSERVER_RESEARCH_TOPICS=1)
  *   --no-train            boot with the training loop stopped
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ServerSession } from './ServerSession';
 import { startHttpServer } from './http';
+
+/**
+ * Minimal .env loader (zero dependencies): KEY=VALUE lines, `#` comments.
+ * Explicit shell env vars and CLI flags always win over the file. The file
+ * holds the server's chaperone configuration (see .env.example) — the
+ * endpoint and model of the LLM the observer trains through.
+ */
+function loadEnvFile(path = resolve(process.cwd(), '.env')): void {
+  if (!existsSync(path)) return;
+  try {
+    for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (line.length === 0 || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      const value = line.slice(eq + 1).trim();
+      if (key.length > 0 && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch {
+    // A broken .env is a convenience failure, never a boot failure.
+  }
+}
+loadEnvFile();
 
 const arg = (name: string, fallback: string): string => {
   const index = process.argv.indexOf(name);

@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.*
+!.env.example
 .DS_Store
 .playwright-mcp/
 # Generated training artifacts (214MB+ bootstrap records must never be versioned)
@@ -10,3 +11,6 @@ apps/web/public/bootstrap.json.bak-*
 # Agent Manager worktree checkouts and MCP state (machine-local)
 .kilo/worktrees/
 .obotovs/
+
+# Server data directory (the persisted observer — never versioned)
+apps/web/data/
