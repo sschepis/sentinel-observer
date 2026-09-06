@@ -54,9 +54,13 @@ npm test             # jest across core + web
 npm run typecheck    # tsc --noEmit everywhere
 npm run build        # core (tsc) + web (vite)
 
-# in apps/web
-npm run dev          # vite dev server (port 5173)
-npm run server       # observer server (persistent, disk-checkpointed)
+# The app is a PURE CLIENT: development needs both processes.
+npm run dev:all      # observer server + vite dev UI together (recommended)
+# …or two terminals:
+npm run dev          # vite dev server (port 5173) — UI only
+npm run server       # observer server (port 8787): the model, training,
+                     #   persistence, and the API the UI drives
+                     #   (--chaperone-endpoint/--key/--model, --research-topics)
 npm run train        # batch-train a deck into the shipped record
                      #   (--words N, --retention-sim DAYS, --shards K)
 npm run classroom    # autonomous classroom: self-training + deploy

@@ -87,6 +87,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remoteAvailable]);
 
+  // The app is a pure client: while the server is unreachable it keeps
+  // re-probing (every 5s) so it connects the moment `npm run server` comes
+  // up — no manual retry dance during development.
+  useEffect(() => {
+    if (remoteAvailable !== false) return;
+    const id = setInterval(() => setProbeEpoch((n) => n + 1), 5000);
+    return () => clearInterval(id);
+  }, [remoteAvailable]);
+
   const connected = remoteAvailable === true && remote.status === 'ready';
   const remoteClient = remote.client;
   const remoteTeacher = useMemo(() => remoteChatTeacher(remoteClient), [remoteClient]);

@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "description": "Sentinel: a sentient-observer learning app. Monorepo: @sschepis/sentient-core (cognitive engine) + web app.",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
-    "dev": "npm run dev --workspace @sschepis/sentinel-web"
+    "dev": "npm run dev --workspace @sschepis/sentinel-web",
+    "dev:all": "node apps/web/scripts/dev-all.mjs"
   },
   "license": "MIT"
 }
