@@ -106,9 +106,23 @@ export function useChat(
    * an LLM round-trip, so routing by the then-current active conversation
    * would land the exchange in whatever conversation the user switched to.
    */
-  const pushExchange = useCallback(
+  /**
+   * The user's message lands in the transcript IMMEDIATELY, before any
+   * teacher round-trip — a slow or unreachable server must never leave the
+   * content area empty while the sidebar already shows the conversation.
+   */
+  const pushUser = useCallback(
+    (conversationId: string, text: string) => {
+      appendMessage(conversationId, { role: 'user', text });
+      sync(conversationId);
+    },
+    [sync]
+  );
+
+  /** Append the observer's reply (or an error bubble) to the conversation. */
+  const appendObserver = useCallback(
     (
-      userText: string,
+      conversationId: string,
       reply: {
         text: string;
         mode?: ConversationMessage['mode'];
@@ -118,10 +132,8 @@ export function useChat(
         derivation?: ConversationMessage['derivation'];
         ruleIds?: string[];
         steps?: number;
-      },
-      conversationId: string
+      }
     ) => {
-      appendMessage(conversationId, { role: 'user', text: userText });
       appendMessage(conversationId, {
         role: 'observer',
         text: reply.text,
@@ -203,17 +215,13 @@ export function useChat(
       if (graded.regradeId !== null) {
         feedback = `${feedback !== null && feedback.length > 0 ? feedback : `graded ${score?.toFixed(2)}`} — the internal check disagrees (re-grade pending)`;
       }
-      pushExchange(
-        utterance,
-        {
-          text: reply.sentence,
-          mode: 'creative',
-          confidence: reply.confidence,
-          score,
-          feedback
-        },
-        conversationId
-      );
+      appendObserver(conversationId, {
+        text: reply.sentence,
+        mode: 'creative',
+        confidence: reply.confidence,
+        score,
+        feedback
+      });
       setStatus(
         score !== null && score >= 0.7
           ? 'good answer — the observer reinforced those memories'
@@ -224,7 +232,7 @@ export function useChat(
       setPending(false);
       onTeacherChanged();
     },
-    [teacher, settings, pushExchange, onTeacherChanged]
+    [teacher, settings, appendObserver, onTeacherChanged]
   );
 
   const send = useCallback(
@@ -236,26 +244,27 @@ export function useChat(
       // switch conversations. Routing by the push-time active conversation
       // would strand the exchange in the wrong thread.
       const conversationId = ensureConversation();
-      // R11: CLOSE THE ASK → TOLD → OWN LOOP. When the observer is waiting
-      // on a rule question ("what is the rule for gcf?") and this reply
-      // parses as the procedure, the R10 pipeline validates and adopts it —
-      // the observer answers with its own summary or the counterexample.
-      // A reply that does not parse falls through to the normal dispatch.
-      // (Both teachers: the server carries the same teach-reply surface
-      // through /api/teach-reply — rule questions AND unanswered gaps.)
-      const teachCapable = isTeachCapable(teacher);
-      if (teachCapable) {
-        const taught = await awaitable(teacher.tryTeachReply(utterance));
-        if (taught !== null) {
-          const message = taught.message;
-          speak?.(message);
-          pushExchange(utterance, { text: message }, conversationId);
-          setStatus('');
-          onTeacherChanged();
-          return;
-        }
-      }
-      const answer = await awaitable(teacher.chatAnswer(utterance));
+      // The user's message renders IMMEDIATELY — a slow or unreachable
+      // teacher must never leave the content area empty.
+      pushUser(conversationId, utterance);
+      void (async () => {
+        try {
+          // R11: CLOSE THE ASK → TOLD → OWN LOOP (rule questions AND
+          // unanswered gaps — the server carries the same teach-reply
+          // surface through /api/teach-reply).
+          const teachCapable = isTeachCapable(teacher);
+          if (teachCapable) {
+            const taught = await awaitable(teacher.tryTeachReply(utterance));
+            if (taught !== null) {
+              const message = taught.message;
+              speak?.(message);
+              appendObserver(conversationId, { text: message });
+              setStatus('');
+              onTeacherChanged();
+              return;
+            }
+          }
+          const answer = await awaitable(teacher.chatAnswer(utterance));
       // New episodic facts (user facts, topics, session gaps) flow to the
       // learning stream as "remembers" events.
       if (answer.stored !== undefined && answer.stored.length > 0) {
@@ -288,14 +297,14 @@ export function useChat(
         operator !== null && operator.kind === 'rewrite'
           ? operator.trace.slice(0, 32).map((step) => ({ ruleId: step.ruleId, after: step.after }))
           : undefined;
-      pushExchange(utterance, {
+      appendObserver(conversationId, {
         text,
         mode: answer.mode,
         confidence: answer.mode === 'memorized' ? answer.confidence : null,
         derivation,
         ruleIds: operator !== null && operator.kind === 'rewrite' ? operator.ruleIds : undefined,
         steps: operator !== null && operator.kind === 'rewrite' ? operator.steps : undefined
-      }, conversationId);
+      });
       setStatus('');
       onTeacherChanged();
 
@@ -319,12 +328,12 @@ export function useChat(
               utterance
             );
             if (hybrid !== null) {
-              pushExchange(utterance, {
+              appendObserver(conversationId, {
                 text: hybrid.answer,
                 mode: 'hybrid',
                 score: hybrid.score,
                 feedback: hybrid.feedback
-              }, conversationId);
+              });
               setStatus(
                 hybrid.stored
                   ? 'learned from the teacher — the observer can answer this from memory now'
@@ -339,8 +348,14 @@ export function useChat(
           }
         })();
       }
+        } catch (reason) {
+          const message = reason instanceof Error ? reason.message : String(reason);
+          appendObserver(conversationId, { text: message, mode: 'decline' });
+          setStatus('');
+        }
+      })();
     },
-    [teacher, settings, gradeCreative, pushExchange, onTeacherChanged, speak]
+    [teacher, settings, gradeCreative, onTeacherChanged, speak, pushUser, appendObserver]
   );
 
   /** Force a composed (creative) answer regardless of what recall would do. */
@@ -349,14 +364,20 @@ export function useChat(
       if (teacher === null) return;
       const utterance = raw.trim().length > 0 ? raw.trim() : 'tell me something new';
       const conversationId = ensureConversation();
-      const reply = await awaitable(teacher.creativeReply(utterance));
-      if (reply.sentence.trim().length === 0) {
-        setStatus('the observer has no words to compose with yet');
-        return;
+      pushUser(conversationId, utterance);
+      try {
+        const reply = await awaitable(teacher.creativeReply(utterance));
+        if (reply.sentence.trim().length === 0) {
+          setStatus('the observer has no words to compose with yet');
+          return;
+        }
+        void gradeCreative(utterance, reply, conversationId);
+      } catch (reason) {
+        appendObserver(conversationId, { text: reason instanceof Error ? reason.message : String(reason), mode: 'decline' });
+        setStatus('');
       }
-      void gradeCreative(utterance, reply, conversationId);
     },
-    [teacher, gradeCreative, ensureConversation]
+    [teacher, gradeCreative, ensureConversation, pushUser, appendObserver]
   );
 
   const selectConversation = useCallback(
