@@ -60,7 +60,10 @@ npm run dev:all      # observer server + vite dev UI together (recommended)
 npm run dev          # vite dev server (port 5173) — UI only
 npm run server       # observer server (port 8787): the model, training,
                      #   persistence, and the API the UI drives
-                     #   (--chaperone-endpoint/--key/--model, --research-topics)
+                     #   (--chaperone-endpoint/--key/--model, --research-topics,
+                     #    --store sqlite|json — sqlite is recommended; it
+                     #    migrates the legacy JSON files once, which stay as a
+                     #    backup)
 npm run train        # batch-train a deck into the shipped record
                      #   (--words N, --retention-sim DAYS, --shards K)
 npm run classroom    # autonomous classroom: self-training + deploy

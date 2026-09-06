@@ -7,6 +7,7 @@ import { TeacherAgent } from '../teacher/TeacherAgent';
 import { ACTIVE_DECK } from '../teacher/decks';
 import { ALL_CONVERSATION_PAIRS } from '../teacher/conversation';
 import { FilePersistenceStore } from './FilePersistenceStore';
+import { SqlitePersistenceStore } from './SqlitePersistenceStore';
 import type { BootstrapRecord } from '../teacher/bootstrap';
 import { assertVocabularyCompatible } from '../teacher/bootstrapLoader';
 import { TrainingLoop, EMPTY_TRAINING_STATS, type TrainingStats } from './trainingLoop';
@@ -61,6 +62,9 @@ export interface ServerSessionOptions {
   /** R17: the loop also researches the subjects of its unanswered gaps
    *  through the chaperone each cycle (default false). */
   researchTopics?: boolean;
+  /** Working store: 'json' (legacy, default) or 'sqlite' (recommended —
+   *  one-time migration imports the legacy JSON files when present). */
+  store?: 'json' | 'sqlite';
 }
 
 export interface ServerSnapshot {
@@ -107,7 +111,7 @@ export interface ServerState {
 }
 
 export class ServerSession {
-  readonly store: FilePersistenceStore;
+  readonly store: FilePersistenceStore | SqlitePersistenceStore;
   session: ObserverSession | null = null;
   teacher: TeacherAgent | null = null;
 
@@ -137,9 +141,13 @@ export class ServerSession {
       train: options.train ?? true,
       trainCadenceMs: options.trainCadenceMs ?? 400,
       chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
-      researchTopics: options.researchTopics ?? false
+      researchTopics: options.researchTopics ?? false,
+      store: options.store ?? 'json'
     };
-    this.store = new FilePersistenceStore(this.options.dataDir);
+    this.store =
+      this.options.store === 'sqlite'
+        ? new SqlitePersistenceStore(this.options.dataDir)
+        : new FilePersistenceStore(this.options.dataDir);
   }
 
   subscribe(listener: (event: ServerEvent) => void): () => void {

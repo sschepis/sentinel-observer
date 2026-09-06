@@ -32,6 +32,8 @@
  *                         observer's unanswered gaps through the chaperone
  *                         (env OBSERVER_RESEARCH_TOPICS=1)
  *   --no-train            boot with the training loop stopped
+ *   --store sqlite|json   working store (default json; sqlite migrates the
+ *                         legacy JSON files once — recommended)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -81,6 +83,7 @@ const CHAPERONE_KEY = process.env.OBSERVER_CHAPERONE_KEY ?? arg('--chaperone-key
 const CHAPERONE_MODEL = process.env.OBSERVER_CHAPERONE_MODEL ?? arg('--chaperone-model', '');
 const RESEARCH_TOPICS = process.env.OBSERVER_RESEARCH_TOPICS === '1' || process.argv.includes('--research-topics');
 const TRAIN = !process.argv.includes('--no-train');
+const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'json');
 
 async function main(): Promise<void> {
   if (!Number.isFinite(PORT) || PORT <= 0) throw new Error(`invalid port: ${process.env.OBSERVER_PORT ?? arg('--port', '8787')}`);
@@ -93,6 +96,7 @@ async function main(): Promise<void> {
     autosaveMs: AUTOSAVE_MS,
     compositionSeed: SEED,
     train: TRAIN,
+    store: STORE === 'sqlite' ? 'sqlite' : 'json',
     researchTopics: RESEARCH_TOPICS,
     chaperone: CHAPERONE_ENDPOINT.length > 0 ? { endpoint: CHAPERONE_ENDPOINT, apiKey: CHAPERONE_KEY, model: CHAPERONE_MODEL } : undefined
   });
