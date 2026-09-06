@@ -32,6 +32,7 @@ const ZERO = tSym('nat.z');
 /** The English tail of a namespaced symbol — 'nat.gcd' → 'gcd' — the
  *  phrase recursion is stated with. */
 function englishName(name: string): string {
+  if (typeof name !== 'string' || name.length === 0) return '';
   const tail = name.split('.').pop() ?? name;
   return tail.toLowerCase();
 }

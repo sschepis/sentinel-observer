@@ -303,7 +303,11 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
      * reply does not parse — the normal chat dispatch handles the reply.
      */
     tryTeachReply(text: string): { handled: boolean; message: string; adopted: boolean } | null {
-      const pending = this.pendingRuleQuestionsView();
+      // Malformed pending entries (e.g. restored from an older record
+      // shape) must never crash the reply path — they are filtered first.
+      const pending = this.pendingRuleQuestionsView().filter(
+        (question) => typeof question?.drill === 'string' && typeof question?.concept === 'string'
+      );
       if (pending.length === 0) return null;
       // REVIEW FIX (Med1): the reply is tried against EVERY open question,
       // not just the FIFO head — a slot-less pending (place-value, lcm) at

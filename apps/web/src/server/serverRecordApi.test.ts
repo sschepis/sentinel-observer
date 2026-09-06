@@ -236,3 +236,29 @@ describe('teach-reply closes the ask → told → own loop', () => {
     }
   }, 60000);
 });
+
+describe('teach-reply never crashes on stale record state', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a malformed pending rule question is skipped, not a crash', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-stale-reply-'));
+    dirs.push(dir);
+    const server = new ServerSession({ dataDir: dir, words: 12, conversation: false, tickImmediately: false, train: false });
+    await server.boot();
+    try {
+      // Simulate a pending entry restored from an older record shape: the
+      // learning-state map holds a malformed entry.
+      const teacher = server.teacher!;
+      (teacher as unknown as { pendingRuleQuestions: Map<unknown, unknown> }).pendingRuleQuestions.set(undefined, undefined);
+      const reply = server.tryTeachReply('hello');
+      expect(reply).toBeNull(); // skipped, never thrown
+      const answer = await server.teacher!.chatAnswer('hello');
+      expect(['ask', 'memorized', 'creative', 'operator']).toContain(answer.mode);
+    } finally {
+      await server.shutdown();
+    }
+  }, 60000);
+});
