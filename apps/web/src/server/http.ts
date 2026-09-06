@@ -149,6 +149,15 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
     return;
   }
 
+  if (req.method === 'GET' && path === '/api/introspection') {
+    try {
+      sendJson(res, 200, { snapshot: server.introspection() });
+    } catch (err) {
+      sendJson(res, 503, { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && path === '/api/rules') {
     try {
       sendJson(res, 200, { snapshot: server.rulesSnapshot() });

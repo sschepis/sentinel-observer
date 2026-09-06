@@ -371,6 +371,74 @@ export class ServerSession {
     this.definitionsRunner?.cancel();
   }
 
+  /**
+   * THE INTROSPECTION SNAPSHOT — everything the observer currently wants,
+   * believes, prioritizes, and trusts, for the web introspection view. Pure
+   * reads of the singular teacher: goals (with their computed reasons), the
+   * drive vector + learned behavior weights, curiosity + unanswered gaps,
+   * belief traces, memory health, the measured handover, calibration gates,
+   * and the training loop's stats.
+   */
+  introspection(): Record<string, unknown> {
+    if (this.teacher === null) throw new Error('observer not booted');
+    const teacher = this.teacher;
+    const report = teacher.report();
+    const conversation = teacher.conversationReport();
+    const bank = this.session?.observer.getMemoryBank();
+    const beliefs = (bank?.all() ?? [])
+      .filter((trace) => trace.metadata?.kind === 'belief')
+      .reverse()
+      .slice(0, 30)
+      .map((trace) => ({
+        about: String(trace.metadata?.about ?? ''),
+        content: trace.content,
+        beliefKind: String(trace.metadata?.beliefKind ?? ''),
+        contradicts: trace.metadata?.contradicts === true,
+        strength: trace.strength
+      }));
+    const calibration = teacher
+      .calibrationGates()
+      .map((gate) => ({ gate, report: teacher.calibrationReport(gate) }));
+    return {
+      at: Date.now(),
+      objectives: {
+        goals: teacher.activeGoalView(),
+        stalled: teacher.stalledGoals().map((goal) => ({ type: goal.type, target: goal.target })),
+        history: teacher.goalHistorySnapshot()
+      },
+      drives: {
+        signals: teacher.driveSignalsStatic(),
+        behaviorWeights: teacher.driveWeights(),
+        outcomes: teacher.behaviorOutcomeCounts()
+      },
+      curiosity: {
+        question: teacher.curiosityQuestion(),
+        gaps: teacher.listGaps().slice(0, 20)
+      },
+      beliefs,
+      memory: {
+        learned: report.learned,
+        total: report.total,
+        healthy: report.healthyCount,
+        due: report.dueCount,
+        consolidated: report.consolidatedCount,
+        competency: conversation.competency,
+        creativeUnlocked: conversation.creativeUnlocked,
+        taughtPhrases: teacher.listConversationPairs().length,
+        hypothesisEdges: teacher.hypothesisEdgeList().length,
+        compiledRules: teacher.compiledRuleCount(),
+        learnedPatterns: teacher.learnedPatternCount(),
+        rewriteRules: teacher.rewriteRuleStore().all().length
+      },
+      trust: {
+        lambdas: teacher.fadeLambdas(),
+        dependence: teacher.teacherDependenceRate(),
+        calibration
+      },
+      training: this.trainingLoop !== null ? this.trainingLoop.statistics() : null
+    };
+  }
+
   /** The rule-store snapshot for the UI (compiled + rewrite + learned). */
   rulesSnapshot(): ReturnType<typeof ruleStoreSnapshot> {
     if (this.teacher === null) throw new Error('observer not booted');

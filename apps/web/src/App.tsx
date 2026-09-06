@@ -4,6 +4,7 @@ import { ChatView } from './components/ChatView';
 import { RulesPanel } from './components/RulesPanel';
 import { ModelStateBar } from './components/ModelStateBar';
 import ServerPanel, { RemoteVocabulary, RemoteSettings } from './components/ServerPanel';
+import { IntrospectView } from './components/IntrospectView';
 import { useChat } from './chat/useChat';
 import { VoiceService, spokenAnswer } from './speech/voice';
 import { loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from './speech/voiceSettings';
@@ -19,7 +20,7 @@ import { useRemoteObserver } from './server/useRemoteObserver';
  * and the server URL.
  */
 
-type View = 'chat' | 'training' | 'vocabulary' | 'rules' | 'mind' | 'settings';
+type View = 'chat' | 'training' | 'vocabulary' | 'rules' | 'mind' | 'introspect' | 'settings';
 
 const NAV: ReadonlyArray<{ key: View; label: string; icon: string; hint: string }> = [
   { key: 'chat', label: 'Chat', icon: '◍', hint: 'Talk to the observer' },
@@ -27,6 +28,7 @@ const NAV: ReadonlyArray<{ key: View; label: string; icon: string; hint: string 
   { key: 'vocabulary', label: 'Vocabulary', icon: '≡', hint: 'What it knows' },
   { key: 'rules', label: 'Rules', icon: '⌬', hint: 'Its procedures' },
   { key: 'mind', label: 'Mind', icon: '◎', hint: 'Raw observer physics' },
+  { key: 'introspect', label: 'Introspect', icon: '◬', hint: 'Its objectives, drives, beliefs, and trust' },
   { key: 'settings', label: 'Settings', icon: '⚙', hint: 'Server and voice' }
 ];
 
@@ -36,6 +38,7 @@ const VIEW_TITLE: Record<View, string> = {
   vocabulary: 'Vocabulary',
   rules: 'Rules',
   mind: "The observer's mind",
+  introspect: 'Introspection',
   settings: 'Settings'
 };
 
@@ -338,6 +341,8 @@ export default function App() {
         {view === 'vocabulary' && <RemoteVocabulary client={remoteClient} revision={summaryTick} />}
 
         {view === 'rules' && <RulesPanel snapshot={rulesSnapshot as never} />}
+
+        {view === 'introspect' && <IntrospectView client={remoteClient} revision={summaryTick} />}
 
         {view === 'mind' && (
           <div className="min-h-0 flex-1 overflow-y-auto">

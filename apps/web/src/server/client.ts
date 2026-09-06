@@ -206,6 +206,14 @@ export class RemoteClient {
     return this.post('/api/definitions/cancel', {}).then(() => undefined);
   }
 
+  /** The observer's self-report: objectives, drives, curiosity, beliefs,
+   *  memory health, the measured handover, and training stats. */
+  introspection(): Promise<Record<string, unknown>> {
+    return fetch(`${this.base}/api/introspection`)
+      .then((r) => r.json())
+      .then((p) => (p as { snapshot: Record<string, unknown> }).snapshot);
+  }
+
   rules(): Promise<unknown> {
     return fetch(`${this.base}/api/rules`)
       .then((r) => r.json())

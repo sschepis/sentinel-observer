@@ -5,7 +5,7 @@
  *
  * @jest-environment node
  */
-import { describe, it, expect, afterEach } from '@jest/globals';
+import { describe, it, expect, afterEach, jest } from '@jest/globals';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

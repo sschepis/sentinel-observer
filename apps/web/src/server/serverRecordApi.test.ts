@@ -140,3 +140,42 @@ describe('DefinitionsRunner (server-side backfill)', () => {
     session.dispose();
   }, 180000);
 });
+
+describe('server introspection snapshot', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports objectives, drives, curiosity, beliefs, memory, trust, and training', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-introspect-'));
+    dirs.push(dir);
+    const server = new ServerSession({ dataDir: dir, words: 12, conversation: false, tickImmediately: false, train: false });
+    await server.boot();
+    try {
+      const snapshot = server.introspection() as {
+        objectives: { goals: unknown[]; stalled: unknown[]; history: Record<string, unknown> };
+        drives: { signals: Record<string, number>; outcomes: Record<string, unknown> };
+        curiosity: { question: string | null; gaps: unknown[] };
+        beliefs: unknown[];
+        memory: Record<string, number | boolean>;
+        trust: { lambdas: Record<string, number>; calibration: unknown[] };
+        training: null;
+      };
+      expect(Array.isArray(snapshot.objectives.goals)).toBe(true);
+      expect(Array.isArray(snapshot.objectives.stalled)).toBe(true);
+      expect(typeof snapshot.objectives.history).toBe('object');
+      expect(typeof snapshot.drives.signals.coherence).toBe('number');
+      expect(typeof snapshot.drives.signals.curiosity).toBe('number');
+      expect(Array.isArray(snapshot.curiosity.gaps)).toBe(true);
+      expect(Array.isArray(snapshot.beliefs)).toBe(true);
+      expect(snapshot.memory.learned).toBeGreaterThan(0);
+      expect(snapshot.memory.total).toBeGreaterThan(0);
+      expect(typeof snapshot.trust.lambdas.conversational).toBe('number');
+      expect(Array.isArray(snapshot.trust.calibration)).toBe(true);
+      expect(snapshot.training).toBeNull(); // train: false
+    } finally {
+      await server.shutdown();
+    }
+  }, 60000);
+});
