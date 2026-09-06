@@ -36,6 +36,11 @@ export const LOGIC_RULES: RewriteRule[] = [
   rule('bool.not-false', tSym('bool.not', [FALSE]), TRUE),
   rule('logic.mp', tSym('logic.mp', [tSym('imp', [tVar('P'), tVar('Q')]), tVar('P')]), tLit('yes')),
   rule('logic.mt', tSym('logic.mt', [tSym('imp', [tVar('P'), tVar('Q')]), tSym('nq', [tVar('Q')])]), tLit('no')),
+  // The two classical fallacies — denying the antecedent (¬P) and affirming
+  // the consequent (Q) — derive to an explicit UNDETERMINED, never to a
+  // yes or no: a conditional and one of those premises does not settle the
+  // question, and the honest answer says so (ANALYSIS.md §6 #6).
+  rule('logic.undetermined', tSym('logic.undetermined', [tSym('imp', [tVar('P'), tVar('Q')]), tVar('R')]), tLit('undetermined')),
   rule(
     'logic.barbara',
     tSym('logic.barbara', [tSym('all', [tVar('M'), tVar('C')]), tSym('isa', [tVar('N'), tVar('M')])]),
@@ -152,6 +157,43 @@ const singularize = (text: string): string =>
 /** Lift a noun phrase to its canonical singular form. */
 const lifted = (text: string): string => singularize(stripArticle(text.trim()))
 
+const PREMISE_STOP = new Set(['not', 'no', 'does', 'do', 'did', 'is', 'are', 'was', 'were', 'the', 'a', 'an', 'it'])
+
+/** Content tokens of a premise/clause, lightly stemmed so "gets"/"get" and
+ *  "rains"/"rain" compare equal. */
+const premiseTokens = (text: string): Set<string> =>
+  new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length > 0 && !PREMISE_STOP.has(token))
+      .map(singularize)
+  )
+
+/**
+ * Which half of the conditional the third sentence is about. Decided by
+ * content-token overlap (after stripping the negation and auxiliaries), so
+ * "The ground does not get wet" targets the consequence "the ground gets
+ * wet" and "It does not rain" targets the condition "it rains". Null when
+ * the statement overlaps neither, or both equally — an unreadable premise
+ * declines rather than guesses.
+ */
+function premiseTarget(statement: string, condition: string, consequence: string): 'condition' | 'consequence' | null {
+  const s = premiseTokens(statement)
+  if (s.size === 0) return null
+  const overlap = (other: Set<string>): number => {
+    let hits = 0
+    for (const token of s) if (other.has(token)) hits += 1
+    return hits
+  }
+  const c = overlap(premiseTokens(condition))
+  const q = overlap(premiseTokens(consequence))
+  if (c === 0 && q === 0) return null
+  if (c === q) return null
+  return c > q ? 'condition' : 'consequence'
+}
+
 /**
  * Parse a logic drill prompt into the term whose reduction states the
  * drill's answer. Null on any unparseable prompt.
@@ -190,12 +232,22 @@ export function parseLogicDrill(drill: string, prompt: string): Term | null {
       const c = phrase(condition)
       const q = phrase(consequence)
       const imp = tSym('imp', [c, q])
-      // The third clause is the premise: an affirmed condition (modus
-      // ponens) or a denied consequence (modus tollens).
-      if (/\bnot\b/i.test(statement) || /^no\b/i.test(statement)) {
-        return tSym('logic.mt', [imp, tSym('nq', [q])])
-      }
-      return tSym('logic.mp', [imp, c])
+      // The third clause is the premise. It must be read for WHAT it
+      // affirms or denies, not merely whether it contains a negation
+      // (ANALYSIS.md §6 #6: any "not" used to select modus tollens with
+      // nq(consequence) regardless of what was denied, so "It does not
+      // rain. Does the ground get wet?" derived a confident "no" — denying
+      // the antecedent). The four cases:
+      //   affirmed condition   → modus ponens      → yes
+      //   denied consequence   → modus tollens     → no
+      //   denied condition     → undetermined (denying the antecedent)
+      //   affirmed consequence → undetermined (affirming the consequent)
+      const negated = /\bnot\b/i.test(statement) || /^no\b/i.test(statement)
+      const target = premiseTarget(statement, condition, consequence)
+      if (target === null) return null
+      if (!negated && target === 'condition') return tSym('logic.mp', [imp, c])
+      if (negated && target === 'consequence') return tSym('logic.mt', [imp, tSym('nq', [q])])
+      return tSym('logic.undetermined', [imp, negated ? tSym('nq', [target === 'condition' ? c : q]) : q])
     }
     case 'syllogism': {
       const m = prompt

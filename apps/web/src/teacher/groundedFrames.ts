@@ -325,12 +325,16 @@ export function criticize(
 ): { grounded: boolean; unbacked: string[]; edges: Array<{ subject: string; predicate: RelationPredicate; object: string }>; hedged: boolean; hedges: HedgeWord[] } {
   const subject = extractSubject(sentence);
   if (subject === null) return { grounded: false, unbacked: [sentence], edges: [], hedged: false, hedges: [] };
-  const claims = parseClaims(sentence, subject);
+  const { claims, residue } = parseClaimsWithResidue(sentence, subject);
   if (claims.length === 0) return { grounded: false, unbacked: [sentence], edges: [], hedged: false, hedges: [] };
 
   const denied = deniedFromNegations(negations);
   const edges: Array<{ subject: string; predicate: RelationPredicate; object: string }> = [];
-  const unbacked: string[] = [];
+  // UNPARSED IS UNBACKED (ANALYSIS.md §6 #4): a clause the claim grammar
+  // cannot read is a claim the critic cannot back. It is refused exactly like
+  // a parsed claim without an edge — never waved through beside the clauses
+  // that did parse.
+  const unbacked: string[] = residue.map((clause) => `unparsed: ${clause}`);
   const hedges: HedgeWord[] = [];
   for (const claim of claims) {
     if (claim.negated) {
@@ -426,7 +430,10 @@ export function hedgeComposition(
 
 /** The subject named by the first "A {X} ..." frame (null when unresolvable). */
 export function extractSubject(sentence: string): string | null {
-  const hit = sentence.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+(?:is|has|can|is used|is made)/i);
+  // The subject is lazy so a multi-word verb ("depends on", "causes") is
+  // never swallowed into it; the verb alternatives are the ones the claim
+  // grammar (parseClaimsWithResidue) can read.
+  const hit = sentence.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*?)\s+(?:is|has|can|causes|requires|depends\s+on)\b/i);
   return hit === null ? null : hit[1].toLowerCase();
 }
 
@@ -443,9 +450,57 @@ function splitObjects(rest: string): string[] {
     .filter((token) => token.length > 0 && isContentWord(token));
 }
 
+/**
+ * The predicate verbs the frame renderers can produce that the older
+ * hand-written forms above do not read. Longest verb first so "is the
+ * opposite of" is tried before any shorter prefix could match.
+ */
+const VERB_CLAUSES: ReadonlyArray<{ verb: string; predicate: RelationPredicate }> = [
+  { verb: 'is\\s+a\\s+special\\s+case\\s+of', predicate: 'special-case-of' },
+  { verb: 'is\\s+the\\s+opposite\\s+of', predicate: 'opposite-of' },
+  { verb: 'is\\s+the\\s+symbol\\s+for', predicate: 'symbol-for' },
+  { verb: 'is\\s+measured\\s+in', predicate: 'measured-in' },
+  { verb: 'is\\s+defined\\s+as', predicate: 'defined-as' },
+  { verb: 'is\\s+located\\s+in', predicate: 'located-in' },
+  { verb: 'depends\\s+on', predicate: 'depends-on' },
+  { verb: 'requires', predicate: 'requires' },
+  { verb: 'causes', predicate: 'causes' }
+];
+
+/** The two clause leads: "A {subject} …" (captures the subject, lazily so
+ *  the verb is not swallowed) and the anaphoric "It/They …" (no capture —
+ *  the resolved subject is used). */
+const LEAD_NAMED = 'a[n]?\\s+([a-z]+(?:\\s+[a-z]+)*?)\\s+';
+const LEAD_ANAPHORIC = '(?:it|they)\\s+';
+
+/** Match `<lead><verb> <objects>` for the verbs in VERB_CLAUSES. */
+function matchVerbClause(clause: string, lead: string): { subject: string; predicate: RelationPredicate; rest: string } | null {
+  for (const { verb, predicate } of VERB_CLAUSES) {
+    const m = clause.match(new RegExp(`^${lead}${verb}\\s+(.+)$`, 'i'));
+    if (m === null) continue;
+    const named = lead === LEAD_NAMED;
+    return { subject: named ? m[1].toLowerCase() : '', predicate, rest: named ? m[2] : m[1] };
+  }
+  return null;
+}
+
 /** Parse every claim of a candidate sentence under a resolved subject. */
 export function parseClaims(sentence: string, subject: string): Claim[] {
+  return parseClaimsWithResidue(sentence, subject).claims;
+}
+
+/**
+ * Parse every claim AND return the clauses the grammar could not read.
+ *
+ * ANALYSIS.md §6 #4: `parseClaims` used to drop an unrecognized clause
+ * silently, so "A robin is a bird. Robins eat worms." parsed to one backed
+ * claim and the critic passed the whole sentence as grounded — the largest
+ * fabrication channel in the grounded path. The residue is what the critic
+ * refuses: a clause the claim grammar cannot read is a claim it cannot back.
+ */
+export function parseClaimsWithResidue(sentence: string, subject: string): { claims: Claim[]; residue: string[] } {
   const claims: Claim[] = [];
+  const residue: string[] = [];
   const parts = sentence.split(/[.!?]+\s*/).filter((part) => part.trim().length > 0);
   for (const part of parts) {
     const clause = part.trim();
@@ -490,6 +545,15 @@ export function parseClaims(sentence: string, subject: string): Claim[] {
       for (const object of splitObjects(aLocatedIn[2])) claims.push({ subject: aLocatedIn[1].toLowerCase(), predicate: 'located-in', object, negated: false });
       continue;
     }
+    // The remaining predicate verbs `predicateVerb` can render (causes,
+    // requires, opposite-of, depends-on, defined-as, measured-in, symbol-for,
+    // special-case-of). The elaboration frontier and the P10 composed frames
+    // render them; without these forms every such clause would be residue.
+    const aVerb = matchVerbClause(clause, LEAD_NAMED);
+    if (aVerb !== null) {
+      for (const object of splitObjects(aVerb.rest)) claims.push({ subject: aVerb.subject, predicate: aVerb.predicate, object, negated: false });
+      continue;
+    }
     const aIs = clause.match(/^a[n]?\s+([a-z]+(?:\s+[a-z]+)*)\s+is\s+(?!not\s+)([a-z]+(?:\s+[a-z]+)*)$/i);
     if (aIs !== null) {
       for (const object of splitObjects(aIs[2])) claims.push({ subject: aIs[1].toLowerCase(), predicate: 'has-property', object, negated: false });
@@ -520,15 +584,21 @@ export function parseClaims(sentence: string, subject: string): Claim[] {
       for (const object of splitObjects(madeOf[1])) claims.push({ subject, predicate: 'made-of', object, negated: false });
       continue;
     }
+    const itVerb = matchVerbClause(clause, LEAD_ANAPHORIC);
+    if (itVerb !== null) {
+      for (const object of splitObjects(itVerb.rest)) claims.push({ subject, predicate: itVerb.predicate, object, negated: false });
+      continue;
+    }
     const isProp = clause.match(/^(?:it|they)\s+is\s+(.+)$/i);
     if (isProp !== null) {
       for (const object of splitObjects(isProp[1])) claims.push({ subject, predicate: 'has-property', object, negated: false });
       continue;
     }
-    // An unrecognized content clause is a fabrication risk — it stays
-    // unparsed and the critic marks the sentence ungrounded.
+    // An unrecognized content clause is a fabrication risk — it is returned
+    // as residue and the critic refuses the sentence.
+    residue.push(clause);
   }
-  return claims;
+  return { claims, residue };
 }
 
 /** The content words of a sentence — used by the fabrication-rate bench. */

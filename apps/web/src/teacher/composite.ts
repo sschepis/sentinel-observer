@@ -29,6 +29,13 @@ export interface CompositeScore {
   /** The combined signal — the student's grade, to compare with the
    *  teacher's. */
   composite: number;
+  /**
+   * TRUE when a part could not be measured and was left OUT of the
+   * combination (today: resonance, when no seed amplitudes were supplied).
+   * A partial judge is still a judge — it is never a judge reporting a
+   * fabricated middle value (ANALYSIS.md §6 #1).
+   */
+  partial: boolean;
 }
 
 /** Average learned transition weight over the answer's n-grams — fluency. */
@@ -98,10 +105,30 @@ export function compositeScore(
   const fluency = Math.max(0, Math.min(1, fluencyOf(answer, weights) / 4)); // weights ~1-5 → normalize
   const novelty = noveltyOf(answer, seeds);
   const relevance = Math.max(0, Math.min(1, relevanceOf(answer, utterance)));
-  const resonance = seedAmplitudes !== undefined && seedAmplitudes.length > 0 ? resonanceOf(answer, seedAmplitudes) : 0.5;
 
-  const composite = Math.max(0, Math.min(1, fluency * novelty * relevance * resonance));
-  return { parts: { fluency, novelty, relevance, resonance }, composite };
+  // ABSENCE IS ABSTENTION, NEVER A CONSTANT (ANALYSIS.md §6 #1). Resonance
+  // needs the seeds' moment amplitudes; no production caller supplied them,
+  // and the old fallback reported 0.5 — a fabricated reading that capped
+  // the composite at 0.5 and made it structurally unable to agree with the
+  // rule check on any good answer (λ pinned near 0 in the live server). When
+  // the amplitudes are absent the factor is LEFT OUT and the judgment is
+  // marked partial; the reported part is NaN so nothing downstream can
+  // mistake it for a measurement.
+  const hasResonance = seedAmplitudes !== undefined && seedAmplitudes.length > 0;
+  const resonance = hasResonance ? resonanceOf(answer, seedAmplitudes) : Number.NaN;
+  const measured = hasResonance ? [fluency, novelty, relevance, resonance] : [fluency, novelty, relevance];
+
+  // GEOMETRIC MEAN, not the raw product. The composite is BLENDED with the
+  // teacher's [0, 1] grade (`blendReward`) and BANDED by the grade
+  // thresholds (`gradeBandOf`), so it must live on the same scale as one
+  // part: a product of three or four fractions cannot reach the strong band
+  // for any realistic answer, which is a scale error, not a judgment. The
+  // geometric mean keeps the multiplicative semantics (any part at 0 still
+  // collapses the composite to 0 — the abstention guard in `blendReward`)
+  // while putting the result on the per-part scale.
+  const product = measured.reduce((acc, part) => acc * part, 1);
+  const composite = product <= 0 ? 0 : Math.max(0, Math.min(1, Math.pow(product, 1 / measured.length)));
+  return { parts: { fluency, novelty, relevance, resonance }, composite, partial: !hasResonance };
 }
 
 /** Spearman rank correlation between two paired series. */

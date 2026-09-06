@@ -234,11 +234,20 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
       // it, until the world corroborates it.
       const cited = reduction.ruleIds.map((id) => this.ruleStore.get(id)).filter((r) => r !== undefined);
       const hedged = cited.some((r) => r.origin !== 'authored' && !r.sourceClasses.includes('world-feedback'));
+      // `logic.undetermined` (denying the antecedent / affirming the
+      // consequent) derives to the literal 'undetermined': the premises do
+      // not settle the question, and the observer says exactly that.
+      const spoken =
+        value === 'undetermined'
+          ? 'I cannot tell — the premises do not settle it.'
+          : hedged
+            ? `I think the answer is ${value}.`
+            : `The answer is ${value}.`;
       return {
         kind: 'rewrite',
         ruleIds: reduction.ruleIds,
         steps: reduction.steps,
-        answer: hedged ? `I think the answer is ${value}.` : `The answer is ${value}.`,
+        answer: spoken,
         trace: reduction.outcome.status === 'normal' ? reduction.outcome.steps : []
       };
     }
@@ -252,6 +261,25 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
     weakenRule(id: string, weight: number, denial?: Partial<DerivationDenial>): void {
       const rule = this.ruleStore.get(id);
       if (rule === undefined) return;
+      // AUTHORED DECKS ARE ARCHITECTURAL VALUES (ANALYSIS.md §6 #8). A weak
+      // grade on "What is 7 + 5?" cannot mean that `nat.add-s` is wrong — the
+      // Peano rules are the observer's arithmetic, not a hypothesis it holds.
+      // Without this guard five weak grades stopped `nat.add-s` and every
+      // addition became "underivable" for the session. The error such a
+      // grade points at lives upstream — the lift/parse that produced the
+      // term — so the grade is recorded as a belief about the family, and
+      // the rule keeps its strength. Every ACQUIRED rule (induced, taught,
+      // chaperone-proposed, consolidated) remains fully gradeable.
+      if (rule.origin === 'authored') {
+        this.storeBelief(
+          rule.name,
+          `The world graded an answer derived through the authored rule ${rule.name} as wrong; the rule is architectural, so the parse or the grade is suspect.`,
+          'relation-conflict',
+          { ruleId: id, strength: rule.strength },
+          true
+        );
+        return;
+      }
       this.ruleStore.adjustStrength(id, -RULE_GRADE_DELTA * Math.max(0, Math.min(1, weight)));
       // REVIEW FIX (Med2): P14 withdrawal symmetry — edges lose their
       // world-feedback credit on a weak grade; rules must too, or a
@@ -470,13 +498,18 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
         // REVIEW FIX: the consolidated replacement inherits the old rule's
         // corroboration and usage — a world-confirmed rule must not flip
         // back to "I think…" just because its body got cheaper.
-        if (consolidated[0] !== undefined) {
-          for (const sourceClass of rule.sourceClasses) this.ruleStore.addSourceClass(consolidated[0].id, sourceClass);
-          consolidated[0].useCount = rule.useCount;
-          consolidated[0].lastUsedAt = rule.lastUsedAt;
-        }
+        // ORDERING (ANALYSIS.md §6 #7): `addSourceClass` looks the rule up
+        // by id, so it must run AFTER the replacement is registered — called
+        // before, it was a silent no-op and every consolidated rule flipped
+        // back to "I think" until the world re-corroborated it.
         this.ruleStore.setActive(rule.id, false);
         this.registerLearnedRules(consolidated);
+        const replacement = consolidated[0] !== undefined ? this.ruleStore.get(consolidated[0].id) : undefined;
+        if (replacement !== undefined) {
+          for (const sourceClass of rule.sourceClasses) this.ruleStore.addSourceClass(replacement.id, sourceClass);
+          replacement.useCount = rule.useCount;
+          replacement.lastUsedAt = rule.lastUsedAt;
+        }
         report.consolidated.push(rule.id);
       }
 

@@ -153,12 +153,19 @@ async function main(): Promise<void> {
     console.log('\n[7a] ==== PER-PART AGREEMENT (which signal predicts the teacher?) ====');
     for (const part of ['fluency', 'novelty', 'relevance', 'resonance'] as const) {
       const values = all.map((e) => e.parts[part]);
+      // A part no caller measured reads NaN (composite.ts: absence is
+      // abstention, never a constant) — report it as unmeasured, never as ρ.
+      if (values.some((value) => !Number.isFinite(value))) {
+        console.log(`[7a]   ${part.padEnd(10)} unmeasured (no seed amplitudes supplied)`);
+        continue;
+      }
       const rho = spearman(teacherGrades, values);
       console.log(`[7a]   ${part.padEnd(10)} ρ=${rho.toFixed(2)}`);
     }
     const semanticRho = spearman(teacherGrades, all.map((entry) => entry.semanticSimilarity));
     const hashRho = spearman(teacherGrades, all.map((entry) => entry.hashSimilarity));
-    const resonanceRho = spearman(teacherGrades, all.map((entry) => entry.parts.resonance));
+    const resonanceValues = all.map((entry) => entry.parts.resonance);
+    const resonanceRho = resonanceValues.every((value) => Number.isFinite(value)) ? spearman(teacherGrades, resonanceValues) : 0;
     console.log('\n[H4] ==== SIGNATURE AGREEMENT (semantic vs controls) ====');
     console.log(`[H4]   semantic  ρ=${semanticRho.toFixed(2)}`);
     console.log(`[H4]   hash      ρ=${hashRho.toFixed(2)}`);

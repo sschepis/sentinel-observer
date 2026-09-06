@@ -246,6 +246,25 @@ function yesPrefix(strength: number): string {
 }
 
 /**
+ * P8 for INHERITED answers (ANALYSIS.md §6 #9): a chained "X is a V, and V
+ * has P" rests on two edges, and the weaker decides the hedge. The `via`
+ * branches computed `strength` and never read it, so a weakened hop was
+ * spoken as a flat "Yes". The chain strength is the minimum of the is-a hop
+ * (subject → via) and the inherited edge (via → object).
+ */
+function inheritedPrefix(
+  ctx: OperatorContext,
+  subject: string,
+  via: string,
+  predicate: RelationPredicate,
+  object: string
+): string {
+  const isA = ctx.edgeStrength?.(subject, 'is-a', via) ?? 1;
+  const edge = ctx.edgeStrength?.(via, predicate, object) ?? 1;
+  return yesPrefix(Math.min(isA, edge));
+}
+
+/**
  * P8 open-form hedge: an open answer ("what does X cause") asserts a LIST of
  * objects from direct edges. When the STRONGEST cited edge is weakened
  * (< 1, by wrong grades), the assertion must not stand as flat fact — the
@@ -583,7 +602,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
           part: hasPartLead[2],
           via: via?.via ?? null,
           answer: via !== null
-            ? `Yes — ${hasPartLead[1]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} has ${hasPartLead[2]}.`
+            ? `${inheritedPrefix(ctx, hasPartLead[1], via.via, 'has-part', hasPartLead[2])} — ${hasPartLead[1]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} has ${hasPartLead[2]}.`
             : `${yesPrefix(strength)}, ${hasPartLead[1]} has ${hasPartLead[2]}.`
         };
       }
@@ -787,7 +806,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
         requirement: doesRequireLead[3],
         via: via?.via ?? null,
         answer: via !== null
-          ? `Yes — ${doesRequireLead[1]}${doesRequireLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} requires ${doesRequireLead[3]}.`
+          ? `${inheritedPrefix(ctx, doesRequireLead[2], via.via, 'requires', doesRequireLead[3])} — ${doesRequireLead[1]}${doesRequireLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} requires ${doesRequireLead[3]}.`
           : `${yesPrefix(strength)}, ${doesRequireLead[1]}${doesRequireLead[2]} requires ${doesRequireLead[3]}.`
       };
     }
@@ -830,7 +849,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
         action: capableLead[3],
         via: via?.via ?? null,
         answer: via !== null
-          ? `Yes — ${capableLead[1]}${capableLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} can ${capableLead[3]}.`
+          ? `${inheritedPrefix(ctx, capableLead[2], via.via, 'capable-of', capableLead[3])} — ${capableLead[1]}${capableLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} can ${capableLead[3]}.`
           : `${yesPrefix(strength)}, ${capableLead[1]}${capableLead[2]} can ${capableLead[3]}.`
       };
     }
@@ -873,7 +892,7 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
         property: hasPropertyLead[3],
         via: via?.via ?? null,
         answer: via !== null
-          ? `Yes — ${hasPropertyLead[1]}${hasPropertyLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} is ${hasPropertyLead[3]}.`
+          ? `${inheritedPrefix(ctx, hasPropertyLead[2], via.via, 'has-property', hasPropertyLead[3])} — ${hasPropertyLead[1]}${hasPropertyLead[2]} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} is ${hasPropertyLead[3]}.`
           : `${yesPrefix(strength)}, ${hasPropertyLead[1]}${hasPropertyLead[2]} is ${hasPropertyLead[3]}.`
       };
     }

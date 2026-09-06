@@ -192,6 +192,14 @@ export type {
   RetentionReport
 } from './agent/support';
 
+/** Subjects a declarative negation can never be ABOUT: demonstratives,
+ *  pronouns and expletives that idioms and reference resolution put in
+ *  subject position ("this is not a test", "it is not a problem"). */
+const NEGATION_NON_SUBJECTS: ReadonlySet<string> = new Set([
+  'this', 'that', 'these', 'those', 'it', 'its', 'he', 'she', 'they', 'them', 'him', 'her',
+  'there', 'here', 'what', 'which', 'who', 'i', 'you', 'we', 'me', 'us', 'one', 'something', 'nothing', 'anything', 'everything'
+]);
+
 // The mixin chain over TeacherAgentCore. WordLoop is innermost (right above
 // the core), then Curriculum, Relations, Rules, Operators, Motivation,
 // Conversation, Creative, Goals, AutoLoop, Persistence outermost.
@@ -725,7 +733,28 @@ export class TeacherAgent extends TeacherAgentComposed {
     //     confirmed-false claim — explicit falsehood is evidence, and the
     //     exchange is memorized like any teaching. Only an explicit
     //     declarative negative reaches this step; questions fall through.
-    const negationStatement = parseNegationStatement(resolved);
+    //     GUARD (ANALYSIS.md §6 #12): the subject must be a word the observer
+    //     KNOWS and the object a content word. Without it, idioms and
+    //     pronoun-rewritten turns became taught falsehoods — "this is not a
+    //     test" stored (this, is-a, test); "it is not a problem" after a turn
+    //     about birds stored (bird, is-a, problem) via reference resolution.
+    //     A negation about an unknown subject is not evidence about the
+    //     world the observer holds; it falls through to the layers below
+    //     (which ask about the unknown word, as they should). A taught
+    //     falsehood outranks extraction (§3.5), so it must name its subject
+    //     EXPLICITLY: the raw utterance has to parse to the same statement —
+    //     a pronoun the reference resolver rewrote is not a teaching.
+    const negationCandidate = parseNegationStatement(resolved);
+    const rawNegation = negationCandidate !== null ? parseNegationStatement(utterance.trim()) : null;
+    const negationStatement =
+      negationCandidate !== null &&
+      rawNegation !== null &&
+      rawNegation.subject === negationCandidate.subject &&
+      negationCandidate.subject.split(/\s+/).every((token) => known.has(token)) &&
+      !NEGATION_NON_SUBJECTS.has(negationCandidate.subject) &&
+      negationCandidate.object.length > 0
+        ? negationCandidate
+        : null;
     if (negationStatement !== null) {
       const { subject, predicate, object } = negationStatement;
       this.storeNegation(subject, predicate, object, resolved, 'taught');

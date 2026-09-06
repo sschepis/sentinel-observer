@@ -182,12 +182,6 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
         }
       }
 
-      // P9 wall-clock forgetting: strength is the MODEL's retention prediction
-      // at the elapsed interval (the per-word FSRS curve). Runs AFTER the word
-      // states bind, so each trace decays on ITS stability — time passed while
-      // the observer was away decays exactly what the model predicts.
-      this.applyRetention(Date.now());
-
       // EPISODIC MEMORY: the salient-facts journal survives restarts. A store
       // failure degrades to a fresh memory (the chat degrades to session-only
       // context, reported honestly — the same contract as the other layers).
@@ -483,6 +477,18 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
       } catch (error) {
         console.warn('learning-state restore failed — starting fresh for the deliberative layers', error);
       }
+
+      // P9 wall-clock forgetting: strength is the MODEL's retention prediction
+      // at the elapsed interval (the per-word FSRS curve). Runs AFTER the word
+      // states bind, so each trace decays on ITS stability — time passed while
+      // the observer was away decays exactly what the model predicts.
+      //
+      // ORDERING (ANALYSIS.md §6 #2): this must also run AFTER the learning
+      // state binds. `applyRetention` decays the composition n-gram weights
+      // and the drive weights under the same law; when it ran before the
+      // persisted weights/meta loaded, it decayed the empty defaults and the
+      // load then overwrote the result — the weights never decayed at all.
+      this.applyRetention(Date.now());
       return { restored, stale: staleTraceIds.size };
     }
 

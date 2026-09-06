@@ -1,6 +1,11 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-06.3';
+export const SERVER_BUILD = '2026-09-06.4';
+
+/** How often the live server applies the retention law (ANALYSIS.md §6 #3).
+ *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
+ *  so the cadence only bounds how stale a strength reading can be. */
+export const RETENTION_SWEEP_MS = 5 * 60 * 1000;
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';
@@ -125,6 +130,10 @@ export class ServerSession {
   private readonly listeners = new Set<(event: ServerEvent) => void>();
   private signalUnsubscribe: (() => void) | null = null;
   private autosaveTimer: ReturnType<typeof setInterval> | null = null;
+  /** ANALYSIS.md §6 #3: the live server must apply the retention law on a
+   *  clock. Before this timer, `applyRetention` ran only on restore, so a
+   *  long-lived process never decayed a trace until it was restarted. */
+  private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private restored = 0;
   private freshTrained = false;
@@ -234,6 +243,9 @@ export class ServerSession {
       this.trainingLoop = new TrainingLoop(this.teacher, {
         settings: this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
         cadenceMs: this.options.trainCadenceMs ?? 400,
+        // ANALYSIS.md §6 #16: the boot-time loop dropped this flag, so
+        // `--research-topics` was inert until training was toggled via the API.
+        researchTopics: this.options.researchTopics ?? false,
         onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
         onError: (message) =>
           this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
@@ -247,6 +259,24 @@ export class ServerSession {
     // The autosave cadence must never keep a process alive: the model is
     // also saved on shutdown, so an unref'd timer costs nothing.
     this.autosaveTimer.unref?.();
+
+    // The retention law runs on the live clock, not only at restore. Every
+    // RETENTION_SWEEP_MS the word traces, non-word traces, composition
+    // weights and drive weights decay to the model's prediction at the
+    // elapsed interval — the same one call `restoreFromPersistence` makes.
+    this.retentionTimer = setInterval(() => {
+      try {
+        this.teacher?.applyRetention(Date.now());
+      } catch (error) {
+        this.broadcast({
+          kind: 'lifecycle',
+          at: Date.now(),
+          event: 'booted',
+          detail: `retention sweep error: ${error instanceof Error ? error.message : String(error)}`
+        });
+      }
+    }, RETENTION_SWEEP_MS);
+    this.retentionTimer.unref?.();
 
     this.status = 'ready';
     this.broadcast({
@@ -533,9 +563,12 @@ export class ServerSession {
       const record = this.teacher!.exportBootstrap('en-20000');
       const target = join(this.options.dataDir, 'model.json');
       const tmp = `${target}.tmp`;
-      writeFileSync(tmp, JSON.stringify(record), 'utf8');
+      // One serialization per snapshot (ANALYSIS.md §6 #15): the record is
+      // ~50 MB at deck scale and stringify blocks the event loop.
+      const serialized = JSON.stringify(record);
+      writeFileSync(tmp, serialized, 'utf8');
       renameSync(tmp, target);
-      const bytes = JSON.stringify(record).length;
+      const bytes = serialized.length;
       this.savedAt = started;
       this.lastSaveMs = Date.now() - started;
       this.modelPath = target;
@@ -574,6 +607,10 @@ export class ServerSession {
     if (this.autosaveTimer !== null) {
       clearInterval(this.autosaveTimer);
       this.autosaveTimer = null;
+    }
+    if (this.retentionTimer !== null) {
+      clearInterval(this.retentionTimer);
+      this.retentionTimer = null;
     }
     this.trainingLoop?.stop();
     this.trainingLoop = null;
