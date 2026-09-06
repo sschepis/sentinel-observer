@@ -1,6 +1,6 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-06.2';
+export const SERVER_BUILD = '2026-09-06.3';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';

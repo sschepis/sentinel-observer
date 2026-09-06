@@ -150,3 +150,39 @@ describe('chat send path under failure (the empty-content regression)', () => {
     expect(screen.getByText(/observer server unreachable/)).toBeDefined();
   });
 });
+
+describe('teach-reply contract', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('a handled:false teach-reply falls through to chatAnswer (no empty bubble)', async () => {
+    let answered = 0;
+    const teacher: ChatTeacher = {
+      chatAnswer: async (utterance: string) => {
+        answered += 1;
+        return cannedAnswer(`echo: ${utterance}`, 'memorized');
+      },
+      creativeReply: async () => {
+        throw new Error('unused');
+      },
+      gradeCreativeWithReliability: () => ({ stored: false, weight: 1, disagreement: false, regradeId: null }),
+      tryTeachReply: () => ({ handled: false, message: '' } as never)
+    };
+
+    let controller!: ReturnType<typeof useChat>;
+    function Host() {
+      controller = useChat(teacher, { endpoint: '', apiKey: '', model: '' }, () => {});
+      return null;
+    }
+    render(<Host />);
+
+    await act(async () => {
+      controller.send('hello');
+    });
+
+    expect(answered).toBe(1); // the observer was actually asked
+    expect(controller.messages).toHaveLength(2);
+    expect(controller.messages[1].text).toBe('echo: hello');
+  });
+});

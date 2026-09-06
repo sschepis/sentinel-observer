@@ -158,7 +158,9 @@ export class RemoteClient {
   /** The reply-teaching surface: the utterance may BE the answer to a
    *  question the observer is waiting on (rule or gap). */
   tryTeachReply(utterance: string): Promise<{ handled: boolean; message: string } | null> {
-    return this.post<{ handled: boolean; message: string } | null>('/api/teach-reply', { utterance });
+    return this.post<{ handled: boolean; message: string } | null>('/api/teach-reply', { utterance }).then(
+      (reply) => (reply !== null && reply.handled === true ? reply : null)
+    );
   }
 
   /** Ask the server's chaperone to answer an outstanding gap, which the

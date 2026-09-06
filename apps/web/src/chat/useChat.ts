@@ -255,7 +255,7 @@ export function useChat(
           const teachCapable = isTeachCapable(teacher);
           if (teachCapable) {
             const taught = await awaitable(teacher.tryTeachReply(utterance));
-            if (taught !== null) {
+            if (taught !== null && taught.handled === true && typeof taught.message === 'string' && taught.message.length > 0) {
               const message = taught.message;
               speak?.(message);
               appendObserver(conversationId, { text: message });
