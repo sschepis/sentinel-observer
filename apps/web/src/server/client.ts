@@ -34,6 +34,7 @@ export interface RemoteServerState {
   modelPath: string | null;
   tracesInModel: number;
   tickCount: number;
+  build: string;
   training: {
     cycles: number;
     wordsTaught: number;

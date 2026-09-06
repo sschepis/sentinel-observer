@@ -1,3 +1,6 @@
+/** The server's code revision — surfaced in /api/state so a stale process
+ *  (running older source) is immediately identifiable from the UI. */
+export const SERVER_BUILD = '2026-09-06.2';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';
@@ -100,6 +103,8 @@ export interface ServerState {
   modelPath: string | null;
   tracesInModel: number;
   tickCount: number;
+  /** The running code revision — bump SERVER_BUILD on behavior changes. */
+  build: string;
   /** The autonomous classroom loop (the ONLY trainer — the browser never
    *  trains). Null until the server boots with training enabled. */
   training: TrainingStats | null;
@@ -608,6 +613,7 @@ export class ServerSession {
       modelPath: this.modelPath,
       tracesInModel: this.session?.observer.getMemoryBank().all().length ?? 0,
       tickCount: this.session?.observer.getState().tickCount ?? 0,
+      build: SERVER_BUILD,
       training: this.trainingLoop !== null ? this.trainingLoop.statistics() : (this.options.train ?? true ? EMPTY_TRAINING_STATS : null),
       trainingRunning: this.trainingLoop?.running ?? false,
       chaperoneConfigured: (this.options.chaperone?.endpoint ?? '').trim().length > 0,

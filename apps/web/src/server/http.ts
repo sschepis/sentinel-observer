@@ -320,6 +320,9 @@ function route(req: IncomingMessage, res: ServerResponse, server: ServerSession)
 
       sendJson(res, 404, { error: `unknown route ${path}` });
     } catch (err) {
+      // The full stack goes to the server log — a handler bug must be
+      // diagnosable from the process output, not just the client bubble.
+      console.error('[observer-server] request failed:', err instanceof Error ? err.stack ?? err.message : err);
       sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
     }
   })();

@@ -272,7 +272,7 @@ export default function App() {
           <p className="mt-2 text-[11px] leading-relaxed text-slate-600">
             {offline
               ? 'Run `npm run server` — the observer trains there, never in this browser.'
-              : `Training on the server · ${remote.server?.training?.cycles ?? 0} cycles${
+              : `Training on the server · ${remote.server?.training?.cycles ?? 0} cycles · build ${remote.server?.build ?? '?'}${
                   remote.server?.savedAt !== null && remote.server?.savedAt !== undefined
                     ? ` · saved ${new Date(remote.server!.savedAt!).toLocaleTimeString()}`
                     : ''
