@@ -107,6 +107,7 @@ export interface CrossFacultyApi {
   recordGap(utterance: string): void;
   forgetGap(utterance: string): void;
   deficitBeliefs(): Array<{ about: string; content: string }>;
+  driveSignalsStatic(): DriveSignals;
   // ── conversation ────────────────────────────────────────────────────────
   storeBelief(about: string, content: string, beliefKind: string, basis: Record<string, unknown>, contradicts?: boolean): boolean;
   respond(utterance: string): ConversationAnswer;
@@ -455,6 +456,10 @@ export class TeacherAgentCore {
   protected readonly goals: LearningGoal[] = [];
   protected goalLoopToken = 0;
   protected goalLoopRunning = false;
+  /** TASKS.md #18 — goals that STALLED, per target: the curriculum's
+   *  stall signal (a plan the observer could not finish puts its target
+   *  first in the lesson queue). Persisted with the learning state. */
+  protected readonly goalStalls = new Map<string, number>();
 
   protected traceOf(traceId: string): ReturnType<ReturnType<ObserverSession['observer']['getMemoryBank']>['get']> {
     return this.session.observer.getMemoryBank().get(traceId);

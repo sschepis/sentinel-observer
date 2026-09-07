@@ -180,6 +180,39 @@ export function discoverDeficitGoals(teacher: TeacherAgent): LearningGoal[] {
   return teacher.deficitBeliefs().map((belief) => fillGapGoal(belief.about, 1 + askWeight));
 }
 
+/** The repeated-gap score above which a reviewed word is a WEAK WORD the
+ *  planner should form a learn-word goal for (curriculum.ts gapSignal: three
+ *  misses in the recent window read as a pattern, not noise). */
+export const WEAK_WORD_GAP_FLOOR = 0.3;
+/** New goals discovered per pass — bounded so one bad day cannot flood the
+ *  goal list; the next pass picks up what this one left. */
+export const GOALS_PER_DISCOVERY = 4;
+
+/**
+ * TASKS.md #18 — GOAL DISCOVERY from the observer's own measures, run by the
+ * server's classroom loop every cycle. Two sources, both things the
+ * observer already records about itself:
+ *   · fill-gap  — stored fail-beliefs ("I keep failing X"): an utterance it
+ *                 could not answer twice;
+ *   · learn-word — words whose review history shows a repeated-gap pattern
+ *                 (the curriculum's gap signal): it was taught, and keeps
+ *                 missing.
+ * Practice and verify-belief goals are NOT discovered here: their plans quiz
+ * a deck word (plan steps) but their completion reads a conversation phrase
+ * or a belief — they stall on construction, and a stall the planner
+ * manufactured would be a fake curriculum signal. Ranked by the curriculum
+ * score so the hardest deficits become goals first; bounded per pass.
+ */
+export function discoverGoals(teacher: TeacherAgent, limit = GOALS_PER_DISCOVERY): LearningGoal[] {
+  const answerWeight = teacher.driveWeights().answer ?? 0.5;
+  const weak = teacher
+    .curriculumQueue({ includeHealthy: true })
+    .filter((entry) => entry.gap >= WEAK_WORD_GAP_FLOOR)
+    .map((entry) => learnWordGoal(entry.word, answerWeight + entry.score));
+  const gaps = discoverDeficitGoals(teacher);
+  return [...weak, ...gaps].sort((a, b) => b.priority - a.priority).slice(0, limit);
+}
+
 // ── Execution ──────────────────────────────────────────────────────────────
 
 /**
@@ -359,9 +392,12 @@ export function curriculumPriority(teacher: TeacherAgent, target: string): numbe
  *  currently hard/overdue/isolated/weak get up to a 1.5× expected-value
  *  multiplier, so the lesson queue follows the difficulty-targeted score.
  */
-export function chooseGoal(goals: readonly LearningGoal[], teacher?: TeacherAgent): LearningGoal | null {
-  let best: LearningGoal | null = null;
-  let bestExpected = 0;
+export function chooseGoal(
+  goals: readonly LearningGoal[],
+  teacher?: TeacherAgent,
+  sampler?: { temperature: number; rng: () => number } | null
+): LearningGoal | null {
+  const scored: Array<[LearningGoal, number]> = [];
   for (const goal of goals) {
     if (goal.status !== 'active') continue;
     // goal.priority is the base importance (learned drive weight from
@@ -372,6 +408,32 @@ export function chooseGoal(goals: readonly LearningGoal[], teacher?: TeacherAgen
     if (teacher !== undefined) {
       expected *= 1 + GOAL_CURRICULUM_BOOST * curriculumPriority(teacher, goal.target);
     }
+    scored.push([goal, expected]);
+  }
+  if (scored.length === 0) return null;
+  // TASKS.md #18 — with a sampler the choice is Boltzmann-sampled at the
+  // DRIVE temperature (drives.ts behaviorTemperature), the same policy the
+  // chat-path arbitration uses: a curious observer explores its goal list,
+  // a conserving one exploits the best expected value. T → T_MIN recovers
+  // the argmax; without a sampler the choice is the exact argmax.
+  if (sampler !== undefined && sampler !== null) {
+    const maxExpected = Math.max(...scored.map(([, expected]) => expected));
+    let total = 0;
+    const masses = scored.map(([, expected]) => {
+      const mass = Math.exp((expected - maxExpected) / sampler.temperature);
+      total += mass;
+      return mass;
+    });
+    let draw = sampler.rng() * total;
+    for (let i = 0; i < scored.length; i += 1) {
+      draw -= masses[i];
+      if (draw <= 0) return scored[i][0];
+    }
+    return scored[scored.length - 1][0];
+  }
+  let best: LearningGoal | null = null;
+  let bestExpected = -Infinity;
+  for (const [goal, expected] of scored) {
     if (best === null || expected > bestExpected) {
       best = goal;
       bestExpected = expected;

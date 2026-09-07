@@ -48,6 +48,10 @@ export interface CurriculumContext {
   vocabulary: Readonly<Record<string, readonly number[]>>;
   /** concept → consecutive failed drill rounds (technical/drill.ts). */
   drillFailures?: Readonly<Record<string, number>>;
+  /** target → goals about it that STALLED (agent/goals.ts; TASKS.md #18):
+   *  the observer planned to learn this and could not, so the curriculum
+   *  puts it first — a stalled goal changes what is studied next. */
+  goalStalls?: Readonly<Record<string, number>>;
   /** Wall-clock for the overdue component (default Date.now()). */
   now?: number;
   /** Signal weights (defaults CURRICULUM_WEIGHTS). */
@@ -78,6 +82,8 @@ export interface CurriculumWeights {
   gap: number;
   /** Repeatedly failing drills. */
   drill: number;
+  /** Goals about the word that stalled (TASKS.md #18). */
+  stall: number;
 }
 
 /** Default signal mix. Weights are relative — the score is the weighted
@@ -88,7 +94,8 @@ export const CURRICULUM_WEIGHTS: CurriculumWeights = {
   waiting: 0.75,
   sparsity: 0.6,
   gap: 1,
-  drill: 0.8
+  drill: 0.8,
+  stall: 1
 };
 
 /** Cap on the persisted per-word review history (bounded like
@@ -111,6 +118,9 @@ const OVERDUE_SATURATION_INTERVALS = 2;
 export const WAIT_SATURATION_DAYS = 14;
 /** Drill rounds failed before weakness reads as full. */
 const DRILL_WEAK_ROUNDS = 3;
+/** Stalled goals about a word before the stall signal saturates: one stall
+ *  is already half the signal — a plan that failed is strong evidence. */
+const STALL_SATURATION = 2;
 /** The default interval when a word has never been scheduled (fresh teach). */
 const DEFAULT_INTERVAL_DAYS = 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -224,6 +234,13 @@ export function drillWeakness(failures: number | undefined): number {
   return clampRange(failures / DRILL_WEAK_ROUNDS, 0, 1);
 }
 
+/** Goal-stall signal: how many of the observer's own plans about this word
+ *  stalled (TASKS.md #18). Zero for a word no goal ever targeted. */
+export function goalStallSignal(stalls: number | undefined): number {
+  if (stalls === undefined || stalls <= 0) return 0;
+  return clampRange(stalls / STALL_SATURATION, 0, 1);
+}
+
 // ── Combination ─────────────────────────────────────────────────────────────
 
 export interface CurriculumScore {
@@ -237,6 +254,7 @@ export interface CurriculumScore {
   sparsity: number;
   gap: number;
   drill: number;
+  stall: number;
 }
 
 /** One item's full curriculum score. */
@@ -252,18 +270,20 @@ export function scoreWord(
     waiting: waitingUrgency(item, now),
     sparsity: neighborhoodSparsity(item.word, ctx.vocabulary, index),
     gap: gapSignal(item),
-    drill: drillWeakness(ctx.drillFailures?.[item.word])
+    drill: drillWeakness(ctx.drillFailures?.[item.word]),
+    stall: goalStallSignal(ctx.goalStalls?.[item.word])
   };
   const weights = { ...CURRICULUM_WEIGHTS, ...ctx.weights };
   const total =
-    weights.fsrs + weights.overdue + weights.waiting + weights.sparsity + weights.gap + weights.drill;
+    weights.fsrs + weights.overdue + weights.waiting + weights.sparsity + weights.gap + weights.drill + weights.stall;
   const score = clampRange(
     (weights.fsrs * parts.fsrs +
       weights.overdue * parts.overdue +
       weights.waiting * parts.waiting +
       weights.sparsity * parts.sparsity +
       weights.gap * parts.gap +
-      weights.drill * parts.drill) /
+      weights.drill * parts.drill +
+      weights.stall * parts.stall) /
       total,
     0,
     1
@@ -338,6 +358,7 @@ export function rankLegacy(items: readonly CurriculumItem[], now: number = Date.
     waiting: waitingUrgency(item, now),
     sparsity: 0,
     gap: gapSignal(item),
-    drill: 0
+    drill: 0,
+    stall: 0
   }));
 }

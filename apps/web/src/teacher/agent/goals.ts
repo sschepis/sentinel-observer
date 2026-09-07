@@ -8,10 +8,22 @@
  */
 import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base';
 import type { TeacherAgent } from '../TeacherAgent';
-import { chooseGoal, executeGoalStep, goalId, type LearningGoal, type GoalType } from '../plan';
+import { chooseGoal, discoverGoals, executeGoalStep, goalId, type LearningGoal, type GoalType } from '../plan';
 import { unansweredSelfQuestions, type ElaborationOptions } from '../elaboration';
 import type { Relation } from '../relations';
+import { behaviorTemperature, computeDrives } from '../drives';
 import { sleep, type AutoLoopOptions, type AutoLoopHandle } from './support';
+
+/** What one pursued goal step did (TASKS.md #18) — the classroom loop's
+ *  event, and the bench's observable. */
+export interface GoalStepReport {
+  type: GoalType;
+  target: string;
+  outcome: 'complete' | 'progressed' | 'pending' | 'stalled' | 'error';
+  /** The drive temperature the goal was chosen at (null: argmax). */
+  temperature: number | null;
+  message: string;
+}
 
 export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
   return class GoalsFaculty extends Base {
@@ -77,8 +89,11 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
     }
 
     /** A stalled goal stores a REVISING GOAL-BELIEF — "I planned to learn X
-     *  and could not" — the intent-analog of the belief contradiction. */
+     *  and could not" — the intent-analog of the belief contradiction. It
+     *  also counts against the target in the curriculum's stall signal
+     *  (TASKS.md #18): the lesson queue moves because the plan failed. */
     protected noteGoalFailure(goal: LearningGoal): void {
+      this.goalStalls.set(goal.target, (this.goalStalls.get(goal.target) ?? 0) + 1);
       const key = `goal-failed:${goal.id}`;
       if (this.beliefsStored.has(key)) return;
       this.session.settleField();
@@ -98,9 +113,103 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
       for (const goal of goals) this.storeGoalIfNew(goal);
     }
 
+    /** ADD goals without replacing the current set (TASKS.md #18): a goal
+     *  whose id is already held — active, complete or stalled — is not
+     *  re-adopted this session, so a stalled plan is not retried forever;
+     *  completed goals are dropped from the working list first (their traces
+     *  remain the record). Returns the goals actually added. */
+    addGoals(goals: readonly LearningGoal[]): LearningGoal[] {
+      for (let i = this.goals.length - 1; i >= 0; i -= 1) {
+        if (this.goals[i].status === 'complete') this.goals.splice(i, 1);
+      }
+      const held = new Set(this.goals.map((g) => g.id));
+      const added: LearningGoal[] = [];
+      for (const goal of goals) {
+        if (held.has(goal.id)) continue;
+        held.add(goal.id);
+        this.goals.push(goal);
+        this.storeGoalIfNew(goal);
+        added.push(goal);
+      }
+      return added;
+    }
+
+    /** Discover goals from the observer's own measures (plan.ts
+     *  discoverGoals) and add them. Returns the goals added. */
+    discoverAndAdoptGoals(limit?: number): LearningGoal[] {
+      return this.addGoals(discoverGoals(this as unknown as TeacherAgent, limit));
+    }
+
     /** Snapshot of the current goals (deep copies — the planner mutates them). */
     goalList(): LearningGoal[] {
       return this.goals.map((g) => ({ ...g, steps: [...g.steps] }));
+    }
+
+    /** The drive temperature goal selection samples at: the static drive
+     *  signals (no field excitation — a report-only read), under the bench
+     *  override when one is pinned. */
+    goalTemperature(): number {
+      const measured = this.driveSignalsStatic();
+      return behaviorTemperature(computeDrives(this.driveOverride === null ? measured : { ...measured, ...this.driveOverride }));
+    }
+
+    /**
+     * TASKS.md #18 — ONE STEP OF GOAL PURSUIT, the unit the server's
+     * classroom loop runs every cycle (and the goal loop below repeats).
+     * Refreshes each goal's success rate from the observer's own history,
+     * chooses a goal by expected value sampled at the drive temperature,
+     * executes one plan step, and books the outcome: a completed goal
+     * reinforces its trace and teaches the goal history; a stalled goal
+     * stores the revising goal-belief and raises the target's curriculum
+     * stall signal. Null when no goal is active.
+     */
+    async pursueGoalStep(): Promise<GoalStepReport | null> {
+      for (const g of this.goals) {
+        const h = this.goalHistory[g.type] ?? { completed: 0, abandoned: 0 };
+        const n = h.completed + h.abandoned;
+        g.successRate = n === 0 ? 0.5 : h.completed / n; // Laplace prior 0.5
+      }
+      const temperature = this.goalTemperature();
+      const goal = chooseGoal(this.goals, this as unknown as TeacherAgent, { temperature, rng: this.arbitrationRng });
+      if (goal === null) return null;
+      let result;
+      try {
+        result = await executeGoalStep(this as unknown as TeacherAgent, goal);
+      } catch (reason) {
+        // A step that THREW (unknown target, internal error) is an honest
+        // stall (the "stalled, never hidden" contract), never a silent skip.
+        goal.status = 'stalled';
+        this.noteGoalOutcome(goal.type, false);
+        this.noteGoalFailure(goal);
+        const message = reason instanceof Error ? reason.message : String(reason);
+        return { type: goal.type, target: goal.target, outcome: 'error', temperature, message: `goal error (${message}): ${goal.target}` };
+      }
+      if (result.outcome === 'complete') {
+        // A completed VERIFY-BELIEF goal is a successful verification —
+        // the acquired drive's outcome feeds its learned weight.
+        if (goal.type === 'verify-belief') this.noteBehaviorOutcome('verify', true);
+        this.noteGoalOutcome(goal.type, true);
+        // The goal trace is reinforced — a memory of a fulfilled intent.
+        const bank = this.session.observer.getMemoryBank();
+        for (const trace of bank.all()) {
+          if (trace.metadata?.kind === 'goal' && trace.metadata.goalType === goal.type && trace.metadata.target === goal.target) {
+            bank.reinforce(trace.id, 0.1);
+          }
+        }
+        return { type: goal.type, target: goal.target, outcome: 'complete', temperature, message: `goal complete: ${goal.target}` };
+      }
+      if (result.outcome === 'failed' && goal.status === 'stalled') {
+        this.noteGoalOutcome(goal.type, false);
+        this.noteGoalFailure(goal);
+        return { type: goal.type, target: goal.target, outcome: 'stalled', temperature, message: `goal stalled: ${goal.describe(this as unknown as TeacherAgent)}` };
+      }
+      return {
+        type: goal.type,
+        target: goal.target,
+        outcome: result.outcome === 'progressed' ? 'progressed' : 'pending',
+        temperature,
+        message: `${result.outcome === 'progressed' ? 'progress on' : 'working on'} ${goal.type} "${goal.target}"`
+      };
     }
 
     /**
@@ -139,55 +248,13 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
       void (async () => {
         try {
           while (token === this.goalLoopToken) {
-            // EXPECTED-VALUE SELECTION (Phase 6b): each goal's type carries the
-            // observer's own success rate — ends move with the observer's life.
-            for (const g of this.goals) {
-              const h = this.goalHistory[g.type] ?? { completed: 0, abandoned: 0 };
-              const n = h.completed + h.abandoned;
-              g.successRate = n === 0 ? 0.5 : h.completed / n; // Laplace prior 0.5
-            }
-            const goal = chooseGoal(this.goals, this as unknown as TeacherAgent);
-            if (goal === null) break; // none active — all complete or stalled
-            let result;
-            try {
-              result = await executeGoalStep(this as unknown as TeacherAgent, goal);
-            } catch (reason) {
-              // A step that THREW (unknown target, internal error) must not
-              // kill the loop silently: the goal is marked STALLED honestly
-              // (the "stalled, never hidden" contract) and the loop continues
-              // with the remaining goals.
-              goal.status = 'stalled';
-              this.noteGoalOutcome(goal.type, false);
-              this.noteGoalFailure(goal);
-              const message = reason instanceof Error ? reason.message : String(reason);
-              for (const listener of [...this.autoListeners]) {
-                listener({ phase: 'idle', word: goal.target, cue: null, answer: null, grade: null, message: `goal error (${message}): ${goal.target}` });
-              }
-              await sleep(stepPauseMs);
-              continue;
-            }
+            const report = await this.pursueGoalStep();
+            if (report === null) break; // none active — all complete or stalled
             if (token !== this.goalLoopToken) break;
-            if (result.outcome === 'complete') {
-              // A completed VERIFY-BELIEF goal is a successful verification —
-              // the acquired drive's outcome feeds its learned weight.
-              if (goal.type === 'verify-belief') this.noteBehaviorOutcome('verify', true);
-              // The goal-type history learns: this plan worked.
-              this.noteGoalOutcome(goal.type, true);
-              // The goal trace is reinforced — a memory of a fulfilled intent.
-              const bank = this.session.observer.getMemoryBank();
-              for (const trace of bank.all()) {
-                if (trace.metadata?.kind === 'goal' && trace.metadata.goalType === goal.type && trace.metadata.target === goal.target) {
-                  bank.reinforce(trace.id, 0.1);
-                }
-              }
+            if (report.outcome === 'complete' || report.outcome === 'error') {
               for (const listener of [...this.autoListeners]) {
-                listener({ phase: 'idle', word: goal.target, cue: null, answer: null, grade: null, message: `goal complete: ${goal.target}` });
+                listener({ phase: 'idle', word: report.target, cue: null, answer: null, grade: null, message: report.message });
               }
-            } else if (result.outcome === 'failed' && goal.status === 'stalled') {
-              // A stalled goal stores a revising goal-belief — the observer
-              // remembers its own intention failing. And the history learns.
-              this.noteGoalOutcome(goal.type, false);
-              this.noteGoalFailure(goal);
             }
             await sleep(stepPauseMs);
           }

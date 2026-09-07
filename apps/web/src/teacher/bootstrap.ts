@@ -150,6 +150,9 @@ export interface BootstrapRecord {
     /** P-curriculum: consecutive failed drill rounds per concept — the
      *  weak-drill signal survives the record. */
     drillFailures?: Record<string, number>;
+    /** TASKS.md #18: goals that stalled, per target — the curriculum's
+     *  stall signal survives the record (additive). */
+    goalStalls?: Record<string, number>;
     /** Taught cues the observer has actually spoken — the numerator of
      *  recall competency. Without it an imported record reads 0% recall and
      *  creative mode can never unlock. */

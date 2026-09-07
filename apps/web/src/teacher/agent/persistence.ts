@@ -270,6 +270,17 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
               }
             }
           }
+          if (typeof learningState.goalStalls === 'object' && learningState.goalStalls !== null) {
+            // TASKS.md #18: stalled goals survive reloads — a plan that failed
+            // yesterday still puts its target first today (additive field;
+            // absent in records written before the goal loop ran).
+            this.goalStalls.clear();
+            for (const [target, value] of Object.entries(learningState.goalStalls as Record<string, unknown>)) {
+              if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+                this.goalStalls.set(target, Math.floor(value));
+              }
+            }
+          }
           if (Array.isArray(learningState.relations)) {
             // Chaperone edges survive reloads: they were reconciled and tagged
             // on ingestion, and re-tagging on restore keeps provenance honest.
@@ -681,6 +692,8 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
           exposureCounts: Object.fromEntries(this.exposureCounts),
           encounterCounts: Object.fromEntries(this.encounterCounts),
           drillFailures: Object.fromEntries(this.drillFailures),
+          // TASKS.md #18 (additive): stalled goals per target.
+          goalStalls: Object.fromEntries(this.goalStalls),
           producedCues: [...this.producedConversationCues],
           cueConfidence: Object.fromEntries(this.cueConfidence),
           relations: this.chaperoneRelations,
@@ -1041,6 +1054,15 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             }
           }
         }
+        if (typeof ls.goalStalls === 'object' && ls.goalStalls !== null) {
+          // TASKS.md #18 (additive): stalled goals per target.
+          this.goalStalls.clear();
+          for (const [target, count] of Object.entries(ls.goalStalls as Record<string, unknown>)) {
+            if (typeof count === 'number' && Number.isFinite(count) && count > 0) {
+              this.goalStalls.set(target, Math.floor(count));
+            }
+          }
+        }
         if (typeof ls.graderReliability === 'object' && ls.graderReliability !== null) {
           this.reliabilityModel.restore(ls.graderReliability as ReliabilitySnapshot);
         }
@@ -1133,6 +1155,8 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
         exposureCounts: Object.fromEntries(this.exposureCounts),
         encounterCounts: Object.fromEntries(this.encounterCounts),
         drillFailures: Object.fromEntries(this.drillFailures),
+        // TASKS.md #18 (additive): stalled goals per target.
+        goalStalls: Object.fromEntries(this.goalStalls),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined,

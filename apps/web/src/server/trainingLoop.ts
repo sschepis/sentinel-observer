@@ -10,6 +10,13 @@
  * cycle with unanswered gaps ALSO asks the chaperone for a validated
  * briefing on the gap's subject and trains on what passed (R17).
  *
+ * TASKS.md #18 — GOAL PURSUIT runs here too: every cycle the loop discovers
+ * goals from the observer's own measures (weak words, stored fail-beliefs),
+ * takes one plan step on a goal chosen at the drive temperature, and a goal
+ * that stalls changes the curriculum — its target rises in the lesson queue
+ * (the stall signal) and, for a fill-gap goal, becomes the next research
+ * topic. The paper's goal loop had no production caller before this.
+ *
  * Chaperone settings come from SERVER configuration (env/CLI), never from
  * the browser. When no endpoint is configured the loop still runs its
  * deterministic work (lessons, reviews, drills) through the null provider —
@@ -38,6 +45,10 @@ export interface TrainingStats {
   drillsRun: number;
   drillsInduced: number;
   drillsMemorized: number;
+  /** TASKS.md #18: goal steps taken, goals completed, goals stalled. */
+  goalSteps: number;
+  goalsCompleted: number;
+  goalsStalled: number;
 }
 
 export const EMPTY_TRAINING_STATS: TrainingStats = {
@@ -49,7 +60,10 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
   selfAnswered: 0,
   drillsRun: 0,
   drillsInduced: 0,
-  drillsMemorized: 0
+  drillsMemorized: 0,
+  goalSteps: 0,
+  goalsCompleted: 0,
+  goalsStalled: 0
 };
 
 export interface TrainingLoopOptions {
@@ -63,6 +77,9 @@ export interface TrainingLoopOptions {
    *  chaperone for a validated briefing on the gap's subject and trains on
    *  it — the observer initiates its own curriculum. Default false. */
   researchTopics?: boolean;
+  /** GOAL PURSUIT (TASKS.md #18): discover goals and take one plan step per
+   *  cycle. Default true; false is the control arm for the bench. */
+  pursueGoals?: boolean;
   /** Provider factory (tests inject stubs; default: the settings' provider). */
   providerFactory?: (settings: ChaperoneSettings) => ChaperoneProvider;
   onEvents?: (events: readonly LearningEvent[]) => void;
@@ -130,8 +147,12 @@ export class TrainingLoop {
           if (cycle.drill.verdict === 'induced' || cycle.drill.verdict === 'rule-induced') this.stats.drillsInduced += 1;
           if (cycle.drill.verdict === 'memorized') this.stats.drillsMemorized += 1;
         }
-        this.options.onCycle?.(this.statistics());
         this.options.onEvents?.(cycle.events.map((event) => fromAutonomousEvent(event, at)));
+        if (this.options.pursueGoals !== false && !controller.signal.aborted) {
+          const goalEvents = await this.goalStep();
+          if (goalEvents.length > 0) this.options.onEvents?.(goalEvents);
+        }
+        this.options.onCycle?.(this.statistics());
         if (this.options.researchTopics === true && !controller.signal.aborted) {
           const researched = await this.researchTopicStep(chaperone, controller.signal);
           if (researched !== null) {
@@ -154,8 +175,37 @@ export class TrainingLoop {
   }
 
   /**
+   * TASKS.md #18: one cycle of goal pursuit — adopt newly discovered goals,
+   * take one plan step. Never throws: a goal step that fails is a stalled
+   * goal (booked by the teacher), and an error here is reported as an event.
+   */
+  private async goalStep(): Promise<LearningEvent[]> {
+    const events: LearningEvent[] = [];
+    try {
+      const added = this.teacher.discoverAndAdoptGoals();
+      for (const goal of added) {
+        events.push(makeEvent({ kind: 'system', label: 'goal', text: `new goal: ${goal.describe(this.teacher)}` }));
+      }
+      const report = await this.teacher.pursueGoalStep();
+      if (report === null) return events;
+      this.stats.goalSteps += 1;
+      if (report.outcome === 'complete') this.stats.goalsCompleted += 1;
+      if (report.outcome === 'stalled' || report.outcome === 'error') this.stats.goalsStalled += 1;
+      if (report.outcome !== 'pending' && report.outcome !== 'progressed') {
+        events.push(makeEvent({ kind: report.outcome === 'complete' ? 'system' : 'error', label: 'goal', text: report.message }));
+      }
+      return events;
+    } catch (reason) {
+      events.push(makeEvent({ kind: 'error', label: 'goal', text: `goal pursuit failed: ${reason instanceof Error ? reason.message : String(reason)}` }));
+      return events;
+    }
+  }
+
+  /**
    * R17: the observer ASKS the chaperone about related information on a
-   * topic — picked from its own unanswered gaps — and trains only on what
+   * topic — picked from its own unanswered gaps (a gap whose fill-gap GOAL
+   * stalled first, TASKS.md #18: the plan could not fill it from what the
+   * observer had, so research is what it needs) — and trains only on what
    * passed validation: new key terms become hedged single-source
    * definitions, exchanges are taught, and the facts become a bounded
    * "what do you know about X" exchange. A failure is reported and never
@@ -170,7 +220,9 @@ export class TrainingLoop {
       if (gaps.length === 0) return null;
       // The topic is the gap utterance's own content (its unknown subject
       // among the taught words, or the raw utterance when none parses).
-      const gap = gaps[0];
+      // A gap whose goal stalled comes first — the curriculum follows the plan's failure.
+      const stalledTargets = new Set(this.teacher.stalledGoals().filter((goal) => goal.type === 'fill-gap').map((goal) => goal.target));
+      const gap = gaps.find((candidate) => stalledTargets.has(candidate)) ?? gaps[0];
       const known = new Set(this.teacher.listWords().map((entry) => entry.word.word));
       // The subject to research: the unknown word the gap names, or — when
       // every word is already known — the last known content word (the

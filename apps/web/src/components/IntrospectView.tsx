@@ -216,6 +216,13 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
             <Row label="phrases taught" value={String(training.phrasesTaught)} />
             <Row label="self-answered" value={String(training.selfAnswered)} />
             <Row label="drills run / induced" value={`${training.drillsRun} / ${training.drillsInduced}`} />
+            {training.goalSteps !== undefined && (
+              <Row
+                label="goal steps / completed / stalled"
+                value={`${training.goalSteps} / ${training.goalsCompleted} / ${training.goalsStalled}`}
+                hint="the goal loop (TASKS.md #18): a stalled goal raises its target in the lesson queue"
+              />
+            )}
           </>
         )}
       </Section>

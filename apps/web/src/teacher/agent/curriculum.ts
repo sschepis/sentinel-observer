@@ -99,6 +99,7 @@ export function CurriculumMixin<TBase extends Constructor<TeacherAgentCore & Cro
       return {
         vocabulary: this.curriculumVocabulary(),
         drillFailures: this.drillFailuresSnapshot(),
+        goalStalls: this.goalStallsSnapshot(),
         now,
         weights: this.curriculumConfig.weights
       };
@@ -159,6 +160,12 @@ export function CurriculumMixin<TBase extends Constructor<TeacherAgentCore & Cro
      *  function (which made `clampRange(NaN)` throw inside the curriculum). */
     drillFailuresSnapshot(): Record<string, number> {
       return Object.assign(Object.create(null) as Record<string, number>, Object.fromEntries(this.drillFailures));
+    }
+
+    /** Stalled goals per target (TASKS.md #18) — the curriculum's stall
+     *  signal, read-only. Null-prototype for the same reason as above. */
+    goalStallsSnapshot(): Record<string, number> {
+      return Object.assign(Object.create(null) as Record<string, number>, Object.fromEntries(this.goalStalls));
     }
 
     /** The pre-curriculum due-order ranking, for comparison/introspection. */
