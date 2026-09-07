@@ -919,7 +919,20 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     evidence: {
       sources: ['fuzz', 'adversarial'],
       mass: 16,
-      note: 'Calibrated from cde-bench: flat class (adversarial probes) m ∈ [0.011, 0.044], clear class (exact deck recall) m ∈ [0.293, 0.436]; threshold = gap midpoint. Regime labels are measurement only — Phase A refuted the routing (no variant beats the top score on fuzz AUC).'
+      note: 'Calibrated from cde-bench under the CONTROL blend: flat class (adversarial probes) m ∈ [0.011, 0.044], clear class (exact deck recall) m ∈ [0.293, 0.436]; threshold = gap midpoint. ARM-SPECIFIC: under index-only scoring (OBSERVER_SMF_WEIGHT=0, 2026-09-07) the bands read flat ≤ 0.082 / clear ≥ 0.397, midpoint 0.240 — the SMF term compresses relative margins. Regime labels are measurement only; since the sense-disambiguation ask moved to SENSE_AMBIGUITY_RATIO nothing routes on them.'
+    }
+  },
+  {
+    name: 'SENSE_AMBIGUITY_RATIO',
+    class: 'tuning',
+    value: 0.5,
+    file: 'apps/web/src/teacher/cde.ts',
+    line: 254,
+    note: 'Sense-disambiguation ask: fires when the runner-up sense holds ≥ this share of the winner OVERLAP (prime match only — arm-independent).',
+    evidence: {
+      sources: ['adversarial'],
+      mass: 6,
+      note: 'Polysemy probe set (6 split words): bare-word moments read runner-up/winner overlap ≈ 0.8 (bank 0.617/0.756); one-sense words have a single candidate. Replaced the regime classifier, whose margin gate read bank as clear under index-only scoring (docs/NULL_ARMS.md).'
     }
   },
   {

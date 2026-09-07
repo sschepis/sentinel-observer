@@ -225,6 +225,52 @@ export function classifyRegime(
   return 'flat';
 }
 
+/**
+ * SENSE AMBIGUITY — the reading the sense-disambiguation ask routes on
+ * (TeacherAgent.senseDisambiguationAsk), replacing `classifyRegime` there.
+ *
+ * WHY NOT THE REGIME: `classifyRegime`'s margin threshold is calibrated on
+ * the BLENDED recall score, and the SMF term (near-identical for two sense
+ * traces taught in sequence) compresses every relative margin toward zero.
+ * Under index-only scoring (OBSERVER_SMF_WEIGHT=0, docs/NULL_ARMS.md) the
+ * same two `bank` sense traces read m = 0.184 — over the 0.17 gate — purely
+ * because their overlap NORMALIZATIONS differ (different numbers of
+ * inherited category primes), and the ask stopped firing for one of six
+ * words. The regime instrument was reading the arm's score scale, not the
+ * cue's ambiguity.
+ *
+ * THIS READING is arm-independent: it looks at the OVERLAP term alone
+ * (`overlapScore`, the prime-signature match, which no blend weight
+ * touches) of the word traces among the candidates, and calls the cue
+ * ambiguous when the runner-up sense holds at least SENSE_AMBIGUITY_RATIO
+ * of the winner's overlap — two senses genuinely present in the moment.
+ * A bare surface word excites the UNION of its senses' primes, so each
+ * sense trace matches a large share and the ratio sits well above the
+ * floor (bank: 0.617/0.756 = 0.82); a cue that names one sense's context
+ * pulls the ratio down. Candidates without an overlap reading (the full
+ * bank reports 0) fall back to the blended score. One candidate = not
+ * ambiguous.
+ */
+export const SENSE_AMBIGUITY_RATIO = 0.5;
+
+export function senseCandidatesAmbiguous(
+  candidates: ReadonlyArray<{ score: number; overlapScore?: number; trace?: { metadata?: Readonly<Record<string, unknown>> } }>,
+  ratio: number = SENSE_AMBIGUITY_RATIO
+): boolean {
+  // Word traces only: conversation / creative / gap / belief traces carry a
+  // metadata.kind and are never a sense of the word.
+  const words = candidates.filter((c) => c.trace?.metadata?.kind === undefined);
+  const pool = words.length > 0 ? words : candidates;
+  if (pool.length < 2) return false;
+  const useOverlap = pool.some((c) => (c.overlapScore ?? 0) > 0);
+  const readings = pool
+    .map((c) => (useOverlap ? c.overlapScore ?? 0 : c.score))
+    .filter((v) => Number.isFinite(v))
+    .sort((a, b) => b - a);
+  if (readings.length < 2 || readings[0] <= 0) return false;
+  return readings[1] / readings[0] >= ratio;
+}
+
 /** One combined reading over a candidate distribution. */
 export function readCde(
   scores: readonly number[],

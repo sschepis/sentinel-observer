@@ -28,7 +28,7 @@ import {
   type OperatorResult
 } from './operators';
 import { deniedFromNegations } from './chain';
-import { classifyRegime } from './cde';
+import { senseCandidatesAmbiguous } from './cde';
 import { pathEvidence, pathHedgeWord, type PathEvidence } from './pathEvidence';
 import type { SenseSplitConfig } from './senseModel';
 import {
@@ -278,13 +278,17 @@ export class TeacherAgent extends TeacherAgentComposed {
 
   /**
    * F.2 SENSE SPLIT (§7.2): the disambiguating ask for a bare surface word
-   * that carries several taught senses. The §2 instrument (cde.ts) reads
-   * the recall over the sense candidates: one dominant candidate ('clear')
-   * falls through to the normal answer path; a bimodal distribution
-   * ('disambiguate') or a flat one asks which sense, naming both readings
-   * ("Do you mean bank as in a financial institution, or as in sloping
-   * land beside a body of water?"). Null when the split is off, the
-   * utterance has no relational subject, or the subject is not sense-split.
+   * that carries several taught senses. The sense-ambiguity reading
+   * (cde.ts `senseCandidatesAmbiguous`) looks at the OVERLAP term of the
+   * recalled word traces: when the runner-up sense holds at least half the
+   * winner's overlap, two senses are genuinely present and the observer
+   * asks which, naming both readings ("Do you mean bank as in a financial
+   * institution, or as in sloping land beside a body of water?"); one
+   * dominant sense falls through to the normal answer path. The reading is
+   * arm-independent — it does not move when the recall blend's weights do
+   * (the regime classifier it replaced did; docs/NULL_ARMS.md). Null when
+   * the split is off, the utterance has no relational subject, or the
+   * subject is not sense-split.
    */
   protected senseDisambiguationAsk(utterance: string): string | null {
     if (!this.senseSplit) return null;
@@ -297,8 +301,7 @@ export class TeacherAgent extends TeacherAgentComposed {
     // agreement first — exactly the recallMemories discipline — so the
     // candidate scores are the converged moment's.
     this.exciteAndSettle(form.subject);
-    const scores = this.session.recall(form.subject, 5).map((result) => result.score);
-    if (classifyRegime(scores) === 'clear') return null;
+    if (!senseCandidatesAmbiguous(this.session.recall(form.subject, 5))) return null;
     const named = readings.map((reading) => reading.reading).join(', or as in ');
     return `Do you mean ${form.subject} as in ${named}?`;
   }

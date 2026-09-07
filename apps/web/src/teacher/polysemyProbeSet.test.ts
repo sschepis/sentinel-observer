@@ -68,7 +68,7 @@ import {
   splitRelationsBySense
 } from './senseModel';
 import { isATypeOf } from './chain';
-import { classifyRegime } from './cde';
+import { senseCandidatesAmbiguous } from './cde';
 import type { Relation } from './relations';
 import type { DeckWord } from './deck';
 
@@ -432,20 +432,23 @@ describe('sense split (§7.2/F.2) — after-split measurement', () => {
     expect(unsplit.some((r) => r.subject === 'bank' && r.object === 'slope')).toBe(true);
   });
 
-  it('recall over the sense candidates is not a single clear winner — the §2 instrument routes the ask', () => {
+  it('recall over the sense candidates shows two senses present — the sense-ambiguity reading routes the ask', () => {
     // The instrument reads the MOMENT (excite + settle), the same discipline
     // the disambiguation routing uses before recall.
     teacher.exciteAndSettle('bank');
-    const scores = session.recall('bank', 5).map((result) => result.score);
+    const results = session.recall('bank', 5);
     // eslint-disable-next-line no-console
-    console.log(`SENSE SPLIT — recall over 'bank' candidates: [${scores.map((s) => s.toFixed(3)).join(', ')}]`);
-    // The routing fires the disambiguating ask unless ONE candidate clearly
-    // dominates. At this 64-prime / 18-word scale the candidate distribution
-    // reads 'flat' (no prime-prefilter discrimination — every trace shares
-    // the whole basis); a bimodal sense distribution reads 'disambiguate'
-    // (cde.test.ts). Either way the observer asks, naming both readings —
-    // never answering from the merged graph.
-    expect(['disambiguate', 'flat']).toContain(classifyRegime(scores));
+    console.log(
+      `SENSE SPLIT — recall over 'bank' candidates: score [${results.map((r) => r.score.toFixed(3)).join(', ')}]` +
+        ` overlap [${results.map((r) => r.overlapScore.toFixed(3)).join(', ')}]`
+    );
+    // The routing fires the disambiguating ask when the runner-up sense holds
+    // at least half the winner's OVERLAP — a reading of the prime match
+    // alone, so it does not move when the recall blend's weights do (the
+    // regime classifier it replaced read 'clear' under index-only scoring
+    // for this very word; docs/NULL_ARMS.md). Both bank senses are present
+    // in the bare-word moment, so the observer asks, naming both readings.
+    expect(senseCandidatesAmbiguous(results)).toBe(true);
   });
 
   it('the same probes produce 0 confident cross-sense answers, with a disambiguating ask', () => {
