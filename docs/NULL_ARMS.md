@@ -117,9 +117,22 @@ The observer is operational — a long-lived server with a real learning record.
 
 The bench therefore has a **record mode**: `NULL_ARMS_RECORD=public/bootstrap.json npm run null-arms-bench` imports the observer's own exported snapshot into a fresh in-memory observer and probes it under each readout arm. It reads the file and writes only to `bench/null-arms/*-record.json`; the running server is never touched.
 
+## Refitting the conversation gates on the live record (2026-09-07, native)
+
+`npm run refit-gates` (`cli/refit-gates.ts`) imports the exported record into a fresh in-memory observer, splits the taught conversation pairs into a fit half and a held-out half (seeded), and probes every pair three ways: the **exact** cue, a legitimate **variant** of it (article/pronoun/word-order shapes a speaker would produce), and a **distractor** (a taught cue from another pair, or a fuzzed one). The recall score of each probe is a sample; the gates are the isotonic-fitted decision scores at P(correct) = 0.8 (the acting gate) and 0.5 (the recall floor). Both gates are now `calibration.ts` gates, so the server loads the fitted values from `OBSERVER_GATES_FILE` and refuses an artifact fitted under a different arm.
+
+Control arm (blended score) — fitted vs. hand constants:
+
+| gate | hand | fitted | what the hand constant was doing |
+|---|---|---|---|
+| high-confidence (act without asking) | 0.80 | 0.794 | clears only 20.7% of exact cues — most correct recalls were being hedged |
+| recall floor (below it: ask) | 0.60 | 0.749 | lets 69.2% of distractors through — most wrong recalls were being answered |
+
+`smf-off` arm, first run (exact + distractor classes only): both gates fitted at **1.000**. That is a knife edge, not a calibration — under index-only scoring every non-exact probe scored strictly below every exact one, so the fitter put the decision at the top of the scale, where any variant of a taught cue would be refused. The fit now includes the variant class as positives (a taught cue's paraphrase must still pass); the `smf-off` artifact has to be regenerated with it (TASKS.md #10). The lesson is a general one for this codebase: a gate fitted on exact repeats alone will always look perfect under an inverted index, because exact repeats are what an inverted index is.
+
 ## Next steps (in order)
 
-1. ~~Record mode on the live snapshot; semanticRecall / polysemy / ciGates under `smf-off`~~ done (above). Next: `OBSERVER_SMF_WEIGHT=0 npm run cde-bench` for the margin bands; make the regime thresholds arm-derived (or make the sense-disambiguation ask scale-free); re-fit the conversation gates with the calibration machinery on the new distribution (held-out); then flip the server's readout with the same variable. No re-teach, no migration.
+1. ~~Record mode on the live snapshot; semanticRecall / polysemy / ciGates under `smf-off`~~ done. ~~Make the sense-disambiguation ask scale-free~~ done (`senseCandidatesAmbiguous`, TASKS.md #9). ~~Re-fit the conversation gates with the calibration machinery (held-out)~~ done for the control arm (above). Remaining: regenerate the `smf-off` gates with the variant class, re-run the suites and the record bench under `OBSERVER_SMF_WEIGHT=0`, then flip the server's readout with the same variable plus `OBSERVER_GATES_FILE`. No re-teach, no migration.
 2. Split the sketch into content and context (§2.1) and add the context-cued recall bench — the recency signal's own null-model test.
 3. Prototype the resonant readout vs. softmax on siblings.
 4. Rewrite paper §3.1, §5.1, §5.2 from `bench/null-arms/*.json`.
