@@ -364,19 +364,26 @@ describe('C.3 wiring: a claim on ONE weak path speaks hedged; multi-path claims 
     return { session, teacher };
   }
 
-  it('the flag-OFF control is bit-identical: a chained claim weakened at the is-a hop still speaks flat "Yes"', async () => {
+  it('the flag-OFF control: a chained claim weakened at the is-a hop speaks the P8 edge hedge, without the path caveat', async () => {
     const { session, teacher } = await teacherOnDeck(DECK, false);
     const chained = teacher.chatAnswer('does an emu have wings');
     expect(chained.mode).toBe('operator');
     if (chained.mode === 'operator') {
       expect(chained.response).toBe('Yes — emu is a bird, and bird has wings.');
     }
-    // Wrong grades weaken the is-a hop: the CONTROL still asserts (the §4.3 gap).
+    // Wrong grades weaken the is-a hop. The control used to assert a flat
+    // "Yes" here (the §4.3 gap, ANALYSIS.md §6 #9): the chain's `via`
+    // branches computed the hop strength and never read it. That defect is
+    // fixed — `inheritedPrefix` hedges on the WEAKER of the two hops — so
+    // the control now speaks the P8 edge-confidence hedge. What the control
+    // still lacks is the PATH reading: it says nothing about resting on one
+    // source, which is exactly what the flag adds (next test).
     teacher.bumpEdge('emu', 'is-a', 'bird', -0.9);
     const weakened = teacher.chatAnswer('does an emu have wings');
     expect(weakened.mode).toBe('operator');
     if (weakened.mode === 'operator') {
-      expect(weakened.response).toBe('Yes — emu is a bird, and bird has wings.');
+      expect(weakened.response).toBe('Probably — emu is a bird, and bird has wings.');
+      expect(weakened.response).not.toContain('rests on one source');
     }
     session.dispose();
   });
