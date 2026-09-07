@@ -23,7 +23,10 @@ module.exports = {
     // priming experiment, not a unit test.
     '<rootDir>/src/teacher/primingBenchmark.test.ts',
     // The server parity gate: a deliberate ~70s training + reload control.
-    '<rootDir>/src/server/serverParity.test.ts'
+    '<rootDir>/src/server/serverParity.test.ts',
+    // Null-model arms for the memory substrate (IMPROVEMENT_PLAN §2.1): a
+    // measurement that writes bench/null-arms/*.json, not a unit test.
+    '<rootDir>/src/teacher/nullArmsBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

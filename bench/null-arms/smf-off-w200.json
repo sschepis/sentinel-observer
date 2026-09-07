@@ -1,0 +1,31 @@
+{
+  "commit": "835b745",
+  "generatedAt": "2026-09-06T23:52:08.490Z",
+  "seed": 24301,
+  "overrides": {
+    "memoryBankOptions": {
+      "smfWeight": 0
+    }
+  },
+  "arm": "smf-off",
+  "words": 200,
+  "identity": {
+    "correct": 200,
+    "n": 200
+  },
+  "semantic": {
+    "correct": 180,
+    "n": 200
+  },
+  "fuzz": {
+    "pairs": 40,
+    "exactRecalled": 40,
+    "distractors": 120,
+    "falsePositives": 65,
+    "meanMargin": 0.20556563732754274,
+    "auc": 1,
+    "falsePositivesAtMatchedGate": 0,
+    "matchedGate": 0.9999999999999999
+  },
+  "teachMsPerWord": 3.935
+}
