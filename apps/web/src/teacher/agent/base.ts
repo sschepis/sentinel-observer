@@ -52,7 +52,7 @@ import { GraderReliabilityModel, type GradeBand, type DifficultyBand } from '../
 import type { GradeClass } from '../fade';
 import type { LearningGoal, GoalType } from '../plan';
 import { groundingAttribution } from '../grounding';
-import type { BehaviorWeights, BehaviorOption } from '../drives';
+import type { BehaviorWeights, BehaviorOption, DriveSignals } from '../drives';
 import type { TransitionWeights, ConversationPair } from '../conversation';
 import type { WeightMeta } from '../agedWeights';
 import type { Relation, SourceClass, Negation, RelationPredicate } from '../relations';
@@ -178,6 +178,12 @@ export class TeacherAgentCore {
   /** Learned arbitration weights — experience modifies what the observer
    *  prioritizes. Persisted; absent weights use archetypal defaults. */
   protected behaviorWeights: BehaviorWeights = {};
+  /** TASKS.md #16 — MANIPULATION HOOK for the drive-arbitration bench: when
+   *  set, these components replace the measured drive signals so a bench can
+   *  sweep curiosity or novelty and watch the ask/compose shares move (Rule 2:
+   *  a mechanism on a decision path earns a bench that manipulates its input).
+   *  Null in production — the server never sets it. */
+  protected driveOverride: Partial<DriveSignals> | null = null;
   /** Outcome cascade per behavior — the credit history behind the weights. */
   protected readonly behaviorOutcomes: Record<BehaviorOption, { wins: number; losses: number }> = {
     answer: { wins: 0, losses: 0 },

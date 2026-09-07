@@ -15,12 +15,14 @@ import {
 import {
   computeDrives,
   chooseBehavior,
+  behaviorTemperature,
   updateDriveWeight,
   ARCHETYPAL_BEHAVIORS,
   type DriveSignals,
   type DriveState,
   type BehaviorOption,
-  type BehaviorWeights
+  type BehaviorWeights,
+  type ReplyArbitration
 } from '../drives';
 import {
   extractUnknownSubject,
@@ -211,9 +213,33 @@ export function MotivationMixin<TBase extends Constructor<TeacherAgentCore & Cro
       };
     }
 
-    /** The drive state, normalized. */
+    /** The drive state, normalized. Under a bench override (TASKS.md #16)
+     *  the overridden components replace the measured signals. */
     drives(utterance: string): DriveState {
-      return computeDrives(this.driveSignals(utterance));
+      const measured = this.driveSignals(utterance);
+      return computeDrives(this.driveOverride === null ? measured : { ...measured, ...this.driveOverride });
+    }
+
+    /** MANIPULATION HOOK (benches/tests only): pin drive components. Pass
+     *  null to restore the measured signals. */
+    setDriveOverride(override: Partial<DriveSignals> | null): void {
+      this.driveOverride = override === null ? null : { ...override };
+    }
+
+    /**
+     * TASKS.md #16 — THE CHAT-PATH ARBITRATION. When a reply could honestly
+     * be more than one thing — compose about known material, or ask about
+     * it — the drives choose, by Boltzmann sampling at the drive temperature
+     * on the session-seeded stream. This is the ONE decision on the chat
+     * path the drives own: every layer above it (memorized, operators,
+     * relations, rules) is deterministic and never arbitrated — the drives
+     * decide what to do when there is no fact to assert, never whether to
+     * assert one. The returned record travels on the answer.
+     */
+    arbitrateReply(utterance: string, options: readonly BehaviorOption[]): ReplyArbitration {
+      const drives = this.drives(utterance);
+      const chosen = chooseBehavior(drives, options, this.behaviorWeights, this.availableBehaviors(), this.arbitrationRng) ?? options[0];
+      return { options: [...options], chosen, temperature: behaviorTemperature(drives), drives };
     }
 
     /** Drive-weighted choice between the possible next behaviors. The

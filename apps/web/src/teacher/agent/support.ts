@@ -7,6 +7,7 @@
 import { FSRS_INITIAL_STABILITY, FSRS_INITIAL_DIFFICULTY } from '../fsrs';
 import { conversationRecallFloor, type CreativeComposition } from '../conversation';
 import { calibratedGateScore } from '../calibration';
+import type { ReplyArbitration } from '../drives';
 import { tokenizeText, isContentWord, singularize } from '../context';
 import type { OperatorResult } from '../operators';
 import type { RecallResult } from '@sschepis/sentient-core';
@@ -195,8 +196,8 @@ export interface AnswerProvenance {
 export type ChatAnswer =
   | { mode: 'memorized'; response: string; confidence: number | null; cue: string | null; provenance: AnswerProvenance }
   | { mode: 'operator'; response: string; operator: OperatorResult; provenance: AnswerProvenance }
-  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; hedged: boolean; templateIds: string[]; provenance: AnswerProvenance }
-  | { mode: 'ask'; response: string; provenance: AnswerProvenance }
+  | { mode: 'creative'; response: string; confidence: number | null; seedTraceIds: string[]; seedCount: number; grounded: boolean; hedged: boolean; templateIds: string[]; provenance: AnswerProvenance; arbitration?: ReplyArbitration }
+  | { mode: 'ask'; response: string; provenance: AnswerProvenance; arbitration?: ReplyArbitration }
   | { mode: 'decline'; provenance: AnswerProvenance };
 
 /**

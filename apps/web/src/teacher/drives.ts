@@ -31,6 +31,21 @@ export type DriveState = DriveSignals;
 export type BehaviorOption = 'answer' | 'ask' | 'compose' | 'practice' | 'verify';
 
 /**
+ * TASKS.md #16 — the record of one drive arbitration on the chat path: the
+ * behaviors that were genuinely available at that decision, the one the
+ * Boltzmann sample chose, the temperature it was sampled at and the drive
+ * state that set it. Carried on the answer so the deviation meter, the
+ * manipulation bench and the introspection view can see WHY the observer
+ * composed rather than asked (or vice versa) — never inferred after the fact.
+ */
+export interface ReplyArbitration {
+  options: BehaviorOption[];
+  chosen: BehaviorOption;
+  temperature: number;
+  drives: DriveState;
+}
+
+/**
  * THE OPEN DRIVE SET.
  *
  * The four archetypal behaviors are available from construction. 'verify' is

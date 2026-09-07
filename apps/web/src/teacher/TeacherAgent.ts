@@ -1004,7 +1004,17 @@ export class TeacherAgent extends TeacherAgentComposed {
     const hasKnownContent =
       (memorized.response !== null && cueMatches) ||
       tokenizeText(resolved).some((token) => isContentWord(token) && known.has(token));
-    if (this.conversationReport().creativeUnlocked && !curiosityDrivenAsk && !groundedQuestion && hasKnownContent) {
+    // TASKS.md #16 — THE DRIVES ARBITRATE HERE, and only here. When composing
+    // is honestly possible (unlocked, not a factual form, seeded by known
+    // material) the reply could be a composition OR a question about the
+    // same material; the drive state chooses between them by Boltzmann
+    // sampling at the drive temperature (curiosity favors 'ask', novelty
+    // favors 'compose'; the learned weights carry past outcomes). The
+    // curiosity veto above remains a deterministic floor. Nothing above this
+    // point is arbitrated: facts are asserted or declined by evidence alone.
+    const composeEligible = this.conversationReport().creativeUnlocked && !curiosityDrivenAsk && !groundedQuestion && hasKnownContent;
+    const arbitration = composeEligible ? this.arbitrateReply(resolved, ['compose', 'ask']) : null;
+    if (composeEligible && arbitration !== null && arbitration.chosen === 'compose') {
       const contextSeeds = this.workingMemory.recent(4).map((turn) => turn.text);
       const reply = this.creativeReply(resolved, contextSeeds);
       if (reply.sentence.trim().length > 0) {
@@ -1036,7 +1046,8 @@ export class TeacherAgent extends TeacherAgentComposed {
           grounded: reply.grounded,
           hedged: reply.hedged,
           templateIds: reply.templateIds,
-          provenance: { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds }
+          provenance: { traceIds: reply.seedTraceIds, edges: reply.edges, templateIds: reply.templateIds },
+          arbitration
         });
       }
     }
@@ -1104,6 +1115,13 @@ export class TeacherAgent extends TeacherAgentComposed {
     }
     this.workingMemory.note('observer', question);
     this.noteAnswerMode('ask');
-    return finish({ mode: 'ask', response: question, provenance: EMPTY_PROVENANCE });
+    return finish({
+      mode: 'ask',
+      response: question,
+      provenance: EMPTY_PROVENANCE,
+      // A drive-chosen ask (the arbitration picked 'ask' over an eligible
+      // composition) carries its record; an ask that had no alternative does not.
+      ...(arbitration !== null && arbitration.chosen === 'ask' ? { arbitration } : {})
+    });
   }
 }
