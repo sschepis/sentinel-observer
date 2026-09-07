@@ -53,6 +53,7 @@ import type { GradeClass } from '../fade';
 import type { LearningGoal, GoalType } from '../plan';
 import { groundingAttribution } from '../grounding';
 import type { BehaviorWeights, BehaviorOption, DriveSignals } from '../drives';
+import type { MeterCategory, SpeechReading } from '../speechAct';
 import type { TransitionWeights, ConversationPair } from '../conversation';
 import type { WeightMeta } from '../agedWeights';
 import type { Relation, SourceClass, Negation, RelationPredicate } from '../relations';
@@ -229,10 +230,36 @@ export class TeacherAgentCore {
     this.modeCounts[mode] = (this.modeCounts[mode] ?? 0) + 1;
   }
 
-  /** Session answer-mode counts: memorized/operator (grounded), creative
-   *  (composed — deviation expected), ask/decline (abstained). */
+  /** Session answer-mode counts by ROUTING LAYER: memorized / operator /
+   *  creative / ask / decline. Kept for the introspection view and tests;
+   *  the deviation meter itself now reads `deviationMeter()`. */
   answerModeCounts(): Readonly<Record<string, number>> {
     return { ...this.modeCounts };
+  }
+
+  /** TASKS.md #17 — the deviation meter keyed by SPEECH ACT × BACKING
+   *  (teacher/speechAct.ts): grounded assertions, composed (unbacked)
+   *  assertions, abstentions (questions and declines). */
+  protected readonly meterCounts: Record<MeterCategory, number> = { grounded: 0, composed: 0, abstained: 0 };
+
+  protected noteSpeech(reading: SpeechReading): void {
+    this.meterCounts[reading.meter] += 1;
+  }
+
+  /** The session deviation meter: shares of grounded / composed / abstained
+   *  over every chat answer, read from what was said. */
+  deviationMeter(): { answers: number; grounded: number; composed: number; abstained: number; groundedShare: number; composedShare: number; abstainedShare: number } {
+    const answers = this.meterCounts.grounded + this.meterCounts.composed + this.meterCounts.abstained;
+    const share = (n: number): number => (answers === 0 ? 0 : n / answers);
+    return {
+      answers,
+      grounded: this.meterCounts.grounded,
+      composed: this.meterCounts.composed,
+      abstained: this.meterCounts.abstained,
+      groundedShare: share(this.meterCounts.grounded),
+      composedShare: share(this.meterCounts.composed),
+      abstainedShare: share(this.meterCounts.abstained)
+    };
   }
 
   /** The deviation meter's grounding attribution (Phase 8): across all

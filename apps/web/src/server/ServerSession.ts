@@ -530,7 +530,11 @@ export class ServerSession {
       trust: {
         lambdas: teacher.fadeLambdas(),
         dependence: teacher.teacherDependenceRate(),
-        calibration
+        calibration,
+        // TASKS.md #17: the deviation meter read from what was SAID (speech
+        // act × backing), beside the routing-layer counts it replaces.
+        deviation: teacher.deviationMeter(),
+        answerModes: teacher.answerModeCounts()
       },
       training: this.trainingLoop !== null ? this.trainingLoop.statistics() : null
     };

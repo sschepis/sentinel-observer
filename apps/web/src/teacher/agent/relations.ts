@@ -49,7 +49,8 @@ import {
 import {
   SWEEP_RESOLVED_CAP,
   edgeKey,
-  READING_WORD_BUDGET
+  READING_WORD_BUDGET,
+  type EdgeRef
 } from './support';
 import {
   authoredRelationPool,
@@ -150,8 +151,15 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
 
     /** Speak what the graph holds about a subject, hedged by corroboration
      *  (a claim read in one book stays "I think" until something independent
-     *  confirms it). Never called without frames — absence stays an ask. */
-    protected speakFromFrames(subject: string): string {
+     *  confirms it). Never called without frames — absence stays an ask.
+     *
+     *  Returns the sentence WITH the edges it drew from (TASKS.md #17): what
+     *  is spoken here is an assertion about the world, and the deviation
+     *  meter reads its backing from the provenance — an uncited frame would
+     *  be counted as a composed claim. An edge is cited when its object is
+     *  actually spoken; the frames take at most three objects per predicate,
+     *  so the graph's full edge list for the subject would over-cite. */
+    protected speakFromFrames(subject: string): { sentence: string; edges: EdgeRef[] } {
       // A NAME takes no article: the frames say "A zeus is a god" because the
       // frame grammar is written for common nouns. Proper entities (read from
       // history and mythology, absent from the deck) drop it.
@@ -160,8 +168,21 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
         .slice(0, 3)
         .map((frame) => (isName ? frame.replace(/^An?\s+/, (match) => (match === 'A ' || match === 'An ' ? '' : match)) : frame))
         .map((frame, index) => (isName && index === 0 ? frame.charAt(0).toUpperCase() + frame.slice(1) : frame));
-      const spoken = hedgeComposition(frames.join(' ').replace(/\s+([.!?])/g, '$1'), this.relations());
-      return spoken.sentence;
+      const relations = this.relations();
+      const spoken = hedgeComposition(frames.join(' ').replace(/\s+([.!?])/g, '$1'), relations);
+      const spokenTokens = new Set(tokenizeText(spoken.sentence).map((token) => singularize(token)));
+      const seen = new Set<string>();
+      const edges: EdgeRef[] = [];
+      for (const relation of relations) {
+        if (relation.subject !== subject) continue;
+        const objectTokens = tokenizeText(relation.object).map((token) => singularize(token));
+        if (objectTokens.length === 0 || !objectTokens.every((token) => spokenTokens.has(token))) continue;
+        const key = edgeKey(relation.subject, relation.predicate, relation.object);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({ subject: relation.subject, predicate: relation.predicate, object: relation.object });
+      }
+      return { sentence: spoken.sentence, edges };
     }
 
     /**

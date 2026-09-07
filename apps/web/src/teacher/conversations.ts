@@ -24,6 +24,10 @@ export interface ConversationMessage {
   derivation?: Array<{ ruleId: string; after: string }>;
   ruleIds?: string[];
   steps?: number;
+  /** TASKS.md #17: the deviation-meter reading of what was SAID — grounded
+   *  (an assertion that cites memory), composed (an uncited assertion) or
+   *  abstained (a question or decline) — independent of the routing `mode`. */
+  meter?: 'grounded' | 'composed' | 'abstained';
 }
 
 export interface Conversation {

@@ -8,6 +8,7 @@ import { FSRS_INITIAL_STABILITY, FSRS_INITIAL_DIFFICULTY } from '../fsrs';
 import { conversationRecallFloor, type CreativeComposition } from '../conversation';
 import { calibratedGateScore } from '../calibration';
 import type { ReplyArbitration } from '../drives';
+import type { SpeechReading } from '../speechAct';
 import { tokenizeText, isContentWord, singularize } from '../context';
 import type { OperatorResult } from '../operators';
 import type { RecallResult } from '@sschepis/sentient-core';
@@ -208,7 +209,13 @@ export type ChatAnswer =
  * window itself stays session-scoped; this is the selective, honest channel
  * across sessions.
  */
-export type ChatAnswerWithMemory = ChatAnswer & { remembered?: RememberedFact[]; stored?: EpisodicFact[] };
+export type ChatAnswerWithMemory = ChatAnswer & {
+  remembered?: RememberedFact[];
+  stored?: EpisodicFact[];
+  /** TASKS.md #17 — the deviation meter's reading of THIS answer, by what it
+   *  said (speech act) and what backs it, not by the layer that produced it. */
+  speech?: SpeechReading;
+};
 
 export interface CreativeReply extends CreativeComposition {
   /** Recall confidence of the seed memories (null when nothing recalled). */

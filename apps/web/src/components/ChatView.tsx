@@ -26,6 +26,33 @@ const MODE_BADGE: Record<NonNullable<ConversationMessage['mode']>, { label: stri
   decline: { label: 'not learned yet', tone: 'text-slate-500' }
 };
 
+/** What the routing badge already implies about the deviation meter. The
+ *  meter badge (TASKS.md #17) is shown only when the READING disagrees: an
+ *  ask-layer reply that asserted what the observer read ("Zeus is a god") is
+ *  grounded speech, not an abstention; a composed reply whose claims cite
+ *  edges is grounded; a composed reply that cites nothing is uncited. */
+const IMPLIED_METER: Record<NonNullable<ConversationMessage['mode']>, ConversationMessage['meter'] | null> = {
+  memorized: 'grounded',
+  operator: 'grounded',
+  creative: 'composed',
+  ask: 'abstained',
+  hybrid: null,
+  decline: 'abstained'
+};
+
+const METER_BADGE: Record<NonNullable<ConversationMessage['meter']>, { label: string; tone: string }> = {
+  grounded: { label: 'grounded — cites memory', tone: 'text-emerald-300' },
+  composed: { label: 'uncited claim', tone: 'text-rose-300' },
+  abstained: { label: 'abstained', tone: 'text-slate-400' }
+};
+
+function meterBadgeFor(message: ConversationMessage): { label: string; tone: string } | null {
+  if (message.meter === undefined) return null;
+  const implied = message.mode !== undefined ? IMPLIED_METER[message.mode] : null;
+  if (implied === message.meter) return null;
+  return METER_BADGE[message.meter];
+}
+
 /** Sample prompts shown on the empty chat. Grouped by the capability they
  *  exercise so a visitor can range across everything the observer can do —
  *  and honestly probe the boundary where it asks instead of guessing. */
@@ -96,6 +123,7 @@ const PROMPT_GROUPS: PromptGroup[] = [
 
 function ObserverMessage({ message }: { message: ConversationMessage }) {
   const badge = message.mode !== undefined ? MODE_BADGE[message.mode] : null;
+  const meterBadge = meterBadgeFor(message);
   const [showWork, setShowWork] = useState(false);
   const derived = message.derivation !== undefined && message.derivation.length > 0;
   return (
@@ -105,9 +133,10 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
       </span>
       <div className="min-w-0 flex-1">
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-100">{message.text}</p>
-        {(badge !== null || message.confidence != null || message.score != null) && (
+        {(badge !== null || meterBadge !== null || message.confidence != null || message.score != null) && (
           <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-500">
             {badge !== null && <span className={badge.tone}>{badge.label}</span>}
+            {meterBadge !== null && <span className={meterBadge.tone}>{meterBadge.label}</span>}
             {message.confidence != null && <span>confidence {message.confidence.toFixed(2)}</span>}
             {message.score != null && <span>graded {message.score.toFixed(2)}</span>}
           </p>

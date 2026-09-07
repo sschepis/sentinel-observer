@@ -87,6 +87,8 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
     lambdas: Record<string, number>;
     dependence: number;
     calibration: Array<{ gate: string; report: { samples: number; positiveRate: number; separator: number | null } }>;
+    /** TASKS.md #17 — absent from snapshots taken by an older server. */
+    deviation?: { answers: number; grounded: number; composed: number; abstained: number; groundedShare: number; composedShare: number; abstainedShare: number };
   };
   const training = snapshot.training as Record<string, number> | null;
 
@@ -173,6 +175,15 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
       </Section>
 
       <Section title="Trust & calibration">
+        {trust.deviation !== undefined && trust.deviation.answers > 0 && (
+          <div className="mb-2 border-b border-slate-800/60 pb-2">
+            <Row
+              label="deviation meter"
+              value={`${(trust.deviation.groundedShare * 100).toFixed(0)}% grounded · ${(trust.deviation.composedShare * 100).toFixed(0)}% uncited · ${(trust.deviation.abstainedShare * 100).toFixed(0)}% abstained`}
+              hint={`read from what was said, over ${trust.deviation.answers} answers this session`}
+            />
+          </div>
+        )}
         <Row label="teacher dependence" value={`${(trust.dependence * 100).toFixed(0)}%`} hint="traffic-weighted mean teacher share (1 − λ)" />
         <div className="mt-1 space-y-1 border-t border-slate-800/60 pt-2">
           {Object.entries(trust.lambdas).map(([cls, lambda]) => (

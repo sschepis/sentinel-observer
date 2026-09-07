@@ -132,6 +132,7 @@ export function useChat(
         derivation?: ConversationMessage['derivation'];
         ruleIds?: string[];
         steps?: number;
+        meter?: ConversationMessage['meter'];
       }
     ) => {
       appendMessage(conversationId, {
@@ -143,7 +144,8 @@ export function useChat(
         feedback: reply.feedback ?? null,
         derivation: reply.derivation,
         ruleIds: reply.ruleIds,
-        steps: reply.steps
+        steps: reply.steps,
+        meter: reply.meter
       });
       sync(conversationId);
     },
@@ -154,7 +156,7 @@ export function useChat(
   const gradeCreative = useCallback(
     async (
       utterance: string,
-      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[]; templateIds: string[]; ruleIds?: string[] },
+      reply: { sentence: string; confidence: number | null; seedTraceIds: string[]; edges?: EdgeRef[]; templateIds: string[]; ruleIds?: string[]; meter?: ConversationMessage['meter'] },
       conversationId: string
     ) => {
       if (teacher === null) return;
@@ -220,7 +222,8 @@ export function useChat(
         mode: 'creative',
         confidence: reply.confidence,
         score,
-        feedback
+        feedback,
+        meter: reply.meter
       });
       setStatus(
         score !== null && score >= 0.7
@@ -278,7 +281,8 @@ export function useChat(
           seedTraceIds: answer.seedTraceIds,
           edges: answer.provenance.edges,
           templateIds: answer.templateIds,
-          ruleIds: answer.provenance.ruleIds
+          ruleIds: answer.provenance.ruleIds,
+          meter: answer.speech?.meter
         }, conversationId);
         return;
       }
@@ -303,7 +307,8 @@ export function useChat(
         confidence: answer.mode === 'memorized' ? answer.confidence : null,
         derivation,
         ruleIds: operator !== null && operator.kind === 'rewrite' ? operator.ruleIds : undefined,
-        steps: operator !== null && operator.kind === 'rewrite' ? operator.steps : undefined
+        steps: operator !== null && operator.kind === 'rewrite' ? operator.steps : undefined,
+        meter: answer.speech?.meter
       });
       setStatus('');
       onTeacherChanged();

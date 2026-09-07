@@ -29,6 +29,7 @@ import {
 } from './operators';
 import { deniedFromNegations } from './chain';
 import { senseCandidatesAmbiguous } from './cde';
+import { readSpeech } from './speechAct';
 import { pathEvidence, pathHedgeWord, type PathEvidence } from './pathEvidence';
 import type { SenseSplitConfig } from './senseModel';
 import {
@@ -606,11 +607,18 @@ export class TeacherAgent extends TeacherAgentComposed {
     const remembered = this.episodic.recall(utterance, {
       sessionStarted: episodicTurn.sessionStarted
     });
-    const finish = <T extends ChatAnswer>(answer: T): ChatAnswerWithMemory => ({
-      ...answer,
-      remembered: remembered.length > 0 ? remembered : undefined,
-      stored: episodicTurn.stored.length > 0 ? episodicTurn.stored : undefined
-    });
+    const finish = <T extends ChatAnswer>(answer: T): ChatAnswerWithMemory => {
+      // TASKS.md #17: the deviation meter reads the ANSWER — what it said and
+      // what backs it — never the branch that returned it.
+      const speech = readSpeech(answer);
+      this.noteSpeech(speech);
+      return {
+        ...answer,
+        remembered: remembered.length > 0 ? remembered : undefined,
+        stored: episodicTurn.stored.length > 0 ? episodicTurn.stored : undefined,
+        speech
+      };
+    };
     // Encounter tracking: deck words the observer HEARS but has no
     // definition for become curiosity fuel.
     for (const token of tokenizeText(utterance)) {
@@ -963,7 +971,7 @@ export class TeacherAgent extends TeacherAgentComposed {
         };
         this.workingMemory.note('observer', response);
         this.noteAnswerMode('operator');
-        return {
+        return finish({
           mode: 'operator',
           response,
           operator: result,
@@ -972,7 +980,7 @@ export class TeacherAgent extends TeacherAgentComposed {
             edges: [],
             operatorId: 'semantic-recall'
           }
-        };
+        });
       }
     }
 
@@ -1086,6 +1094,11 @@ export class TeacherAgent extends TeacherAgentComposed {
         entry.relevance >= EPISODIC_SPOKEN_RELEVANCE_FLOOR
     );
     let question: string;
+    // The edges an ask-layer utterance draws from: empty for a real question,
+    // the frames' edges when the observer speaks what it read (below). The
+    // deviation meter reads them — a read-about frame is a cited assertion,
+    // not an abstention (TASKS.md #17).
+    let spokenEdges: AnswerProvenance['edges'] = [];
     if (spokenStruggle !== undefined) {
       const subject = spokenStruggle.fact.topics[0];
       question = `I remember you found "${subject}" hard last time — could you teach me about it?`;
@@ -1097,7 +1110,9 @@ export class TeacherAgent extends TeacherAgentComposed {
       // of "Zeus" to recite, but it does hold what it read about him. Saying
       // that is honest — the frames are built from stored edges and hedged
       // by corroboration, exactly like any other grounded answer.
-      question = this.speakFromFrames(unknown);
+      const spoken = this.speakFromFrames(unknown);
+      question = spoken.sentence;
+      spokenEdges = spoken.edges;
     } else if (unknown !== null) {
       question = `I do not know what "${unknown}" means. Could you teach me?`;
     } else if (questionForm !== null && questionForm.object !== undefined) {
@@ -1118,7 +1133,7 @@ export class TeacherAgent extends TeacherAgentComposed {
     return finish({
       mode: 'ask',
       response: question,
-      provenance: EMPTY_PROVENANCE,
+      provenance: spokenEdges.length > 0 ? { traceIds: [], edges: spokenEdges } : EMPTY_PROVENANCE,
       // A drive-chosen ask (the arbitration picked 'ask' over an eligible
       // composition) carries its record; an ask that had no alternative does not.
       ...(arbitration !== null && arbitration.chosen === 'ask' ? { arbitration } : {})
