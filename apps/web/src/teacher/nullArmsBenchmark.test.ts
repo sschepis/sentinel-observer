@@ -32,12 +32,14 @@
  * quotes the table.
  *
  * Run:  NULL_ARMS_WORDS=1000 NULL_ARMS_ARMS=control,smf-off NULL_ARMS_FUZZ_PAIRS=80 npm run null-arms-bench
+ *       NULL_ARMS_RECORD=public/bootstrap.json NULL_ARMS_ARMS=control,smf-off npm run null-arms-bench
+ *       (record mode: read-only probes of the live observer's exported record)
  * (one arm at ~1k words is ≈ 1–2 minutes: every ask/respond settles the field)
  * (deliberately excluded from `npm test` — it is a measurement, not a unit).
  */
 import { describe, it, expect } from '@jest/globals';
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mulberry32 } from '@sschepis/sentient-core';
 import type { SemanticObserverOptions } from '@sschepis/sentient-core';
@@ -48,6 +50,7 @@ import { ALL_CONVERSATION_PAIRS, CONVERSATION_CUE_TOKENS } from './conversation'
 import { PRIME_SPACE } from './primeSignature';
 import { semanticVocabulary } from './semanticSignature';
 import type { DeckWord } from './deck';
+import type { BootstrapRecord } from './bootstrap';
 
 const WORDS = Math.max(20, Number(process.env.NULL_ARMS_WORDS ?? 300));
 const SEED = Number(process.env.NULL_ARMS_SEED ?? 0x5eed);
@@ -58,6 +61,19 @@ const FUZZ_PAIRS = Math.max(10, Number(process.env.NULL_ARMS_FUZZ_PAIRS ?? 80));
 /** Words probed for identity/semantic recall (a seeded sample of the taught
  *  slice; every ask settles the field, so the probe count bounds the run). */
 const RECALL_PROBES = Math.max(20, Number(process.env.NULL_ARMS_PROBES ?? 300));
+/**
+ * RECORD MODE (read-only). When set to the path of an exported bootstrap
+ * record (e.g. apps/web/public/bootstrap.json — the live observer's own
+ * snapshot), the bench IMPORTS that record into a fresh in-memory observer
+ * instead of teaching a deck slice, and probes it under each arm. Nothing is
+ * written back: the file is only read, the observer lives and dies in this
+ * process, and the live server is never touched. Only READOUT arms are
+ * meaningful here — `smf-off`, `overlap-off`, `coupling-0` change how stored
+ * traces are scored; `static` changes how traces are ENCODED at store time,
+ * so on an imported record it is identical to `coupling-0` (there is no
+ * store step to change) and is reported as such.
+ */
+const RECORD_PATH = process.env.NULL_ARMS_RECORD ?? null;
 
 type ArmName = 'control' | 'smf-off' | 'overlap-off' | 'coupling-0' | 'static';
 
@@ -110,30 +126,50 @@ interface ArmResult {
 }
 
 async function runArm(arm: ArmName): Promise<ArmResult> {
-  // The production field (observer/options.ts OBSERVER_OPTIONS) restated
-  // value for value — importing the module would build the 20k-word
-  // production vocabulary at load, which is the one part of the production
-  // configuration this bench replaces (the deck slice's vocabulary below).
-  const options: SemanticObserverOptions = {
-    primeCount: 256,
-    gridSize: 512,
-    memoryMode: 'compact',
-    memoryCapacity: 50000,
-    smfWidth: 128,
-    smfImprintWeighting: 'linear',
-    // The bench vocabulary is the deck slice plus the conversation cue
-    // tokens — the same scheme production uses, at the bench's size.
-    vocabulary: semanticVocabulary([...DECK, ...CONVERSATION_CUE_TOKENS.map((word) => ({ word }))], PRIME_SPACE),
-    ...ARM_OVERRIDES[arm]
-  };
-  const session = new ObserverSession(options, 100);
-  await session.initialize();
-  const teacher = new TeacherAgent(session, DECK);
-
-  const started = Date.now();
-  for (const entry of DECK) teacher.teach(entry.word);
-  const teachMsPerWord = (Date.now() - started) / DECK.length;
-  teacher.teachConversationDeck(ALL_CONVERSATION_PAIRS);
+  let session: ObserverSession;
+  let teacher: TeacherAgent;
+  let teachMsPerWord: number;
+  let fuzzPairs: readonly { cue: string; response: string }[];
+  if (RECORD_PATH !== null) {
+    // RECORD MODE: the production configuration exactly (the record was
+    // trained under it and the import checks the vocabulary fingerprint),
+    // plus the arm's readout override. Read-only.
+    const { OBSERVER_OPTIONS } = await import('../observer/options');
+    const options: SemanticObserverOptions = { ...OBSERVER_OPTIONS, ...ARM_OVERRIDES[arm] };
+    session = new ObserverSession(options, 100);
+    await session.initialize();
+    teacher = new TeacherAgent(session, ACTIVE_DECK);
+    const started = Date.now();
+    const record = JSON.parse(readFileSync(RECORD_PATH, 'utf8')) as BootstrapRecord;
+    const imported = teacher.importBootstrap(record);
+    teachMsPerWord = imported.restored > 0 ? (Date.now() - started) / imported.restored : 0;
+    fuzzPairs = teacher.listConversationPairs();
+  } else {
+    // The production field (observer/options.ts OBSERVER_OPTIONS) restated
+    // value for value — importing the module would build the 20k-word
+    // production vocabulary at load, which is the one part of the production
+    // configuration this bench replaces (the deck slice's vocabulary below).
+    const options: SemanticObserverOptions = {
+      primeCount: 256,
+      gridSize: 512,
+      memoryMode: 'compact',
+      memoryCapacity: 50000,
+      smfWidth: 128,
+      smfImprintWeighting: 'linear',
+      // The bench vocabulary is the deck slice plus the conversation cue
+      // tokens — the same scheme production uses, at the bench's size.
+      vocabulary: semanticVocabulary([...DECK, ...CONVERSATION_CUE_TOKENS.map((word) => ({ word }))], PRIME_SPACE),
+      ...ARM_OVERRIDES[arm]
+    };
+    session = new ObserverSession(options, 100);
+    await session.initialize();
+    teacher = new TeacherAgent(session, DECK);
+    const started = Date.now();
+    for (const entry of DECK) teacher.teach(entry.word);
+    teachMsPerWord = (Date.now() - started) / DECK.length;
+    teacher.teachConversationDeck(ALL_CONVERSATION_PAIRS);
+    fuzzPairs = ALL_CONVERSATION_PAIRS;
+  }
 
   // Identity recall: the word cues its own trace. Probed on a seeded,
   // arm-independent sample of the taught words (the same words in every arm).
@@ -162,10 +198,10 @@ async function runArm(arm: ArmName): Promise<ArmResult> {
   // Fuzz: seeded last-word distractors over every taught pair; every
   // distractor counts in the denominator.
   const rng = mulberry32(SEED);
-  const fillers = DECK.map((entry) => entry.word);
+  const fillers = (RECORD_PATH !== null ? ACTIVE_DECK : DECK).map((entry) => entry.word);
   // The probed pairs: a seeded, arm-independent sample (same pairs, same
   // fillers in every arm — the arms differ only in the observer).
-  const shuffled = [...ALL_CONVERSATION_PAIRS];
+  const shuffled = [...fuzzPairs];
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
     const j = Math.floor(rng() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -215,7 +251,7 @@ async function runArm(arm: ArmName): Promise<ArmResult> {
 
   return {
     arm,
-    words: DECK.length,
+    words: RECORD_PATH !== null ? allStates.length : DECK.length,
     identity: { correct: identityCorrect, n: states.length },
     semantic: { correct: semanticCorrect, n: defined.length },
     fuzz: {
@@ -234,7 +270,7 @@ async function runArm(arm: ArmName): Promise<ArmResult> {
 
 const pct = (part: number, whole: number): string => (whole > 0 ? `${((100 * part) / whole).toFixed(1)}%` : 'n/a');
 
-describe(`null-model arms for the memory substrate (${WORDS} words, seed ${SEED})`, () => {
+describe(`null-model arms for the memory substrate (${RECORD_PATH !== null ? `record ${RECORD_PATH}` : `${WORDS} words`}, seed ${SEED})`, () => {
   const results: ArmResult[] = [];
   const outDir = join(process.cwd(), '..', '..', 'bench', 'null-arms');
 
@@ -246,8 +282,12 @@ describe(`null-model arms for the memory substrate (${WORDS} words, seed ${SEED}
       expect(Number.isFinite(result.teachMsPerWord)).toBe(true);
       mkdirSync(outDir, { recursive: true });
       writeFileSync(
-        join(outDir, `${arm}-w${WORDS}.json`),
-        JSON.stringify({ commit: commitHash(), generatedAt: new Date().toISOString(), seed: SEED, overrides: ARM_OVERRIDES[arm], ...result }, null, 2)
+        join(outDir, RECORD_PATH !== null ? `${arm}-record.json` : `${arm}-w${WORDS}.json`),
+        JSON.stringify(
+          { commit: commitHash(), generatedAt: new Date().toISOString(), seed: SEED, record: RECORD_PATH, overrides: ARM_OVERRIDES[arm], ...result },
+          null,
+          2
+        )
       );
       // eslint-disable-next-line no-console
       console.log(

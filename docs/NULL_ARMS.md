@@ -66,9 +66,18 @@ It does **not** yet mean the static configuration should ship. Three heavy gates
 
 It also does not close the question of whether the field can earn a job. Two candidates remain, both from IMPROVEMENT_PLAN §2.1: the **context sketch** as a deliberate feature (the recency signal supports context-cued recall and priming — measure it *as that*, not as identity recall), and the **resonant readout** (excite the top-K candidates and let the inhibitory sweep arbitrate) against a softmax null on the sibling set. Those are the next two benches. If neither beats its null, the field is an encoder and the paper should say so.
 
+## The live system constraint
+
+The observer is operational — a long-lived server with a real learning record. That rules out one of the two dominant arms as a production change and leaves the other:
+
+- `static` changes how traces are **encoded at store time** (per-moment imprint). Flipping it would leave every existing trace encoded under the old trajectory and every new one under the new rule — mixed encodings in one bank — and the only clean path is a re-teach, which is not acceptable for a system that has learned. It stays an experimental arm.
+- `smf-off` changes only the **readout** (`smfWeight: 0` in the scoring blend). Stored traces are untouched, so it can be evaluated against the live record with zero writes and, if it holds, switched without migration. The conversation gate would move with it (from 0.8 to the bench's matched gate ≈ 0.99, or better, set by the isotonic calibration machinery per arm).
+
+The bench therefore has a **record mode**: `NULL_ARMS_RECORD=public/bootstrap.json npm run null-arms-bench` imports the observer's own exported snapshot into a fresh in-memory observer and probes it under each readout arm. It reads the file and writes only to `bench/null-arms/*-record.json`; the running server is never touched.
+
 ## Next steps (in order)
 
-1. Run `semanticRecall`, the polysemy probe set and the 20k identity gate under `static` and `smf-off`; if they hold, make `static` the production configuration behind a one-release flag and recalibrate the conversation gate from the bench's matched gate.
+1. Record mode on the live snapshot, `control` vs `smf-off` (and `coupling-0`), then the paraphrase semantic-recall gate and the polysemy probe set under `smf-off`. If they hold, switch the readout to `smf-off` behind a flag and recalibrate the conversation gate from the record's matched gate. No re-teach, no migration.
 2. Split the sketch into content and context (§2.1) and add the context-cued recall bench — the recency signal's own null-model test.
 3. Prototype the resonant readout vs. softmax on siblings.
 4. Rewrite paper §3.1, §5.1, §5.2 from `bench/null-arms/*.json`.
