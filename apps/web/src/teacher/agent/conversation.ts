@@ -14,7 +14,7 @@ import type {
   RecallResult
 } from '@sschepis/sentient-core';
 import {
-  CONVERSATION_RECALL_FLOOR,
+  conversationRecallFloor,
   CONVERSATION_EXACT_RECALL_FLOOR,
   creativeUnlockThreshold,
   type ConversationPair
@@ -28,7 +28,7 @@ import {
   type RememberedFact
 } from '../episodic';
 import {
-  CONVERSATION_HIGH_CONFIDENCE,
+  conversationHighConfidenceScore,
   CONVERSATION_MIN_MARGIN,
   authoritativeRecall,
   type ConversationAnswer,
@@ -114,7 +114,7 @@ export function ConversationMixin<TBase extends Constructor<TeacherAgentCore & C
         best = bestCreative;
       }
 
-      if (best === null || best.score < CONVERSATION_RECALL_FLOOR) {
+      if (best === null || best.score < conversationRecallFloor()) {
         return { utterance, response: null, confidence: null, traceId: null, cue: null, kind: null };
       }
 
@@ -143,7 +143,7 @@ export function ConversationMixin<TBase extends Constructor<TeacherAgentCore & C
         this.cueConfidence.set(matchedCue, best.score);
         const previous = this.lastRecallConfidence.get(matchedCue);
         this.lastRecallConfidence.set(matchedCue, best.score);
-        if (previous !== undefined && previous >= CONVERSATION_HIGH_CONFIDENCE && best.score < CONVERSATION_RECALL_FLOOR + 0.1) {
+        if (previous !== undefined && previous >= conversationHighConfidenceScore() && best.score < conversationRecallFloor() + 0.1) {
           this.storeBelief(matchedCue, `I used to recall ${matchedCue} better.`, 'drop', { previous, current: best.score });
         }
         // The competency numerator, by contrast, counts only PRODUCED answers

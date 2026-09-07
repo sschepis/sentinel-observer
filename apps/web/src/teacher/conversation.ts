@@ -302,6 +302,18 @@ export const CONVERSATION_CUE_TOKENS: readonly string[] = [
  * declarable noise, well below confident memory.
  */
 export const CONVERSATION_RECALL_FLOOR = 0.6;
+
+/**
+ * TASKS.md #10: the recall floor's LIVE value — the isotonic-fitted score
+ * (P(correct) ≥ FLOOR_DECISION_THRESHOLD) when the 'conversation-recall-floor'
+ * gate is enabled, else the hand constant (the control). The floor was
+ * calibrated on the blended score; the index-only readout (docs/NULL_ARMS.md)
+ * lifts every score, so the floor must move with the distribution or it
+ * stops gating anything.
+ */
+export function conversationRecallFloor(): number {
+  return calibratedGateScore('conversation-recall-floor', CONVERSATION_RECALL_FLOOR);
+}
 /**
  * The floor for an EXACT identity match in the chat's memorized layer: when
  * the question IS the taught cue (modulo terminal punctuation), the recalled

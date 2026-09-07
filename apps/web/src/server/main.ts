@@ -34,11 +34,22 @@
  *   --no-train            boot with the training loop stopped
  *   --store sqlite|json   working store (default json; sqlite migrates the
  *                         legacy JSON files once — recommended)
+ *
+ * Readout / gate switches (docs/NULL_ARMS.md, TASKS.md #10–12; env only,
+ * deliberate operator actions, never defaults):
+ *   OBSERVER_SMF_WEIGHT=0   score memories by prime-signature overlap alone
+ *                           (index-only readout; stored traces untouched)
+ *   OBSERVER_COUPLING=0     Kuramoto coupling off
+ *   OBSERVER_GATES_FILE=p   apply the calibrated gates artifact written by
+ *                           `npm run refit-gates` (bench/calibration/*.json)
+ *                           at boot — the fitted recall floor and
+ *                           high-confidence bar for the selected readout arm
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ServerSession } from './ServerSession';
 import { startHttpServer } from './http';
+import { applyCalibratedGates, CALIBRATED_GATE_SCORES, type CalibratedGatesArtifact } from '../teacher/calibration';
 
 /**
  * Minimal .env loader (zero dependencies): KEY=VALUE lines, `#` comments.
@@ -85,8 +96,36 @@ const RESEARCH_TOPICS = process.env.OBSERVER_RESEARCH_TOPICS === '1' || process.
 const TRAIN = !process.argv.includes('--no-train');
 const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'json');
 
+const GATES_FILE = process.env.OBSERVER_GATES_FILE ?? '';
+
+/** Apply the calibrated gates artifact BEFORE the observer boots, so every
+ *  gate read during restore and the first turns already sees the fitted
+ *  scores. A missing or malformed file is a hard error: an operator who
+ *  asked for calibrated gates must not silently run on the hand constants. */
+function applyGatesFile(path: string): void {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) throw new Error(`OBSERVER_GATES_FILE not found: ${resolved}`);
+  const artifact = JSON.parse(readFileSync(resolved, 'utf8')) as CalibratedGatesArtifact;
+  if (artifact === null || typeof artifact !== 'object' || typeof artifact.gates !== 'object') {
+    throw new Error(`OBSERVER_GATES_FILE is not a calibrated gates artifact: ${resolved}`);
+  }
+  const armEnv = process.env.OBSERVER_SMF_WEIGHT !== undefined && Number(process.env.OBSERVER_SMF_WEIGHT) === 0 ? 'smf-off' : 'control';
+  if (typeof artifact.arm === 'string' && artifact.arm !== armEnv) {
+    // The gates were fitted under one readout arm; running them under another
+    // is exactly the miscalibration the artifact exists to prevent.
+    throw new Error(`OBSERVER_GATES_FILE was fitted under arm "${artifact.arm}" but the readout arm is "${armEnv}" (set OBSERVER_SMF_WEIGHT accordingly, or refit)`);
+  }
+  const applied = applyCalibratedGates(artifact);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[observer-server] calibrated gates from ${resolved} (arm ${artifact.arm ?? 'unspecified'}, commit ${artifact.commit ?? '?'}): ` +
+      applied.map((gate) => `${gate}=${CALIBRATED_GATE_SCORES[gate]?.toFixed(3) ?? 'constant'}`).join(', ')
+  );
+}
+
 async function main(): Promise<void> {
   if (!Number.isFinite(PORT) || PORT <= 0) throw new Error(`invalid port: ${process.env.OBSERVER_PORT ?? arg('--port', '8787')}`);
+  if (GATES_FILE.length > 0) applyGatesFile(GATES_FILE);
 
   const server = new ServerSession({
     dataDir: DATA_DIR,

@@ -51,24 +51,38 @@ export const DECISION_THRESHOLD = WRONG_ANSWER_COST / (WRONG_ANSWER_COST + ABSTA
 // D.4 — calibrated gates (isotonic P(correct | score) → decision score)
 // ────────────────────────────────────────────────────────────────────────────
 
-/** The three calibrated gates of §5.2 row 3. */
+/** The calibrated gates: the three of §5.2 row 3 plus the conversation
+ *  recall FLOOR (TASKS.md #10 — the gate below which a recalled exchange is
+ *  not spoken at all), which the index-only readout switch re-fits together
+ *  with the high-confidence bar (docs/NULL_ARMS.md). */
 export type CalibratedGateName =
   | 'conversation-high-confidence'
+  | 'conversation-recall-floor'
   | 'creative-reinforce'
   | 'creative-unlock';
 
 /** Each gate's hand constant — the CONTROL the flag defaults to. */
 export const CALIBRATED_GATE_CONSTANTS: Record<CalibratedGateName, number> = {
   'conversation-high-confidence': 0.8,
+  'conversation-recall-floor': 0.6,
   'creative-reinforce': 0.7,
   'creative-unlock': 0.8
 };
+
+/** The decision threshold each gate fits against. The high-confidence,
+ *  store and unlock gates ACT at τ = 0.8 (a wrong answer costs 4× an
+ *  abstention). The recall FLOOR is a different decision — whether a
+ *  recalled exchange may be spoken at all, with cue identity and the margin
+ *  gate still to clear above it — and fits at even odds: P(correct) = 0.5.
+ *  A VALUE (§5.1), the author's judgment, never fitted. */
+export const FLOOR_DECISION_THRESHOLD = 0.5;
 
 /** Per-gate enable flags — ALL OFF by default (the constant is the control;
  *  a gate flips on only behind its calibration bench, and a lost probe
  *  flips it back). */
 export const CALIBRATED_GATE_FLAGS: Record<CalibratedGateName, boolean> = {
   'conversation-high-confidence': false,
+  'conversation-recall-floor': false,
   'creative-reinforce': false,
   'creative-unlock': false
 };
@@ -77,9 +91,41 @@ export const CALIBRATED_GATE_FLAGS: Record<CalibratedGateName, boolean> = {
  *  while the gate's flag is on. */
 export const CALIBRATED_GATE_SCORES: Record<CalibratedGateName, number | null> = {
   'conversation-high-confidence': null,
+  'conversation-recall-floor': null,
   'creative-reinforce': null,
   'creative-unlock': null
 };
+
+/**
+ * THE GATES ARTIFACT — what `npm run refit-gates` writes and what the server
+ * loads at boot (`OBSERVER_GATES_FILE`, server/main.ts). Rule 5 of
+ * IMPROVEMENT_PLAN.md applied to thresholds: the numbers the live system
+ * gates on come from a measured, committed artifact keyed by commit and by
+ * the readout arm they were fitted under, never from a hand edit.
+ */
+export interface CalibratedGatesArtifact {
+  commit?: string;
+  generatedAt?: string;
+  /** The readout arm the fit was made under (e.g. "smf-off" / "control"). */
+  arm?: string;
+  gates: Partial<Record<CalibratedGateName, { enabled: boolean; score: number | null }>>;
+}
+
+/** Apply a gates artifact: every listed gate takes its enabled flag and
+ *  fitted score; unlisted gates are untouched. Returns the gate names that
+ *  were applied. Unknown gate names are ignored (an artifact from a newer
+ *  build must not throw on an older one). */
+export function applyCalibratedGates(artifact: CalibratedGatesArtifact): CalibratedGateName[] {
+  const applied: CalibratedGateName[] = [];
+  for (const [name, setting] of Object.entries(artifact.gates ?? {})) {
+    if (!(name in CALIBRATED_GATE_CONSTANTS) || setting === undefined) continue;
+    const gate = name as CalibratedGateName;
+    const score = typeof setting.score === 'number' && Number.isFinite(setting.score) ? setting.score : null;
+    setCalibratedGate(gate, setting.enabled === true, score);
+    applied.push(gate);
+  }
+  return applied;
+}
 
 /** Enable/disable one calibrated gate and set its fitted decision score.
  *  `score` null = the gate keeps the constant even when enabled. */

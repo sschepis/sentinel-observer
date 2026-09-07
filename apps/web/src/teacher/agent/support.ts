@@ -5,7 +5,7 @@
  * files can import it without an import cycle.
  */
 import { FSRS_INITIAL_STABILITY, FSRS_INITIAL_DIFFICULTY } from '../fsrs';
-import { CONVERSATION_RECALL_FLOOR, type CreativeComposition } from '../conversation';
+import { conversationRecallFloor, type CreativeComposition } from '../conversation';
 import { calibratedGateScore } from '../calibration';
 import { tokenizeText, isContentWord, singularize } from '../context';
 import type { OperatorResult } from '../operators';
@@ -415,7 +415,7 @@ const READING_WORD_BUDGET = 64;
 function authoritativeRecall(score: number, margin: number, cue: string, matchedCue: string): boolean {
   if (!matchesCue(cue.trim().toLowerCase(), matchedCue.trim().toLowerCase())) return false;
   if (score >= conversationHighConfidenceScore()) return true;
-  return score >= CONVERSATION_RECALL_FLOOR && margin >= CONVERSATION_MIN_MARGIN;
+  return score >= conversationRecallFloor() && margin >= CONVERSATION_MIN_MARGIN;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

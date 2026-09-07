@@ -505,6 +505,23 @@ export const CONSTANTS: readonly ConstantEntry[] = [
     evidence: { sources: ['fuzz', 'adversarial', 'calibration'], mass: null, note: '§5.2 row 3: calibrated on labeled recall outcomes (exact cues vs fuzz distractors); anchored by the fuzz bench — a lost probe reverts the flag.' }
   },
   {
+    name: 'CALIBRATED_CONVERSATION_RECALL_83OOR',
+    class: 'tuning',
+    value: 0,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 83,
+    note: '0 = the 0.6 recall floor is the CONTROL; 1 = the floor is the isotonic P(correct | recall score) crossing 83OOR_DECISION_THRESHOLD (0.5), fitted by `npm run refit-gates` on the live record under the selected readout arm.',
+    evidence: { sources: ['fuzz', 'calibration'], mass: null, note: 'TASKS.md #10: the floor was tuned on the blended score; the index-only readout lifts every score (docs/NULL_ARMS.md). Fitted on a held-out split of the record\'s conversation pairs; applied only via OBSERVER_GATES_FILE.' }
+  },
+  {
+    name: '83OOR_DECISION_THRESHOLD',
+    class: 'values',
+    value: 0.5,
+    file: 'apps/web/src/teacher/calibration.ts',
+    line: 78,
+    note: 'The recall floor fits at even odds — P(correct) = 0.5 — a different decision from the τ = 0.8 acting gates: whether a recalled exchange may be spoken at all, with cue identity and the margin gate still to clear above it.'
+  },
+  {
     name: 'CALIBRATED_CREATIVE_REINFORCE',
     class: 'tuning',
     value: 0,

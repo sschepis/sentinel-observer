@@ -269,7 +269,7 @@ async function main(): Promise<void> {
   const recallSamples = collectRecallSamples(teacher, pairs);
   const gradeSamples = collectCreativeGradeSamples();
   const unlockSamples = await collectUnlockSamples();
-  const gateSamples: Record<CalibratedGateName, CalibrationSample[]> = {
+  const gateSamples: Partial<Record<CalibratedGateName, CalibrationSample[]>> = {
     'conversation-high-confidence': recallSamples,
     'creative-reinforce': gradeSamples,
     'creative-unlock': unlockSamples
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
   console.log('CALIBRATION ERROR (expected vs observed, score bins) — before = hand constant, after = isotonic fit:');
   const fittedScores = new Map<CalibratedGateName, number | null>();
   for (const gate of Object.keys(gateSamples) as CalibratedGateName[]) {
-    const samples = gateSamples[gate];
+    const samples = gateSamples[gate] ?? [];
     const constant = CALIBRATED_GATE_CONSTANTS[gate];
     const before = binnedCalibrationError(samples, handThresholdPredictor(constant)).error;
     const fit = fitIsotonicCalibration(samples);

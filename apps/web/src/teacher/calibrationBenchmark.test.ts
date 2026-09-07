@@ -329,7 +329,7 @@ describe('D.4 calibration bench — calibrated thresholds behind flags', () => {
     const gradeSamples = collectCreativeGradeSamples();
     const { samples: unlockSamples, levels } = await collectUnlockSamples();
 
-    const gateSamples: Record<CalibratedGateName, CalibrationSample[]> = {
+    const gateSamples: Partial<Record<CalibratedGateName, CalibrationSample[]>> = {
       'conversation-high-confidence': recallSamples,
       'creative-reinforce': gradeSamples,
       'creative-unlock': unlockSamples
@@ -337,7 +337,7 @@ describe('D.4 calibration bench — calibrated thresholds behind flags', () => {
 
     const rows: Array<{ gate: CalibratedGateName; before: number; after: number; fitted: number | null; mass: number }> = [];
     for (const gate of Object.keys(gateSamples) as CalibratedGateName[]) {
-      const samples = gateSamples[gate];
+      const samples = gateSamples[gate] ?? [];
       const constant = CALIBRATED_GATE_CONSTANTS[gate];
       const before = binnedCalibrationError(samples, handThresholdPredictor(constant)).error;
       const fit = fitIsotonicCalibration(samples);
@@ -356,7 +356,7 @@ describe('D.4 calibration bench — calibrated thresholds behind flags', () => {
 
     // ── 3. Enable the calibrated gates and run the heavy gates ─────────────
     for (const gate of Object.keys(gateSamples) as CalibratedGateName[]) {
-      const fitted = calibratedDecisionScore(gateSamples[gate], DECISION_THRESHOLD).score;
+      const fitted = calibratedDecisionScore(gateSamples[gate] ?? [], DECISION_THRESHOLD).score;
       setCalibratedGate(gate, true, fitted);
     }
 
