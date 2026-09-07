@@ -66,6 +66,35 @@ It does **not** yet mean the static configuration should ship. Three heavy gates
 
 It also does not close the question of whether the field can earn a job. Two candidates remain, both from IMPROVEMENT_PLAN §2.1: the **context sketch** as a deliberate feature (the recency signal supports context-cued recall and priming — measure it *as that*, not as identity recall), and the **resonant readout** (excite the top-K candidates and let the inhibitory sweep arbitrate) against a softmax null on the sibling set. Those are the next two benches. If neither beats its null, the field is an encoder and the paper should say so.
 
+## The live record — record mode, run natively on the author's machine (2026-09-07)
+
+`NULL_ARMS_RECORD=public/bootstrap.json NULL_ARMS_ARMS=control,smf-off,coupling-0 npm run null-arms-bench` — the observer's own exported snapshot (≈21,000 traces, 20,272 words, the record the server has been learning into), 300 identity probes, 250 semantic probes, 80 pairs × 3 distractors (240). Read-only; ≈7 minutes per arm. Artifacts: `bench/null-arms/*-record.json`.
+
+| arm | identity | semantic | exact cues | FP @ 0.8 | FP @ matched gate | AUC | mean margin |
+|---|---|---|---|---|---|---|---|
+| control | 100% (300/300) | 72.0% (180/250) | 79/80 | **1/240** | **159** (gate 0.610) | **0.881** | 0.214 |
+| smf-off | 100% (300/300) | 72.0% (180/250) | **80/80** | 112/240 | **0** (gate 1.000) | **1.000** | 0.220 |
+| coupling-0 | 100% (300/300) | 72.0% (180/250) | 79/80 | 1/240 | 171 (gate 0.621) | 0.891 | 0.203 |
+
+The pattern from the deck-slice runs holds on what the observer has actually learned, and two details sharpen it:
+
+- **Identity recall is 100% in every arm on this sample**, control included. The live record has been reviewed for days, so its word traces are consolidated; the 1–2-word loss the SMF term caused on fresh deck slices is not visible at n = 300 here, and the paper's 94.6% should be re-measured on the record rather than quoted.
+- **Semantic recall is 72.0% in every arm to the probe** — lower than the 81–90% on small slices because 21k traces compete, and once again identical across arms: the definition→word faculty owes nothing to the substrate. This is the number the paper should carry as its memory result, with its n.
+- **Separation:** control AUC 0.881 with 159 false positives at its matched gate and one exact cue missed; `smf-off` AUC **1.000**, every exact cue recalled, zero false positives at a gate of 1.000. `coupling-0` is control within noise (0.891) — the dynamics are inert on the live record too.
+
+**Reading the `smf-off` gate honestly.** Its matched gate is exactly 1.000: with pure prime overlap an exact cue scores 1 and every last-word distractor scores strictly less. That is perfect separation of *these* probes, but it is a knife-edge for a live system — any legitimate variant of a taught cue ("how are you today" against "how are you") also scores below 1, and the overlap term cannot tell a legitimate variant from a distractor because both are partial bags of the same primes. In production that job is already done by the chat identity gate (`matchesCue`), not by the confidence; the confidence gate is secondary. So the readout switch is safe for what the confidence gate protects, *provided the gates move with the distribution*.
+
+**What actually has to change to flip the readout.** `smfWeight: 0` shifts every recall score upward (the trajectory term was depressing them all), so every threshold tuned on the depressed distribution is wrong afterwards: `CONVERSATION_RECALL_FLOOR` 0.6, `CONVERSATION_EXACT_RECALL_FLOOR` 0.4, `CONVERSATION_HIGH_CONFIDENCE` 0.8, `CONVERSATION_MIN_MARGIN` 0.05, the memorized-answer gate, the calibration samples already collected under the old distribution, and the trust-kernel buckets keyed on confidence bands (16 read sites of `.confidence` in the agent). The principled path is the one the project already built and left off: fit the isotonic gates (`calibration.ts`, `CALIBRATED_GATE_FLAGS`) on the *new* score distribution with a held-out split, and let them replace the hand constants — Rule 5 applied to thresholds. A hand-retune to "≈ 0.99" would work today and drift tomorrow.
+
+**The switch itself is one environment variable.** `observer/engine.ts` now honors `OBSERVER_SMF_WEIGHT` and `OBSERVER_COUPLING` for every observer built through `ObserverSession` — server, trainer and gates alike — as readout/dynamics overrides that never touch stored encodings; unset, the engine is bit-identical. Run the remaining gates under it before deciding:
+
+```
+cd apps/web
+OBSERVER_SMF_WEIGHT=0 npx jest -c jest.bench.config.cjs --testPathPatterns "semanticRecall|polysemyProbeSet|ciGates"
+```
+
+The polysemy probe set is the one that matters: the bank's own header says sibling separation "rides on the SMF term alone". If it holds at `smfWeight: 0`, that claim was about the hash-signature era and the semantic-is-a differentiator primes now carry it; if it fails, the readout switch needs a sibling-aware term first.
+
 ## The live system constraint
 
 The observer is operational — a long-lived server with a real learning record. That rules out one of the two dominant arms as a production change and leaves the other:
@@ -77,7 +106,7 @@ The bench therefore has a **record mode**: `NULL_ARMS_RECORD=public/bootstrap.js
 
 ## Next steps (in order)
 
-1. Record mode on the live snapshot, `control` vs `smf-off` (and `coupling-0`), then the paraphrase semantic-recall gate and the polysemy probe set under `smf-off`. If they hold, switch the readout to `smf-off` behind a flag and recalibrate the conversation gate from the record's matched gate. No re-teach, no migration.
+1. ~~Record mode on the live snapshot~~ done (above). Next: the paraphrase semantic-recall gate, the polysemy probe set and `ciGates` under `OBSERVER_SMF_WEIGHT=0`. If they hold, flip the server's readout with the same variable and re-fit the gates with the calibration machinery on the new distribution (held-out). No re-teach, no migration.
 2. Split the sketch into content and context (§2.1) and add the context-cued recall bench — the recency signal's own null-model test.
 3. Prototype the resonant readout vs. softmax on siblings.
 4. Rewrite paper §3.1, §5.1, §5.2 from `bench/null-arms/*.json`.

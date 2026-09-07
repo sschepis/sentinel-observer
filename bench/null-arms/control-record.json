@@ -1,0 +1,28 @@
+{
+  "commit": "da86af4",
+  "generatedAt": "2026-09-07T19:00:26.214Z",
+  "seed": 24301,
+  "record": "public/bootstrap.json",
+  "overrides": {},
+  "arm": "control",
+  "words": 20272,
+  "identity": {
+    "correct": 300,
+    "n": 300
+  },
+  "semantic": {
+    "correct": 180,
+    "n": 250
+  },
+  "fuzz": {
+    "pairs": 80,
+    "exactRecalled": 79,
+    "distractors": 240,
+    "falsePositives": 1,
+    "meanMargin": 0.21447335911386686,
+    "auc": 0.8805989583333333,
+    "falsePositivesAtMatchedGate": 159,
+    "matchedGate": 0.6103891393160531
+  },
+  "teachMsPerWord": 0.2287142857142857
+}

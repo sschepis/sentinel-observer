@@ -18,6 +18,39 @@ export interface ObserverSessionState {
 }
 
 /**
+ * SUBSTRATE ARM OVERRIDE (docs/NULL_ARMS.md — an evaluation hook, default off).
+ *
+ * `OBSERVER_SMF_WEIGHT` and `OBSERVER_COUPLING`, when set in the environment,
+ * override the recall-blend SMF weight and the Kuramoto coupling of EVERY
+ * observer built through this session — the server, the trainer, and every
+ * gate — so a heavy gate (semanticRecall, polysemyProbeSet, ciGates, the 20k
+ * identity gate) can be run under a null arm without editing its options:
+ *
+ *     OBSERVER_SMF_WEIGHT=0 npx jest -c jest.bench.config.cjs --testPathPatterns "semanticRecall|polysemyProbeSet|ciGates"
+ *
+ * Both are READOUT/dynamics overrides — neither changes how traces are
+ * encoded at store time, so an existing record is scored, never re-encoded.
+ * Unset (the default) the options pass through untouched — bit-identical to
+ * the pre-hook engine. This is the "one-release flag" NULL_ARMS.md names for
+ * moving production to `smf-off` without a migration; setting it for the
+ * server is a deliberate operator action, never a default.
+ */
+function applySubstrateArm(options: SemanticObserverOptions): SemanticObserverOptions {
+  const env = typeof process !== 'undefined' ? process.env : undefined;
+  if (env === undefined) return options;
+  const smfWeight = env.OBSERVER_SMF_WEIGHT !== undefined ? Number(env.OBSERVER_SMF_WEIGHT) : undefined;
+  const coupling = env.OBSERVER_COUPLING !== undefined ? Number(env.OBSERVER_COUPLING) : undefined;
+  const smfOverride = smfWeight !== undefined && Number.isFinite(smfWeight) && smfWeight >= 0;
+  const couplingOverride = coupling !== undefined && Number.isFinite(coupling) && coupling >= 0;
+  if (!smfOverride && !couplingOverride) return options;
+  return {
+    ...options,
+    ...(couplingOverride ? { coupling } : {}),
+    ...(smfOverride ? { memoryBankOptions: { ...options.memoryBankOptions, smfWeight } } : {})
+  };
+}
+
+/**
  * Owns a SemanticObserver instance and its tick loop.
  *
  * The observer is a pure engine: this session is the only place that couples
@@ -33,7 +66,7 @@ export class ObserverSession {
     options: SemanticObserverOptions = {},
     intervalMs = 250
   ) {
-    this.observer = new SemanticObserver(options);
+    this.observer = new SemanticObserver(applySubstrateArm(options));
     this.intervalMs = intervalMs;
   }
 
