@@ -95,6 +95,19 @@ OBSERVER_SMF_WEIGHT=0 npx jest -c jest.bench.config.cjs --testPathPatterns "sema
 
 The polysemy probe set is the one that matters: the bank's own header says sibling separation "rides on the SMF term alone". If it holds at `smfWeight: 0`, that claim was about the hash-signature era and the semantic-is-a differentiator primes now carry it; if it fails, the readout switch needs a sibling-aware term first.
 
+## The remaining gates under `OBSERVER_SMF_WEIGHT=0` (2026-09-07, native)
+
+| gate | under `smf-off` | note |
+|---|---|---|
+| `semanticRecall` | **pass** — paraphrase→word 70% (14/20); raw prime-overlap baseline 0/10 | the same numbers the paper reports for control: the gate does not see the term |
+| `ciGates` | **pass** — calibration 0.113, ASK 33%, accuracy-when-answering 100% (8/8) | identical to control (the paper's own "bit-identical across arms" reading) |
+| `polysemyProbeSet` — merged graph | **pass** — confident cross-sense "Yes" 0; the six cross-sense probes answer hedged "Probably" | the honesty contract holds without the term |
+| `polysemyProbeSet` — sense split | **2 assertions fail** — `classifyRegime` reads the *bank* candidates `[0.756, 0.617, …]` as `clear` (relative top-two margin 0.184 ≥ 0.17), so *bank* gets a hedged hologram answer ("I believe so — bank is an institution") instead of the disambiguating ask; 8 asks instead of the required 9. Confident cross-sense "Yes" is still 0. | **not a separation failure — a calibration failure** |
+
+The sense-split failure is exactly the recalibration problem named above, made concrete. `topTwoMargin` is already relative, `(s₁ − s₂)/s₁`, but its threshold 0.17 was set from margin bands measured on the *blended* score, where the SMF term — near-identical for two sense traces taught in sequence — halves every relative margin. Remove the term and the same asymmetry between the two *bank* sense traces (they inherit different numbers of category primes, so their overlap normalizations differ) reads twice as large and crosses the gate. The regime instrument is measuring the arm's score scale, not the cue's ambiguity. Two fixes, in order of principle: derive the regime thresholds per arm from the `cde-bench` margin bands (adversarial vs exact) measured under that arm — `OBSERVER_SMF_WEIGHT=0 npm run cde-bench` gives them — and, for the sense-disambiguation ask specifically, stop reading the generic regime classifier and compare the *sense candidates' overlap with the cue's own primes*, which is scale-free by construction.
+
+Verdict after the gate run: the readout switch loses nothing the heavy gates measure and keeps the honesty contract; the one regression is a constant calibrated on the old score scale. The sequence stands: refit gates and regime thresholds on the new distribution, then flip.
+
 ## The live system constraint
 
 The observer is operational — a long-lived server with a real learning record. That rules out one of the two dominant arms as a production change and leaves the other:
@@ -106,7 +119,7 @@ The bench therefore has a **record mode**: `NULL_ARMS_RECORD=public/bootstrap.js
 
 ## Next steps (in order)
 
-1. ~~Record mode on the live snapshot~~ done (above). Next: the paraphrase semantic-recall gate, the polysemy probe set and `ciGates` under `OBSERVER_SMF_WEIGHT=0`. If they hold, flip the server's readout with the same variable and re-fit the gates with the calibration machinery on the new distribution (held-out). No re-teach, no migration.
+1. ~~Record mode on the live snapshot; semanticRecall / polysemy / ciGates under `smf-off`~~ done (above). Next: `OBSERVER_SMF_WEIGHT=0 npm run cde-bench` for the margin bands; make the regime thresholds arm-derived (or make the sense-disambiguation ask scale-free); re-fit the conversation gates with the calibration machinery on the new distribution (held-out); then flip the server's readout with the same variable. No re-teach, no migration.
 2. Split the sketch into content and context (§2.1) and add the context-cued recall bench — the recency signal's own null-model test.
 3. Prototype the resonant readout vs. softmax on siblings.
 4. Rewrite paper §3.1, §5.1, §5.2 from `bench/null-arms/*.json`.
