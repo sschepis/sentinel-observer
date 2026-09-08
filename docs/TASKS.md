@@ -1,6 +1,6 @@
 # Sentinel Observer — task list
 
-*Updated 2026-09-07 (evening). Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it) and NULL_ARMS.md (the memory-substrate measurements).*
+*Updated 2026-09-08. Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it) and NULL_ARMS.md (the memory-substrate measurements).*
 
 ## Where things stand, in plain terms
 
@@ -28,6 +28,8 @@ Two terms used below: **SMF term** = the oscillator-field similarity term in the
 | 14 | Decided: take all the day-one fixes at once on the next restart | — |
 | 16 | Drives now own one real decision: when a reply could be a composition about known material or a question about it, the drives choose (sampled at the drive temperature). Bench: ask share rises from 5.6% to 44.4% as curiosity goes 0→1; the same drive state on a fresh teacher reproduces the same shares exactly. | `teacher/agent/motivation.ts`, `driveArbitration.test.ts`, commit `8e35fca` |
 | 17 | Deviation meter now reads what was *said*: a question or "I cannot tell" is an abstention; a claim that cites memory (traces, edges, an operator, rules) is grounded; a claim that cites nothing is composed — whichever layer produced it. A read-about fact spoken at the ask layer ("Zeus is a god") now counts as grounded speech and carries the edges it came from. Shown on the introspection page and as a chat badge only where it disagrees with the routing label. | `teacher/speechAct.ts`, `speechAct.test.ts`, commit `58968e7` |
+| 28 | **The grader check.** Found while reading the live record after the restart: the observer has had 2,619 compositions graded and *zero* graded good, ever — its compose drive weight was pinned at the floor by a judge that may never have said "good". The training loop now grades known-good and known-bad answers (taught pairs' own responses vs. other pairs') before its first cycle and every 100 cycles; a grader that cannot separate them, or never grades a correct answer as strong, is *untrusted*: its grades are recorded but move nothing (no reinforcement, weakening, drive outcome or gap), and creative practice stops asking it. Verdict on the introspection page and in the chat feedback. `npm run grader-check` prints the distributions for the configured model. | `teacher/graderCheck.ts`, `graderCheck.test.ts`, `cli/grader-check.ts`, commit `82137b7` |
+| 29 | Goal stalls and completions were booked twice (seen live: 6 abandoned for 3 stalls). One transition, one entry. | commit `661822c` |
 | 18 | Goal loop runs in the server: every classroom cycle discovers goals from the observer's own measures (words it keeps missing → learn-word; "I keep failing X" → fill-gap), takes one plan step on a goal chosen at the drive temperature, and a goal that stalls raises its target in the lesson queue and makes it the next research topic. Bench: a stalled goal on the last-ranked word puts it first; without the stall the order is unchanged. | `teacher/agent/goals.ts`, `teacher/plan.ts`, `server/trainingLoop.ts`, `goalLoop.test.ts`, commit `7ed83f5` |
 
 ---
@@ -69,6 +71,15 @@ The merged fixes change behavior the first time the server restarts. Decide thes
 | 23 | Benches | Every bench writes a JSON artifact; paper tables are generated from them; honesty-bench negatives come from WordNet instead of the model's own graph; seed the fuzz bench | Rule 3 and Rule 5 from the plan. |
 
 ---
+
+## After the grader check (new, in order)
+
+| # | Task | Who | Note |
+|---|---|---|---|
+| 30 | Run `cd apps/web && npm run grader-check` against the current teacher model and paste the output | Sebastian | The model in the ledger is `dirty-muse-writer-v01-uncensored-erotica-nsfw-i1` — a fiction-writing model, not an instruct model tuned for JSON grading. The check will say whether it can judge at all. |
+| 31 | If untrusted: point `OBSERVER_CHAPERONE_MODEL` at an instruction-tuned model that returns the grade schema; re-run the check; restart | Sebastian | The same model also answers gaps and proposes exchanges — the stalled fill-gap goals on creative-practice prompts are probably the same failure. |
+| 32 | Restart the server once more to pick up #28/#29 | Sebastian | Until then the running process still books stalls twice and applies every grade. |
+| 33 | Watch `compose` in behaviorWeights drift back toward 0.3 once no fresh compose outcomes land (driveWeightDays) | — | If the grader is repaired instead, wins will move it directly. |
 
 ## Housekeeping
 
