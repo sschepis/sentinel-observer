@@ -18,7 +18,7 @@ The observer is only as deep as its world, and its world was a dictionary, a few
 
 ```
 cd apps/web
-npm run fetch-conceptnet                  # streams the 1.2 GB dump; keeps rows between two deck words
+npm run fetch-conceptnet                  # streams the 1.2 GB dump; keeps rows with at least one deck-word end
 npm run fetch-hf -- dailydialog           # short single-turn pairs in the cue grammar
 npm run fetch-hf -- simplewiki --rows 20000
 npm run fetch-hf -- tinystories --rows 20000
@@ -37,6 +37,8 @@ The budget comes from a measurement (`ingestScaleBenchmark`, full 20k deck): a 1
 ## What each source means to the observer
 
 **ConceptNet.** Its relations are the observer's predicates: IsA, PartOf, HasA, AtLocation, MadeOf, HasProperty, CapableOf, UsedFor, Causes, Antonym, HasPrerequisite, DefinedAs → is-a, has-part, located-in, made-of, has-property, capable-of, used-for, causes, opposite-of, requires, defined-as. Its `Not*` relations become confirmed-false claims — the first negatives the honesty benches have that come from outside the observer's own graph. Ingestion is multi-valued (a knowledge graph states many objects per predicate; only a stored denial refuses an edge, and a same-batch denial is applied first). A claim only ConceptNet states is spoken hedged ("Probably, a zebu is a mammal") until a taught definition or a read passage agrees, exactly like a chaperone edge; the ConceptNet weight adds a small confidence overlay so a heavily attested edge weathers a wrong grade. Edge origins now survive restore instead of collapsing to "chaperone".
+
+**Vocabulary growth.** A word here is a prime signature, and the deck's 20k signatures are derived as a unit with every stored memory encoded under them — so the corpus cannot simply be appended to the deck. Instead the observer grows its vocabulary append-only: a ConceptNet row whose one end is a deck word and whose other end is an unknown single word makes the observer *learn that the word exists* — a word-only entry with its own collision-free signature and no definition (recognition quizzes only; encounter counts drive the curiosity to ask what it means, which the definitions source will answer). Grown words are persisted with their exact primes and re-added byte-identically on restore; the deck fingerprint never changes. The gate (`vocabularyGrowth.test.ts`) asserts that every pre-existing signature and every recall of a taught word is unchanged after growth. Single tokens only — `ice cream` has no token in this system yet. Rows with no deck-word end are not kept: the graph stays anchored to words the observer can define.
 
 **Dialogue.** The observer memorizes whole exchanges, so the useful unit is one short turn and its reply. DailyDialog is cut into consecutive (turn, reply) pairs and filtered hard: a one-sentence cue of at most twelve words in the lowercase cue grammar, a whole reply, no names, numbers or context-bound pronouns. Most of the corpus is refused, on purpose.
 
