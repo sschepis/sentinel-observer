@@ -83,6 +83,49 @@ describe('reading: the vocabulary gate', () => {
   });
 });
 
+describe('reading: misreads found on the Simple Wikipedia corpus (passageBenchmark, 2026-09-08)', () => {
+  it('an existential sentence has no subject: "After independence there was a civil war" is not "independence is-a war"', () => {
+    expect(readSentence('After independence there was a civil war from 1975 to 2002.', VOCABULARY, null)).toEqual([]);
+    expect(readSentence('There are many kinds of bird.', VOCABULARY, null)).toEqual([]);
+  });
+  it('a quantifier pronoun is not a subject: "Others lived in one place and built cities" reads nothing', () => {
+    expect(readSentence('Others lived in one place and built cities and kingdoms.', VOCABULARY, null)).toEqual([]);
+    expect(readSentence('Some live in forests.', VOCABULARY, null)).toEqual([]);
+    expect(readSentence('Many are birds.', VOCABULARY, null)).toEqual([]);
+  });
+  it('a possessive object is dropped: "their descendants" is nobody\'s kind or part', () => {
+    expect(readSentence('Americans are their descendants.', VOCABULARY, null, new Set(['americans']))).toEqual([]);
+    const parts = readSentence('A robin has feathers and their nests.', VOCABULARY, null);
+    expect(parts.map((c) => c.object)).toEqual(['feather']);
+  });
+  it('the head noun is the last word BEFORE the phrase ends — never a participle, a post-modifier or an adjective walked to', () => {
+    const say = (sentence: string, entities: string[] = []) =>
+      readSentence(sentence, VOCABULARY, null, new Set(entities)).map((c) => `${c.subject} ${c.predicate} ${c.object}`);
+    expect(say('Einstein on the Beach is an opera written by a composer.', ['beach'])).toEqual(['beach is-a opera']);
+    expect(say('The Warsaw Pact was an alliance created in 1955.', ['pact'])).toEqual(['pact is-a alliance']);
+    expect(say('A planet is a large object such as Venus or Earth that orbits a star.')).toEqual(['planet is-a object']);
+    expect(say('Mercury is the closest planet to the sun.', ['mercury'])).toEqual(['mercury is-a planet']);
+    // A placeholder head ("a modern FORM of slavery") reads nothing rather than the adjective.
+    expect(say('In industrialised countries, human trafficking is a modern form of slavery.')).toEqual([]);
+    expect(say('Wood is a renewable resource, but it takes time to renew.')).toEqual(['wood is-a resource']);
+    expect(say('It is a spherical volume centered on the observer.', ['universe'])).toEqual([]);
+  });
+  it('has-part refuses auxiliaries, comparatives and second clauses; capable-of refuses copulas and skips adverbs', () => {
+    const say = (sentence: string) => readSentence(sentence, VOCABULARY, null).map((c) => `${c.subject} ${c.predicate} ${c.object}`);
+    expect(say('The song has also been translated into other languages.')).toEqual([]);
+    expect(say('Half of these words have fewer than four letters.')).toEqual([]);
+    expect(say('Some animals also have hair like this, and people sometimes have beards.')).toEqual(['animal has-part hair']);
+    expect(say('Sometimes a television can look like a box.')).toEqual([]);
+    expect(say('A bird can easily fly.')).toEqual(['bird capable-of fly']);
+    expect(say('A temple is a general term for a house of worship.')).toEqual([]);
+  });
+  it('measure and kind nouns are not parts: "Some work boots have a flat piece of steel" yields no has-part piece', () => {
+    expect(readSentence('A boot has a flat piece of steel in the sole.', VOCABULARY, null).filter((c) => c.object === 'piece')).toEqual([]);
+    // A real part still reads.
+    expect(readSentence('A boot has a sole.', VOCABULARY, null).map((c) => `${c.subject} ${c.predicate} ${c.object}`)).toEqual(['boot has-part sole']);
+  });
+});
+
 describe('reading: modality gates (nothing unasserted is read)', () => {
   const cases: Array<[string, string]> = [
     ['questions', 'Is a robin a bird?'],

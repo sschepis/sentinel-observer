@@ -110,7 +110,13 @@ const NON_HEAD = new Set([
   // otherwise pick up ("Zeus was the ONE who...", "...respectively").
   'one', 'ones', 'two', 'three', 'part', 'parts', 'kind', 'kinds', 'type', 'types', 'form', 'forms',
   'name', 'names', 'number', 'numbers', 'group', 'groups', 'member', 'members', 'example', 'examples',
-  'respectively', 'today', 'time', 'times', 'way', 'ways', 'place', 'places', 'people', 'person'
+  'respectively', 'today', 'time', 'times', 'way', 'ways', 'place', 'places', 'people', 'person',
+  // Ordinals and demonstratives are not heads ("the SECOND is the…", "ideas about THESE").
+  'second', 'third', 'fourth', 'fifth', 'former', 'latter', 'these', 'those', 'this', 'that', 'them', 'it',
+  // Directions read as places by the location pattern ("Africa, SOUTH of…").
+  'north', 'south', 'east', 'west',
+  // Comparatives: "have FEWER than four letters".
+  'fewer', 'less', 'greater', 'larger', 'smaller', 'higher', 'lower', 'better', 'worse'
 ]);
 
 /**
@@ -229,18 +235,35 @@ function readable(sentence: string, entitySubject: boolean): boolean {
  * precision on mythology prose before the cut, and the graph fills with
  * "zeus is-a lightning".
  */
-const PHRASE_END = /\b(?:of|in|on|at|from|by|for|with|who|whom|whose|which|that|when|where|known|called|named|born|during|after|before|between|among|near|under|over|through|according|respectively)\b/i;
+const PHRASE_END =
+  /\b(?:of|to|in|on|at|from|by|for|with|who|whom|whose|which|that|when|where|known|called|named|born|during|after|before|between|among|near|under|over|through|according|respectively|like|than|such as|into|onto|against|without|within|towards?|about|around|across|along|behind|beside|beyond|inside|outside|since|until|via|versus)\b|[,;:]/i;
 
-/** The head noun of a single noun phrase (English is head-final). */
+/** Participles that open a REDUCED RELATIVE CLAUSE after a noun ("an opera
+ *  WRITTEN by…", "an alliance CREATED in…"): the noun phrase ends before
+ *  them. Measured on Simple Wikipedia — the head-final walk was returning
+ *  the participle as the head ("beach is-a written"). */
+const REDUCED_RELATIVE =
+  /\b(?:written|used|created|made|located|situated|based|considered|described|given|taken|held|built|formed|produced|released|published|designed|developed|invented|introduced|established|founded|elected|appointed|played|spoken|surrounded|composed|derived|owned|led|governed|ruled|inhabited|populated|discovered|defined|divided|separated|connected|followed|caused|meant|thought|believed|said|seen|shown|listed|mentioned|represented|characterized|characterised|marked|filled|covered|dominated|influenced|inspired|born|centered|centred|painted|carved|shaped|colored|coloured|powered|driven|grown|kept|laid|lined|linked|joined|attached|fixed|mounted|installed|placed|put|labelled|labeled|arranged|organized|organised|sorted|ranked|rated|measured|estimated|calculated|counted|numbered|dated|titled|entitled|dedicated|devoted|reserved|intended|meant|supposed|expected|required|needed|wanted|chosen|selected|picked|preferred|favored|favoured)\b/i;
+
+/** Where a SINGLE noun phrase ends: the post-modifiers above, plus the
+ *  coordinators and clause openers a list-object scan must keep. */
+const NP_END = new RegExp(`${PHRASE_END.source}|\\b(?:and|or|but|so|because|although|while|nor)\\b|${REDUCED_RELATIVE.source}`, 'i');
+
+/**
+ * The head noun of a single noun phrase (English is head-final): the last
+ * token before the phrase ends. Precision-first — when that token is a
+ * placeholder ("a modern FORM of slavery") or a word the observer does not
+ * know, the answer is null, never a walk leftwards into an adjective
+ * ("trafficking is-a modern").
+ */
 function headNoun(phrase: string, vocabulary: ReadonlySet<string>, entities: ReadonlySet<string>): string | null {
-  const cut = phrase.search(PHRASE_END);
-  const head = (cut > 0 ? phrase.slice(0, cut) : phrase).trim();
+  const cut = phrase.search(NP_END);
+  const head = (cut > 0 ? phrase.slice(0, cut) : cut === 0 ? '' : phrase).trim();
   const tokens = head.split(/\s+/).filter((token) => token.length > 0);
-  for (let i = tokens.length - 1; i >= 0; i -= 1) {
-    const resolved = resolveWord(tokens[i], vocabulary, entities);
-    if (resolved !== null) return resolved;
-  }
-  return null;
+  if (tokens.length === 0) return null;
+  const last = tokens[tokens.length - 1].toLowerCase().replace(/[^a-z-]/g, '');
+  if (last.length === 0 || NON_HEAD.has(last)) return null;
+  return resolveWord(tokens[tokens.length - 1], vocabulary, entities);
 }
 
 /**
@@ -256,10 +279,18 @@ function headNoun(phrase: string, vocabulary: ReadonlySet<string>, entities: Rea
 const ATTRIBUTE_NOUN = new Set([
   'symbol', 'symbols', 'sign', 'signs', 'item', 'items', 'colour', 'color', 'colours', 'colors',
   'name', 'names', 'title', 'titles', 'number', 'numbers', 'shape', 'shapes', 'size', 'sizes',
-  'guess', 'result', 'results', 'reason', 'reasons', 'cause', 'causes', 'aim', 'goal', 'goals'
+  'guess', 'result', 'results', 'reason', 'reasons', 'cause', 'causes', 'aim', 'goal', 'goals',
+  // Metalinguistic: "a temple is a general TERM for…" is about the word, not the thing.
+  'term', 'terms', 'word', 'words', 'phrase', 'phrases', 'expression', 'plural', 'singular', 'abbreviation', 'acronym', 'spelling', 'translation'
 ]);
 
 const NOT_A_PART = new Set([
+  // Measure, kind and container nouns: "have a flat piece of steel", "has a
+  // number of forms" — the head noun names no part (Simple Wikipedia bench).
+  'piece', 'pieces', 'type', 'types', 'kind', 'kinds', 'sort', 'sorts', 'form', 'forms', 'variety',
+  'varieties', 'amount', 'amounts', 'lot', 'lots', 'bit', 'bits', 'number', 'numbers', 'set', 'sets',
+  'series', 'range', 'way', 'ways', 'place', 'places', 'time', 'times', 'name', 'names', 'total',
+  'population', 'area', 'areas', 'member', 'members', 'group', 'groups', 'half', 'quarter', 'majority', 'minority',
   'war', 'battle', 'fight', 'feeling', 'feelings', 'headache', 'idea', 'ideas', 'problem', 'problems',
   'power', 'powers', 'control', 'influence', 'effect', 'effects', 'reason', 'reasons', 'right', 'rights',
   'life', 'death', 'birth', 'love', 'hate', 'fear', 'luck', 'fame', 'honor', 'honour', 'meaning',
@@ -281,15 +312,24 @@ function objectList(
   entities: ReadonlySet<string>,
   single: boolean
 ): string[] {
+  // A POSSESSIVE object ("their descendants", "Zeus's children") names
+  // something by its relation to someone else — not a kind or a part of the
+  // subject. Dropped, like a possessive subject is.
+  const possessive = (chunk: string): boolean => /\b(?:his|her|its|their|my|your|our)\b|'s\b/i.test(chunk);
   if (single) {
+    if (possessive(rest)) return [];
     const head = headNoun(rest, vocabulary, entities);
     return head === null ? [] : [head];
   }
   // Only conjuncts BEFORE the first post-modifier are objects of this claim.
   const cut = rest.search(PHRASE_END);
-  const scope = cut > 0 ? rest.slice(0, cut) : rest;
+  const scope = cut > 0 ? rest.slice(0, cut) : cut === 0 ? '' : rest;
+  // A conjunct that carries its own verb is a second CLAUSE, not another
+  // object: "have hair like this, and people sometimes have beards".
+  const clause = /\b(?:is|are|was|were|has|have|had|can|could|do|does|did|will|would|may|might)\b/i;
   return scope
     .split(/\s*(?:,|\band\b)\s*/i)
+    .filter((chunk) => !possessive(chunk) && !clause.test(chunk))
     .map((chunk) => headNoun(chunk, vocabulary, entities))
     .filter((word): word is string => word !== null);
 }
@@ -302,6 +342,9 @@ function subjectOf(phrase: string, vocabulary: ReadonlySet<string>, entities: Re
   // the symbol, not about Athena — and the observer has no relation for
   // "symbol of", so the claim is dropped rather than misattributed.
   if (/'s\b/.test(phrase) || /\b(?:his|her|its|their|my|your|our)\b/i.test(phrase)) return null;
+  // A QUOTED subject is a title ("O Canada" is the national anthem): the
+  // claim is about a work the observer has no word for.
+  if (/["“”]/.test(phrase)) return null;
   // A CONJOINED subject has ambiguous scope: "Zeus and other gods had a war"
   // is not a fact about Zeus alone. Measured on real mythology prose, these
   // were a leading source of wrong edges.
@@ -311,6 +354,10 @@ function subjectOf(phrase: string, vocabulary: ReadonlySet<string>, entities: Re
   // "They can make themselves invisible" became "zeus capable-of make".
   if (/^(?:it|he|she|this)$/.test(trimmed)) return narrative;
   if (/^(?:they|these|those|them)$/.test(trimmed)) return null;
+  // A QUANTIFIER PRONOUN is not a subject: "Others lived in one place and
+  // built cities" says nothing about anything the observer could name
+  // (Simple Wikipedia bench: "other located-in city").
+  if (/^(?:the\s+)?(?:others?|some|many|most|all|none|each|both|several|few|everyone|everybody|someone|somebody|people|one)$/.test(trimmed)) return null;
   const tokens = trimmed.replace(/^(?:a|an|the|every|all|most|some)\s+/, '').split(/\s+/);
   // An ENTITY anywhere in the subject phrase wins over a common-noun head:
   // "the god Zeus" and "Zeus, king of the gods" are both about Zeus.
@@ -366,12 +413,19 @@ export function readSentence(
   // A sentence with a subordinate clause states more than one thing; only
   // the main clause is read (the observer never guesses at scope).
   const main = fronted.split(/\b(?:because|although|though|while|which|who|that|when|since|so that)\b/i)[0].trim();
+  // An EXISTENTIAL has no subject to be about: "After independence there was
+  // a civil war" is not "independence is-a war" (Simple Wikipedia bench).
+  if (/\bthere\s+(?:is|are|was|were|has been|have been)\b/i.test(main)) return [];
   for (const pattern of PATTERNS) {
     const hit = main.match(pattern.regex);
     if (hit === null) continue;
     const subject = subjectOf(hit[1], vocabulary, entities, narrative);
     if (subject === null) continue;
     if (pattern.predicate === 'is-a' && ATTRIBUTE_NOUN.has(subject)) continue;
+    // A perfect/passive auxiliary after "has" states no part: "has also been
+    // translated", "have already become". The has-part regex excludes a bare
+    // "has been"; an adverb in between slipped through (Simple Wikipedia).
+    if (pattern.predicate === 'has-part' && /^(?:\w+\s+){0,2}(?:been|become|got|gotten|had)\b/i.test(hit[2].trim())) continue;
     // The modality gate is applied ONCE the subject is known, because the
     // encyclopedic past is only readable about a named entity.
     if (!readable(sentence, entities.has(subject))) return [];
@@ -389,12 +443,20 @@ export function readSentence(
     // only the first token after "can" is taken and only when it is a bare
     // verb (no article or adjective in front of it).
     if (pattern.predicate === 'capable-of') {
-      const first = hit[2].trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z-]/g, '') ?? '';
+      // Leading adverbs are skipped ("can EASILY be sent", "can ALSO fly").
+      const afterCan = hit[2].trim().split(/\s+/).filter((token) => !/ly$/i.test(token) || /^(?:fly|apply|reply|supply|rely|multiply)$/i.test(token));
+      const first = afterCan[0]?.toLowerCase().replace(/[^a-z-]/g, '') ?? '';
       const verb = resolveWord(first, vocabulary, entities);
-      objects = verb === null || /^(?:a|an|the|his|her|its|their|this|that|very|more|most)$/.test(first) ? [] : [verb];
+      // Copular and appearance verbs state no ability: "can look like a box",
+      // "can be dangerous", "can seem large".
+      const notAnAbility = /^(?:look|looks|seem|seems|be|become|appear|appears|mean|means|include|includes|refer|refers|also|only|sometimes|often|still|even|then|now)$/;
+      objects = verb === null || notAnAbility.test(first) || /^(?:a|an|the|his|her|its|their|this|that|very|more|most)$/.test(first) ? [] : [verb];
     }
     const claims = objects
       .filter((object) => object !== subject)
+      // "a temple is a general TERM for…" — an attribute or metalinguistic
+      // noun as the is-a object names no kind either.
+      .filter((object) => !(pattern.predicate === 'is-a' && ATTRIBUTE_NOUN.has(object)))
       .map((object) => ({ subject, predicate: pattern.predicate, object, negated: pattern.negated === true, sentence: clean }));
     if (claims.length > 0) return claims;
   }
