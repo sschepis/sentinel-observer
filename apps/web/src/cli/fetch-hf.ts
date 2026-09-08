@@ -187,12 +187,13 @@ async function main(): Promise<void> {
   for (let offset = OFFSET; offset < limit; offset += PAGE) {
     const length = Math.min(PAGE, limit - offset);
     const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(picked.dataset)}&config=${encodeURIComponent(picked.config)}&split=${picked.split}&offset=${offset}&length=${length}`;
-    let page: { rows?: Array<{ row?: Record<string, unknown> }> } | null = null;
+    type Page = { rows?: Array<{ row?: Record<string, unknown> }> };
+    let page: Page | null = null;
     // Retry with backoff (2, 4, 8, 16, 32 s); a page that still fails is
     // skipped and reported — one bad gateway must not end a 200-page run.
     for (let attempt = 0; attempt < RETRIES && page === null; attempt += 1) {
       try {
-        page = (await getJson(url)) as typeof page;
+        page = (await getJson(url)) as Page;
       } catch (error) {
         const wait = 2000 * 2 ** attempt;
         console.log(`  page at ${offset} failed (${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 80)}); retry ${attempt + 1}/${RETRIES} in ${wait / 1000} s`);
@@ -203,8 +204,9 @@ async function main(): Promise<void> {
       skippedPages.push(offset);
       continue;
     }
+    const fetched: Page = page;
     const lines: string[] = [];
-    for (const entry of page.rows ?? []) {
+    for (const entry of fetched.rows ?? []) {
       read += 1;
       if (entry.row !== undefined) lines.push(...spec.convert(entry.row));
     }
