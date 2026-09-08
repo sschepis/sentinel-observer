@@ -184,11 +184,13 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
         const message = reason instanceof Error ? reason.message : String(reason);
         return { type: goal.type, target: goal.target, outcome: 'error', temperature, message: `goal error (${message}): ${goal.target}` };
       }
+      // executeGoalStep books the goal history (success/abandon) itself;
+      // only the thrown-step path above books here, because the step never
+      // reached its own bookkeeping.
       if (result.outcome === 'complete') {
         // A completed VERIFY-BELIEF goal is a successful verification —
         // the acquired drive's outcome feeds its learned weight.
         if (goal.type === 'verify-belief') this.noteBehaviorOutcome('verify', true);
-        this.noteGoalOutcome(goal.type, true);
         // The goal trace is reinforced — a memory of a fulfilled intent.
         const bank = this.session.observer.getMemoryBank();
         for (const trace of bank.all()) {
@@ -199,7 +201,6 @@ export function GoalsMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
         return { type: goal.type, target: goal.target, outcome: 'complete', temperature, message: `goal complete: ${goal.target}` };
       }
       if (result.outcome === 'failed' && goal.status === 'stalled') {
-        this.noteGoalOutcome(goal.type, false);
         this.noteGoalFailure(goal);
         return { type: goal.type, target: goal.target, outcome: 'stalled', temperature, message: `goal stalled: ${goal.describe(this as unknown as TeacherAgent)}` };
       }

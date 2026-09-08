@@ -146,6 +146,9 @@ describe('a stalled goal changes the lesson queue (teacher level)', () => {
     expect(report?.temperature).not.toBeNull();
     expect(teacher.stalledGoals().map((goal) => goal.target)).toEqual([last]);
     expect(teacher.goalStallsSnapshot()[last]).toBe(1);
+    // ONE stall books ONE abandon (the live record showed 6 for 3 stalls
+    // when both executeGoalStep and the loop booked it).
+    expect(teacher.goalHistorySnapshot()['learn-word']).toEqual({ completed: 0, abandoned: 1 });
 
     const after = teacher.curriculumQueue({ includeHealthy: true });
     expect(after[0].word).toBe(last);
@@ -182,6 +185,7 @@ describe('a stalled fill-gap goal steers topic research (server loop)', () => {
     expect((await teacher.pursueGoalStep())?.outcome).toBe('progressed');
     expect((await teacher.pursueGoalStep())?.outcome).toBe('stalled');
     expect(teacher.stalledGoals().map((goal) => goal.target)).toEqual(['what is a quimp']);
+    expect(teacher.goalHistorySnapshot()['fill-gap']).toEqual({ completed: 0, abandoned: 1 });
 
     const topics: string[] = [];
     const provider: ChaperoneProvider = {

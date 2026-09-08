@@ -219,6 +219,11 @@ export function discoverGoals(teacher: TeacherAgent, limit = GOALS_PER_DISCOVERY
  * Run one step of a goal's plan. Progress is evaluated after every step;
  * a failed teach (quiescent trace) REVISES the plan to the exposure route —
  * the first genuine plan-revision-on-failure rather than re-triggering.
+ *
+ * This function OWNS the goal-history bookkeeping: every transition to
+ * 'complete' books noteGoalSuccess and every transition to 'stalled' books
+ * noteGoalAbandon, exactly once. Callers must not book again (the goal loop
+ * used to, and counted every stall twice).
  */
 export async function executeGoalStep(
   teacher: TeacherAgent,
@@ -306,6 +311,7 @@ export async function executeGoalStep(
     goal.attempts += 1;
     if (goal.attempts >= MAX_GOAL_ATTEMPTS) {
       goal.status = 'stalled';
+      teacher.noteGoalAbandon(goal.type);
       return { outcome: 'failed' };
     }
   }
