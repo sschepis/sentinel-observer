@@ -18,8 +18,9 @@
  * followed through the Hub API to its current name, and when every id
  * fails the available configs/splits of the last one are printed. Override
  * the id outright with `--dataset owner/name [--config c] [--split s]` —
- * the row shape is still the source's (dailydialog wants a list of turns
- * under `dialog`/`dialogue`/`utterances`). `--rows N` bounds the
+ * the row shape is still the source's (dailydialog takes either one row per
+ * dialogue with a list of turns, or one row per utterance with a dialogue
+ * id — mirrors use both). `--rows N` bounds the
  * SOURCE rows read per run (default: all of DailyDialog; 20,000 for the two
  * prose corpora). Each source keeps a cursor in corpus/.fetch-hf.cursors.json,
  * so RE-RUNNING THE SAME COMMAND CONTINUES where the last run stopped;
@@ -93,6 +94,58 @@ interface SourceSpec {
   defaultRows: number;
   out: string;
   convert: (row: Record<string, unknown>) => string[];
+  /** Lines still buffered when the run ends (stateful converters). */
+  flush?: () => string[];
+}
+
+/**
+ * DailyDialog mirrors come in two shapes: one row per DIALOGUE (a list of
+ * turns) or one row per UTTERANCE (a text plus a dialogue id, rows in order).
+ * The second needs state: turns are gathered under the current dialogue id
+ * and cut into pairs when the id changes (and once more at the end).
+ */
+function dialogueConverter(): Pick<SourceSpec, 'convert' | 'flush'> {
+  let currentId: string | null = null;
+  let turns: string[] = [];
+  let described = false;
+  const emit = (): string[] => {
+    const lines = pairsFromDialogue(turns, 'dailydialog').map((pair) => JSON.stringify(pair));
+    turns = [];
+    return lines;
+  };
+  const utteranceOf = (row: Record<string, unknown>): string | null => {
+    for (const key of ['utterance', 'text', 'sentence', 'content', 'message']) {
+      if (typeof row[key] === 'string' && (row[key] as string).trim().length > 0) return (row[key] as string).trim();
+    }
+    return null;
+  };
+  const dialogueIdOf = (row: Record<string, unknown>): string | null => {
+    for (const key of ['dialog_id', 'dialogue_id', 'conversation_id', 'conv_id', 'dialogId', 'id']) {
+      const value = row[key];
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+    }
+    return null;
+  };
+  return {
+    convert: (row) => {
+      const whole = dialogueTurns(row);
+      if (whole.length > 1) return pairsFromDialogue(whole, 'dailydialog').map((pair) => JSON.stringify(pair));
+      const utterance = utteranceOf(row);
+      const id = dialogueIdOf(row);
+      if (utterance === null || id === null) {
+        if (!described) {
+          described = true;
+          console.log(`  cannot read this row shape — columns: ${Object.keys(row).join(', ')} (need a list of turns, or an utterance + dialogue id per row)`);
+        }
+        return [];
+      }
+      const lines = id !== currentId && turns.length > 0 ? emit() : [];
+      currentId = id;
+      turns.push(utterance);
+      return lines;
+    },
+    flush: () => (turns.length > 0 ? emit() : [])
+  };
 }
 
 const SPECS: Record<string, SourceSpec> = {
@@ -109,7 +162,7 @@ const SPECS: Record<string, SourceSpec> = {
     ],
     defaultRows: 20000,
     out: 'dialogue.jsonl',
-    convert: (row) => pairsFromDialogue(dialogueTurns(row), 'dailydialog').map((pair) => JSON.stringify(pair))
+    ...dialogueConverter()
   },
   tinystories: {
     candidates: [{ dataset: 'roneneldan/TinyStories', config: 'default', split: 'train' }],
@@ -365,12 +418,18 @@ async function main(): Promise<void> {
   const picked = await pickCandidate(spec);
   // Where to start: --offset wins, then the saved cursor, then 0. `--rows` is
   // the number of SOURCE rows this run reads from that start.
-  const saved = readCursors()[SOURCE] ?? 0;
-  const start = process.argv.includes('--offset') ? OFFSET : saved;
-  const limit = Math.min(start + rows, picked.total);
   // Lines already in the output file are never appended twice — a re-run over
   // the same rows, or a mirror that repeats an item, adds nothing.
   const present = new Set<string>(existsSync(out) ? readFileSync(out, 'utf8').split('\n').filter((line) => line.length > 0) : []);
+  let saved = readCursors()[SOURCE] ?? 0;
+  if (saved > 0 && present.size === 0) {
+    // A cursor with nothing to show for it means the last run kept nothing
+    // (wrong row shape, wrong mirror): start over rather than skip the rows.
+    console.log(`  the saved cursor (${saved}) kept nothing last time — starting over at 0`);
+    saved = 0;
+  }
+  const start = process.argv.includes('--offset') ? OFFSET : saved;
+  const limit = Math.min(start + rows, picked.total);
   console.log(`=== fetch-hf ${SOURCE} — ${picked.dataset} (${picked.config}/${picked.split}), rows ${start}–${limit} of ${picked.total} → ${out} (${present.size} items already there${saved > 0 && start === saved ? `, resuming at the saved cursor ${saved}` : ''}) ===`);
   if (start >= limit) {
     console.log('nothing to read: the saved cursor is at or past the end; pass --offset 0 to start over or --fresh to truncate.');
@@ -417,9 +476,17 @@ async function main(): Promise<void> {
     if (lines.length > 0) appendFileSync(out, `${lines.join('\n')}\n`);
     kept += lines.length;
     writeCursor(SOURCE, offset + length);
+    if (offset === start && read > 0 && kept === 0 && (fetched.rows?.[0]?.row) !== undefined) {
+      console.log(`  first page kept nothing — row columns: ${Object.keys(fetched.rows![0].row!).join(', ')}`);
+    }
     if (((offset - start) / PAGE) % 20 === 19) {
       console.log(`  … ${read} rows read, ${kept} items kept${duplicates > 0 ? `, ${duplicates} already present` : ''} (${((Date.now() - started) / 1000).toFixed(0)} s, ${(pagePauseMs / 1000).toFixed(1)} s/page)`);
     }
+  }
+  const tail = (spec.flush?.() ?? []).filter((line) => !present.has(line));
+  if (tail.length > 0) {
+    appendFileSync(out, `${tail.join('\n')}\n`);
+    kept += tail.length;
   }
   console.log(`done: ${read} rows read, ${kept} items kept${duplicates > 0 ? `, ${duplicates} already present` : ''} in ${((Date.now() - started) / 1000).toFixed(0)} s → ${out} (cursor now ${limit}; re-run the same command to continue)`);
   if (skippedPages.length > 0) {
