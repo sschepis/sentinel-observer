@@ -20,11 +20,14 @@
  * the id outright with `--dataset owner/name [--config c] [--split s]` —
  * the row shape is still the source's (dailydialog wants a list of turns
  * under `dialog`/`dialogue`/`utterances`). `--rows N` bounds the
- * SOURCE rows read (default: all of DailyDialog; 20,000 for the two prose
- * corpora); `--offset N` starts there (resume). A page that fails is retried
- * with backoff and then SKIPPED (reported at the end), never fatal. Output is
- * appended row-by-row, so a run that stops early leaves a usable file;
- * `--fresh` truncates first.
+ * SOURCE rows read per run (default: all of DailyDialog; 20,000 for the two
+ * prose corpora). Each source keeps a cursor in corpus/.fetch-hf.cursors.json,
+ * so RE-RUNNING THE SAME COMMAND CONTINUES where the last run stopped;
+ * `--offset N` overrides the cursor, `--fresh` truncates the file and resets
+ * it. Lines already in the output are never appended twice. A 429 is never a
+ * lost page: the run waits it out and slows down; only a server error that
+ * keeps failing skips a page (reported at the end). Output is appended
+ * page-by-page, so a run that stops early leaves a usable file.
  *
  * Licenses: DailyDialog CC BY-NC-SA 4.0 (Li et al. 2017); TinyStories
  * CDLA-Sharing-1.0 (Eldan & Li 2023); Simple English Wikipedia CC BY-SA 4.0;
@@ -192,29 +195,88 @@ function getJsonOnce(url: string): Promise<unknown> {
   });
 }
 
-/** GET with backoff: a 429 waits what Retry-After says (or the backoff),
- *  a 5xx / network error backs off (2, 4, 8, 16, 32 s); a 4xx other than
+const sleep = (ms: number): Promise<void> => new Promise((resolveWait) => setTimeout(resolveWait, ms));
+
+/**
+ * PACING. The datasets-server rate-limits per client over a window it does
+ * not disclose, and its 429s usually carry no Retry-After. So a 429 is never
+ * a bad page — it is the server saying "slower": we wait (30 s, then doubling
+ * to 5 min), and we lengthen the pause between pages for the rest of the
+ * run (`pagePauseMs`, halved back slowly after a stretch of clean pages).
+ * Only a 5xx / network failure that keeps failing skips a page.
+ */
+let pagePauseMs = HF_TOKEN.length > 0 ? 400 : 1200;
+const MIN_PAGE_PAUSE_MS = HF_TOKEN.length > 0 ? 400 : 1200;
+const MAX_PAGE_PAUSE_MS = 8000;
+const RATE_LIMIT_WAITS_MS = [30_000, 60_000, 120_000, 240_000, 300_000];
+let cleanPages = 0;
+
+/** GET with backoff. 429: wait Retry-After or the rate-limit ladder, and
+ *  slow the whole run down — as many times as it takes. 5xx / network:
+ *  back off 2, 4, 8, 16, 32 s, then give up on this page. A 4xx other than
  *  429 is final (the id or config is wrong). */
 async function getJson(url: string, retries = RETRIES): Promise<unknown> {
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < retries; attempt += 1) {
+  let rateLimited = 0;
+  for (let attempt = 0; attempt < retries; ) {
     try {
       return await getJsonOnce(url);
     } catch (error) {
       lastError = error;
-      if (error instanceof HttpError && error.status >= 400 && error.status < 500 && error.status !== 429) throw error;
-      const wait = error instanceof HttpError && error.retryAfterMs !== null ? Math.min(error.retryAfterMs, 120_000) : 2000 * 2 ** attempt;
-      if (attempt + 1 < retries) {
-        console.log(`  ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 60)} — waiting ${(wait / 1000).toFixed(0)} s (retry ${attempt + 1}/${retries - 1})`);
-        await new Promise((resolveWait) => setTimeout(resolveWait, wait));
+      if (error instanceof HttpError && error.status === 429) {
+        if (rateLimited >= RATE_LIMIT_WAITS_MS.length * 2) throw error; // ~30 min of pure 429s: something else is wrong
+        const wait = error.retryAfterMs !== null ? Math.min(error.retryAfterMs, 300_000) : RATE_LIMIT_WAITS_MS[Math.min(rateLimited, RATE_LIMIT_WAITS_MS.length - 1)];
+        rateLimited += 1;
+        cleanPages = 0;
+        pagePauseMs = Math.min(MAX_PAGE_PAUSE_MS, pagePauseMs * 2);
+        console.log(`  HTTP 429 (rate limit) — waiting ${(wait / 1000).toFixed(0)} s, then ${(pagePauseMs / 1000).toFixed(1)} s between pages`);
+        await sleep(wait);
+        continue; // a 429 does not use up a retry
+      }
+      if (error instanceof HttpError && error.status >= 400 && error.status < 500) throw error;
+      attempt += 1;
+      if (attempt < retries) {
+        const wait = 2000 * 2 ** (attempt - 1);
+        console.log(`  ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 60)} — waiting ${(wait / 1000).toFixed(0)} s (retry ${attempt}/${retries - 1})`);
+        await sleep(wait);
       }
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-/** Pause between pages so a long run stays under the API's rate limit. */
-const PAGE_PAUSE_MS = HF_TOKEN.length > 0 ? 150 : 600;
+/** After a page succeeds: a long clean stretch earns a slightly faster pace. */
+function pageSucceeded(): void {
+  cleanPages += 1;
+  if (cleanPages >= 40 && pagePauseMs > MIN_PAGE_PAUSE_MS) {
+    pagePauseMs = Math.max(MIN_PAGE_PAUSE_MS, Math.floor(pagePauseMs / 2));
+    cleanPages = 0;
+  }
+}
+
+/**
+ * RESUME. Each source remembers the next offset to read in
+ * corpus/.fetch-hf.cursors.json, so re-running the same command continues
+ * where the last run stopped instead of re-reading (and re-appending) from
+ * zero. `--offset N` overrides it, `--fresh` resets it. Output lines already
+ * present in the file are not appended twice either.
+ */
+function cursorPath(): string {
+  return resolve(CORPUS, '.fetch-hf.cursors.json');
+}
+function readCursors(): Record<string, number> {
+  try {
+    const parsed = JSON.parse(readFileSync(cursorPath(), 'utf8')) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === 'number')) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+function writeCursor(source: string, next: number): void {
+  const cursors = readCursors();
+  cursors[source] = next;
+  writeFileSync(cursorPath(), `${JSON.stringify(cursors, null, 2)}\n`);
+}
 
 type Candidate = { dataset: string; config: string; split: string };
 
@@ -295,47 +357,73 @@ async function main(): Promise<void> {
   const rows = Number(arg('--rows', String(spec.defaultRows)));
   const out = resolve(CORPUS, spec.out);
   mkdirSync(dirname(out), { recursive: true });
-  if (FRESH) writeFileSync(out, '');
+  if (FRESH) {
+    writeFileSync(out, '');
+    writeCursor(SOURCE, 0);
+  }
   console.log(HF_TOKEN.length > 0 ? 'HF_TOKEN found in the environment (higher rate limits)' : 'no HF_TOKEN — anonymous rate limits; put HF_TOKEN=hf_… in apps/web/.env');
   const picked = await pickCandidate(spec);
-  const limit = Math.min(rows, picked.total);
-  console.log(`=== fetch-hf ${SOURCE} — ${picked.dataset} (${picked.config}/${picked.split}), ${limit} of ${picked.total} rows → ${out} ===`);
+  // Where to start: --offset wins, then the saved cursor, then 0. `--rows` is
+  // the number of SOURCE rows this run reads from that start.
+  const saved = readCursors()[SOURCE] ?? 0;
+  const start = process.argv.includes('--offset') ? OFFSET : saved;
+  const limit = Math.min(start + rows, picked.total);
+  // Lines already in the output file are never appended twice — a re-run over
+  // the same rows, or a mirror that repeats an item, adds nothing.
+  const present = new Set<string>(existsSync(out) ? readFileSync(out, 'utf8').split('\n').filter((line) => line.length > 0) : []);
+  console.log(`=== fetch-hf ${SOURCE} — ${picked.dataset} (${picked.config}/${picked.split}), rows ${start}–${limit} of ${picked.total} → ${out} (${present.size} items already there${saved > 0 && start === saved ? `, resuming at the saved cursor ${saved}` : ''}) ===`);
+  if (start >= limit) {
+    console.log('nothing to read: the saved cursor is at or past the end; pass --offset 0 to start over or --fresh to truncate.');
+    return;
+  }
   const started = Date.now();
   let read = 0;
   let kept = 0;
+  let duplicates = 0;
   const skippedPages: number[] = [];
-  for (let offset = OFFSET; offset < limit; offset += PAGE) {
+  for (let offset = start; offset < limit; offset += PAGE) {
     const length = Math.min(PAGE, limit - offset);
-    const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(picked.dataset)}&config=${encodeURIComponent(picked.config)}&split=${picked.split}&offset=${offset}&length=${length}`;
+    const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(picked.dataset)}&config=${encodeURIComponent(picked.config)}&split=${encodeURIComponent(picked.split)}&offset=${offset}&length=${length}`;
     type Page = { rows?: Array<{ row?: Record<string, unknown> }> };
     let page: Page | null = null;
-    // getJson retries with backoff and honors Retry-After; a page that still
-    // fails is skipped and reported — one bad gateway must not end a run.
+    // getJson waits out rate limits and retries server errors; a page that
+    // still fails is skipped and reported — one bad gateway must not end a run.
     try {
       page = (await getJson(url)) as Page;
     } catch (error) {
       console.log(`  page at ${offset} skipped: ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 80)}`);
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, PAGE_PAUSE_MS));
+    await sleep(pagePauseMs);
     if (page === null) {
       skippedPages.push(offset);
+      writeCursor(SOURCE, offset + length);
       continue;
     }
+    pageSucceeded();
     const fetched: Page = page;
     const lines: string[] = [];
     for (const entry of fetched.rows ?? []) {
       read += 1;
-      if (entry.row !== undefined) lines.push(...spec.convert(entry.row));
+      if (entry.row === undefined) continue;
+      for (const line of spec.convert(entry.row)) {
+        if (present.has(line)) {
+          duplicates += 1;
+          continue;
+        }
+        present.add(line);
+        lines.push(line);
+      }
     }
     if (lines.length > 0) appendFileSync(out, `${lines.join('\n')}\n`);
     kept += lines.length;
-    if ((offset / PAGE) % 20 === 19) {
-      console.log(`  … ${read} rows read, ${kept} items kept (${((Date.now() - started) / 1000).toFixed(0)} s)`);
+    writeCursor(SOURCE, offset + length);
+    if (((offset - start) / PAGE) % 20 === 19) {
+      console.log(`  … ${read} rows read, ${kept} items kept${duplicates > 0 ? `, ${duplicates} already present` : ''} (${((Date.now() - started) / 1000).toFixed(0)} s, ${(pagePauseMs / 1000).toFixed(1)} s/page)`);
     }
   }
-  console.log(`done: ${read} rows read, ${kept} items kept in ${((Date.now() - started) / 1000).toFixed(0)} s → ${out}`);
+  console.log(`done: ${read} rows read, ${kept} items kept${duplicates > 0 ? `, ${duplicates} already present` : ''} in ${((Date.now() - started) / 1000).toFixed(0)} s → ${out} (cursor now ${limit}; re-run the same command to continue)`);
   if (skippedPages.length > 0) {
-    console.log(`skipped ${skippedPages.length} page(s) that kept failing (offsets ${skippedPages.slice(0, 10).join(', ')}${skippedPages.length > 10 ? ', …' : ''}); re-run with --offset N to retry one.`);
+    console.log(`skipped ${skippedPages.length} page(s) that kept failing (offsets ${skippedPages.slice(0, 10).join(', ')}${skippedPages.length > 10 ? ', …' : ''}); re-run with --offset N --rows 100 to retry one.`);
   }
 }
 
