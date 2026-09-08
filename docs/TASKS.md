@@ -1,6 +1,6 @@
 # Sentinel Observer — task list
 
-*Updated 2026-09-08. Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it) and NULL_ARMS.md (the memory-substrate measurements).*
+*Updated 2026-09-08. Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it), NULL_ARMS.md (the memory-substrate measurements) and SYNTHETIC_MIND.md (the gap analysis from here to the stated goal; its tasks 39–58 are listed below).*
 
 ## Where things stand, in plain terms
 
@@ -89,7 +89,66 @@ The merged fixes change behavior the first time the server restarts. Decide thes
 | 35 | Fill the corpus: `npm run fetch-conceptnet`, then `npm run fetch-hf -- dailydialog / simplewiki / tinystories / svamp / asdiv` | Sebastian | Run on the Mac; the server never downloads. Paste the per-relation counts from ConceptNet and the `kept` counts from the others. |
 | 36 | Run the source benches before the server eats a corpus: `npx jest -c jest.bench.config.cjs --testPathPatterns passageBenchmark` (parse rate + claim sample per prose source) | Sebastian, then Claude reads | Decides the passage budget; narrative is expected to lose to encyclopedia prose. |
 | 37 | Definitions source (Wiktionary glosses for deck words without one) and a story-state engine for bAbI-style questions | Claude | The two shapes without a fetcher / answering path yet. |
-| 38 | Held-out edge recovery bench over the real ConceptNet file (what the graded layer recovers of the held-out tenth) | Claude, after #35 | The ConceptNet analogue of CI gate 1. |
+| 38 | Held-out edge recovery bench over the real ConceptNet file | — | Folded into #40 below. |
+
+## The synthetic mind (new — docs/SYNTHETIC_MIND.md)
+
+The goal, stated so it can fail: a system that self-organizes and learns in real time, more like a person than like current AI training, that says it does not know when it does not know, and never asserts what it cannot derive from what it has stored. The principle — coupling lowers entropy by opening a channel between elements — is pinned to the observer as built: elements are concepts, channels are corroborated edges, phase difference is the contradiction ledger, entropy is the uncertainty of the observer's own answers, and self-organization is choosing what to couple next. The prediction that tests it: the learning steps that lower that entropy most are the ones after which the observer does best on material it never saw. The one-shot bench (43) and the prediction bench (41) are the two numbers that decide whether the mind is forming. Full analysis and acceptance criteria in SYNTHETIC_MIND.md §5; order in §4.
+
+**Phase 0 — measure (readout only; safe for the live server)**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 39 | Network entropy readout: `networkEntropy()` over the observer's own answers per concept, logged per learning step, in introspection | Claude | unit test: corroborating edge lowers, contradicting edge raises, re-teaching is invariant |
+| 40 | Held-out ConceptNet edge-recovery bench (was #38), by relation and hop count | Claude, after #35 | `bench/curriculum/*.json` artifact |
+| 41 | The prediction: Δ entropy per feeder step vs held-out recovery, with "edges added" as the null predictor | Claude | correlations reported whichever sign |
+| 42 | Soundness audit gate: every assertion in every bench has provenance that exists and entails the claim; CI fails on the first that does not | Claude | `soundnessGate.test.ts` green on main |
+| 43 | One-shot learning bench — the person test (teach once in conversation → use with old knowledge → after a delay → after a correction → composition → contradiction handled) | Claude | runs on main; expected to fail shapes 1, 3, 4 today |
+
+**Phase 1 — conversation as a learning channel**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 44 | Read declaratives typed in chat into edges (class `conversation`, reader precision guards, vocabulary growth for an unknown subject) | Claude | bench 43 shape 1; reading precision and adversarial honesty unchanged |
+| 45 | Corrections and confirmations in chat are world-feedback grades against the answer's provenance; promote matching hypotheses (closes ANALYSIS #11) | Claude | bench 43 shape 3 |
+| 46 | The guess mode: an assertion carrying its derivation and a question, where an inference path exists; fourth meter category `guessed`; confirmation → corroborated edge, denial → negation | Claude | bench 43 shape 4; honesty gates unchanged |
+| 47 | Analogy over shared edges (generalized prototype bundle), always labeled as a guess | Claude | recovery bench reports analogy separately |
+
+**Phase 2 — disagreement and coupling drive the dynamics**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 48 | Conflict sweep in the live loop; verification as `verify-belief` goals; conflicts as a term of the entropy | Claude | bench 43 shape 5; conflicts fall over a corpus run |
+| 49 | Consolidation by coupling (corroborated or cited in correct answers, unweakened) instead of the substrate-entropy lock; old criterion kept as a mode | Claude | consolidation tests pass under both; recall gates unchanged |
+| 50 | Earned forgetting: live budgeted near-duplicate merge and pruning of never-cited traces, never consolidated ones | Claude | held-out recovery does not fall after a prune |
+
+**Phase 3 — entropy in charge of self-direction**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 51 | Goal value = expected entropy drop × success; practice and verify-belief goals formed; introspection explains goals in bits | Claude | all four goal types complete on the corpus |
+| 52 | Feeder budgets by measured entropy yield per source (bandit, 10 % floor) | Claude | shares move; recovery per source not worse |
+| 53 | Concept synthesis admitted only when it lowers the network entropy; induced concepts speakable | Claude | an answer uses one |
+
+**Phase 4 — the substrate's job**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 54 | Field-as-attention bench: converged-field excitation vs entropy ranking vs curriculum as the choice of what to learn next, over 200 cycles | Claude | one artifact, one decision in NULL_ARMS.md |
+
+**Phase 5 — the honesty claim as a theorem**
+
+| # | Task | Who | Acceptance |
+|---|---|---|---|
+| 55 | State soundness-relative-to-the-store formally in the paper (§3.7) with its scope and 42's audited count; say plainly that hallucination-free is not error-free | Claude drafts, Sebastian approves | text merged |
+| 56 | Design ledger (task 13 reshaped): paper mechanism → term of the principle → bench → status | Claude | every mechanism appears once |
+
+**Ongoing**
+
+| # | Task | Who |
+|---|---|---|
+| 57 | Share of grades from checkable sources tracked in the record; LLM grades never outvote a checkable source | Claude |
+| 58 | Retire the dead paths: `teacher/critic.ts`, substrate-entropy consolidation and field recall term as optional modes | Claude |
 
 ## Housekeeping
 
