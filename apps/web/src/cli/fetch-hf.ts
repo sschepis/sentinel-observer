@@ -14,7 +14,12 @@
  * nothing is installed and no parquet is parsed. A Hugging Face token is
  * optional but raises the rate limits: put HF_TOKEN=hf_… in apps/web/.env
  * (or the environment) — never on the command line. Each source has a
- * fallback list of dataset ids because Hub ids move. `--rows N` bounds the
+ * fallback list of dataset ids because Hub ids move; a renamed id is
+ * followed through the Hub API to its current name, and when every id
+ * fails the available configs/splits of the last one are printed. Override
+ * the id outright with `--dataset owner/name [--config c] [--split s]` —
+ * the row shape is still the source's (dailydialog wants a list of turns
+ * under `dialog`/`dialogue`/`utterances`). `--rows N` bounds the
  * SOURCE rows read (default: all of DailyDialog; 20,000 for the two prose
  * corpora); `--offset N` starts there (resume). A page that fails is retried
  * with backoff and then SKIPPED (reported at the end), never fatal. Output is
@@ -57,6 +62,28 @@ const CORPUS = resolve(arg('--corpus', 'corpus'));
 const FRESH = process.argv.includes('--fresh');
 const OFFSET = Math.max(0, Number(arg('--offset', '0')) || 0);
 const PAGE = 100;
+/** Explicit dataset override: `--dataset owner/name [--config c] [--split s]`. */
+const DATASET_OVERRIDE = arg('--dataset', '');
+const CONFIG_OVERRIDE = arg('--config', '');
+const SPLIT_OVERRIDE = arg('--split', '');
+
+/** The turns of a dialogue row, whatever the column is called on this mirror. */
+function dialogueTurns(row: Record<string, unknown>): string[] {
+  for (const key of ['dialog', 'dialogue', 'utterances', 'turns', 'text']) {
+    const value = row[key];
+    if (Array.isArray(value)) {
+      const turns = value.map((t) => (typeof t === 'string' ? t : t !== null && typeof t === 'object' && typeof (t as { text?: unknown }).text === 'string' ? (t as { text: string }).text : '')).filter((t) => t.length > 0);
+      if (turns.length > 0) return turns;
+    }
+    // Some mirrors store the whole dialogue as one string, turns on lines or
+    // separated by " __eou__ ".
+    if (typeof value === 'string' && value.length > 0) {
+      const turns = value.split(/__eou__|\r?\n/).map((t) => t.trim()).filter((t) => t.length > 0);
+      if (turns.length > 1) return turns;
+    }
+  }
+  return [];
+}
 
 interface SourceSpec {
   candidates: Array<{ dataset: string; config: string; split: string }>;
@@ -67,16 +94,19 @@ interface SourceSpec {
 
 const SPECS: Record<string, SourceSpec> = {
   dailydialog: {
+    // The canonical id (li2017dailydialog/daily_dialog) is a loading-script
+    // dataset the datasets-server no longer serves; the mirrors below carry
+    // the same 13k dialogues as parquet. Renames are followed automatically.
     candidates: [
       { dataset: 'li2017dailydialog/daily_dialog', config: 'default', split: 'train' },
+      { dataset: 'roskoN/dailydialog', config: 'default', split: 'train' },
+      { dataset: 'pixelsandpointers/better_daily_dialog', config: 'default', split: 'train' },
+      { dataset: 'OpenRL/daily_dialog', config: 'default', split: 'train' },
       { dataset: 'daily_dialog', config: 'default', split: 'train' }
     ],
     defaultRows: 20000,
     out: 'dialogue.jsonl',
-    convert: (row) => {
-      const turns = Array.isArray(row.dialog) ? row.dialog.filter((t): t is string => typeof t === 'string') : [];
-      return pairsFromDialogue(turns, 'dailydialog').map((pair) => JSON.stringify(pair));
-    }
+    convert: (row) => pairsFromDialogue(dialogueTurns(row), 'dailydialog').map((pair) => JSON.stringify(pair))
   },
   tinystories: {
     candidates: [{ dataset: 'roneneldan/TinyStories', config: 'default', split: 'train' }],
@@ -186,23 +216,80 @@ async function getJson(url: string, retries = RETRIES): Promise<unknown> {
 /** Pause between pages so a long run stays under the API's rate limit. */
 const PAGE_PAUSE_MS = HF_TOKEN.length > 0 ? 150 : 600;
 
-async function pickCandidate(spec: SourceSpec): Promise<{ dataset: string; config: string; split: string; total: number }> {
-  for (const candidate of spec.candidates) {
-    try {
-      const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(candidate.dataset)}&config=${encodeURIComponent(candidate.config)}&split=${candidate.split}&offset=0&length=1`;
-      const probe = (await getJson(url)) as { num_rows_total?: number };
-      return { ...candidate, total: typeof probe.num_rows_total === 'number' ? probe.num_rows_total : Number.MAX_SAFE_INTEGER };
-    } catch (error) {
-      console.log(`  ${candidate.dataset}: ${error instanceof Error ? error.message : String(error)} — trying the next id`);
-    }
+type Candidate = { dataset: string; config: string; split: string };
+
+/** The Hub's current id for a dataset (renamed repos redirect; the API
+ *  answers with the new id). Null when the Hub does not know it. */
+async function currentDatasetId(dataset: string): Promise<string | null> {
+  try {
+    const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'sentient-observer fetch-hf' };
+    if (HF_TOKEN.length > 0) headers.authorization = `Bearer ${HF_TOKEN}`;
+    const response = await fetch(`https://huggingface.co/api/datasets/${dataset}`, { headers, redirect: 'follow' });
+    if (!response.ok) return null;
+    const info = (await response.json()) as { id?: unknown };
+    return typeof info.id === 'string' && info.id.length > 0 ? info.id : null;
+  } catch {
+    return null;
   }
-  throw new Error(`no reachable dataset id for ${SOURCE}`);
+}
+
+/** The configs and splits the datasets-server has for a dataset, for the
+ *  error message — so the operator can pass --config / --split. */
+async function describeSplits(dataset: string): Promise<string> {
+  try {
+    const url = `https://datasets-server.huggingface.co/splits?dataset=${encodeURIComponent(dataset)}`;
+    const answer = (await getJson(url, 1)) as { splits?: Array<{ config?: string; split?: string }> };
+    const pairs = (answer.splits ?? []).map((s) => `${s.config ?? '?'}/${s.split ?? '?'}`);
+    return pairs.length === 0 ? 'no configs/splits served' : `configs/splits served: ${pairs.slice(0, 12).join(', ')}${pairs.length > 12 ? ', …' : ''}`;
+  } catch (error) {
+    return `/splits: ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 100)}`;
+  }
+}
+
+async function probe(candidate: Candidate): Promise<{ total: number } | HttpError | Error> {
+  try {
+    const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(candidate.dataset)}&config=${encodeURIComponent(candidate.config)}&split=${encodeURIComponent(candidate.split)}&offset=0&length=1`;
+    const answer = (await getJson(url)) as { num_rows_total?: number };
+    return { total: typeof answer.num_rows_total === 'number' ? answer.num_rows_total : Number.MAX_SAFE_INTEGER };
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+async function pickCandidate(spec: SourceSpec): Promise<Candidate & { total: number }> {
+  const candidates: Candidate[] =
+    DATASET_OVERRIDE.length > 0
+      ? [{ dataset: DATASET_OVERRIDE, config: CONFIG_OVERRIDE || 'default', split: SPLIT_OVERRIDE || 'train' }]
+      : spec.candidates.map((c) => ({ ...c, config: CONFIG_OVERRIDE || c.config, split: SPLIT_OVERRIDE || c.split }));
+  let last: Candidate | null = null;
+  for (const candidate of candidates) {
+    last = candidate;
+    let result = await probe(candidate);
+    if (!(result instanceof Error)) return { ...candidate, total: result.total };
+    // A 404 is usually a rename or a loading-script dataset the server dropped:
+    // ask the Hub where the id went and try once more under the current name.
+    if (result instanceof HttpError && result.status === 404) {
+      const current = await currentDatasetId(candidate.dataset);
+      if (current !== null && current !== candidate.dataset) {
+        console.log(`  ${candidate.dataset}: renamed on the Hub → ${current}`);
+        const renamed = { ...candidate, dataset: current };
+        last = renamed;
+        result = await probe(renamed);
+        if (!(result instanceof Error)) return { ...renamed, total: result.total };
+      }
+    }
+    console.log(`  ${last.dataset} (${last.config}/${last.split}): ${result.message.split('\n')[0].slice(0, 100)} — trying the next id`);
+  }
+  const hint = last === null ? '' : `\n  ${last.dataset}: ${await describeSplits(last.dataset)}`;
+  throw new Error(
+    `no reachable dataset id for ${SOURCE}.${hint}\n  Open https://huggingface.co/datasets?search=${encodeURIComponent(SOURCE)} in a browser, pick a parquet copy, and pass it:\n    npm run fetch-hf -- ${SOURCE} --dataset owner/name [--config default] [--split train]`
+  );
 }
 
 async function main(): Promise<void> {
   const spec = SPECS[SOURCE];
   if (spec === undefined) {
-    console.log('usage: npm run fetch-hf -- <dailydialog|tinystories|simplewiki|svamp|asdiv> [--rows N] [--corpus DIR] [--fresh]');
+    console.log('usage: npm run fetch-hf -- <dailydialog|tinystories|simplewiki|svamp|asdiv> [--rows N] [--offset N] [--corpus DIR] [--fresh] [--dataset owner/name [--config c] [--split s]]');
     process.exit(1);
   }
   const rows = Number(arg('--rows', String(spec.defaultRows)));
