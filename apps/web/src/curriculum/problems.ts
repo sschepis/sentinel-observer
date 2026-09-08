@@ -1,0 +1,95 @@
+/**
+ * CHECKABLE PROBLEMS — ground truth from outside the loop (Rule 3).
+ *
+ * A problem row is a prompt with an answer that can be checked without
+ * asking anyone: arithmetic word problems (SVAMP, ASDiv) whose answer is a
+ * number. The observer answers through its own stack (the story parser →
+ * the rewrite engine), the check is exact, and the verdict is world
+ * feedback the grader check never has to vouch for: a wrong derivation
+ * weakens the rules it derived through (R5), a correct one is credited, an
+ * unparsed problem is recorded as a gap the classroom can chase.
+ *
+ * Only shapes the observer has an answering PATH for are ingested here — a
+ * problem set it cannot attempt yet (bAbI's story-state questions) would
+ * only measure its absence, so those wait for the engine that answers them
+ * (TASKS.md). What this file measures is the honest number: of the checkable
+ * problems it was shown, how many did it answer, and how many of those were
+ * right.
+ */
+import type { TeacherAgent } from '../teacher/TeacherAgent';
+
+export interface ProblemRow {
+  /** The situation ("John has 3 apples. He buys 2 more.") — may be empty. */
+  body: string;
+  /** The question ("How many apples does he have now?"). */
+  question: string;
+  /** The checkable answer, as the source states it ("5", "5.0"). */
+  answer: string;
+  source?: string;
+}
+
+export type ProblemVerdict = 'correct' | 'wrong' | 'abstained';
+
+export interface ProblemCheck {
+  prompt: string;
+  expected: number | null;
+  got: number | null;
+  mode: string;
+  verdict: ProblemVerdict;
+}
+
+/** The first number in a text, or null ("The answer is 6." → 6; "6.0" → 6). */
+export function numberIn(text: string): number | null {
+  const match = /-?\d+(?:\.\d+)?/.exec(text.replace(/,/g, ''));
+  if (match === null) return null;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Parse a problems.jsonl row. */
+export function parseProblemRow(line: string): ProblemRow | null {
+  try {
+    const row = JSON.parse(line) as Partial<ProblemRow>;
+    if (typeof row.question !== 'string' || typeof row.answer !== 'string') return null;
+    return { body: typeof row.body === 'string' ? row.body : '', question: row.question, answer: row.answer, source: typeof row.source === 'string' ? row.source : undefined };
+  } catch {
+    return null;
+  }
+}
+
+/** The prompt the observer is asked: the situation and the question as one
+ *  utterance, whitespace normalized. */
+export function problemPrompt(row: ProblemRow): string {
+  return `${row.body.trim()} ${row.question.trim()}`.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Pose one checkable problem and book the verdict. A correct operator answer
+ * credits `answer`; a wrong one records the grade against exactly the rules
+ * it derived through and weakens them; an ask/decline is an abstention and
+ * the prompt becomes a gap (the observer knows it could not do this one).
+ */
+export function checkProblem(teacher: TeacherAgent, row: ProblemRow): ProblemCheck {
+  const prompt = problemPrompt(row);
+  const expected = numberIn(row.answer);
+  const answer = teacher.chatAnswer(prompt);
+  if (answer.mode === 'decline' || answer.mode === 'ask') {
+    return { prompt, expected, got: null, mode: answer.mode, verdict: 'abstained' };
+  }
+  const got = numberIn(answer.response);
+  const correct = expected !== null && got !== null && Math.abs(got - expected) < 1e-6;
+  const provenance = answer.provenance;
+  teacher.recordAnswerGrade(prompt, answer.mode, correct ? 'correct' : 'wrong', provenance);
+  if (correct) {
+    teacher.noteBehaviorOutcome('answer', true);
+  } else {
+    teacher.noteBehaviorOutcome('answer', false);
+    // R5: the world contradicted the derivation — weaken the rules it used,
+    // never the whole store (an operator that cited no rules has nothing to
+    // weaken; the ledger still names it).
+    for (const ruleId of provenance.ruleIds ?? []) {
+      teacher.weakenRule(ruleId, 1, { evidence: 'verified-wrong', expected: row.answer, input: prompt.slice(0, 80) });
+    }
+  }
+  return { prompt, expected, got, mode: answer.mode, verdict: correct ? 'correct' : 'wrong' };
+}

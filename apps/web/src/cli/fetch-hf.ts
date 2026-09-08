@@ -7,6 +7,8 @@
  *   npm run fetch-hf -- dailydialog                 # → corpus/dialogue.jsonl
  *   npm run fetch-hf -- tinystories --rows 20000    # → corpus/passages.jsonl (appends)
  *   npm run fetch-hf -- simplewiki  --rows 20000    # → corpus/passages.jsonl (appends)
+ *   npm run fetch-hf -- svamp                       # → corpus/problems.jsonl (appends)
+ *   npm run fetch-hf -- asdiv                       # → corpus/problems.jsonl (appends)
  *
  * Uses the public datasets-server rows API (100 rows per request, no token
  * needed for public datasets), so nothing is installed and no parquet is
@@ -16,18 +18,20 @@
  * run that stops early leaves a usable file; `--fresh` truncates first.
  *
  * Licenses: DailyDialog CC BY-NC-SA 4.0 (Li et al. 2017); TinyStories
- * CDLA-Sharing-1.0 (Eldan & Li 2023); Simple English Wikipedia CC BY-SA 4.0.
+ * CDLA-Sharing-1.0 (Eldan & Li 2023); Simple English Wikipedia CC BY-SA 4.0;
+ * SVAMP MIT (Patel et al. 2021); ASDiv CC BY-NC 4.0 (Miao et al. 2020).
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { get as httpsGet } from 'node:https';
 import { dirname, resolve } from 'node:path';
 import { pairsFromDialogue, passageFrom } from '../curriculum/text';
+import type { ProblemRow } from '../curriculum/problems';
 
 const arg = (name: string, fallback: string): string => {
   const index = process.argv.indexOf(name);
   return index !== -1 && process.argv[index + 1] !== undefined ? process.argv[index + 1] : fallback;
 };
-const SOURCE = process.argv.find((a) => ['dailydialog', 'tinystories', 'simplewiki'].includes(a)) ?? '';
+const SOURCE = process.argv.find((a) => ['dailydialog', 'tinystories', 'simplewiki', 'svamp', 'asdiv'].includes(a)) ?? '';
 const CORPUS = resolve(arg('--corpus', 'corpus'));
 const FRESH = process.argv.includes('--fresh');
 const PAGE = 100;
@@ -60,6 +64,32 @@ const SPECS: Record<string, SourceSpec> = {
       const text = typeof row.text === 'string' ? row.text : '';
       const passage = passageFrom('story', text, 'tinystories');
       return passage === null ? [] : [JSON.stringify(passage)];
+    }
+  },
+  svamp: {
+    candidates: [{ dataset: 'ChilleD/SVAMP', config: 'default', split: 'train' }],
+    defaultRows: 1000,
+    out: 'problems.jsonl',
+    convert: (row) => {
+      const body = typeof row.Body === 'string' ? row.Body : '';
+      const question = typeof row.Question === 'string' ? row.Question : '';
+      const answer = row.Answer === undefined || row.Answer === null ? '' : String(row.Answer);
+      if (question.length === 0 || answer.length === 0) return [];
+      const problem: ProblemRow = { body, question, answer, source: 'svamp' };
+      return [JSON.stringify(problem)];
+    }
+  },
+  asdiv: {
+    candidates: [{ dataset: 'EleutherAI/asdiv', config: 'asdiv', split: 'validation' }],
+    defaultRows: 2500,
+    out: 'problems.jsonl',
+    convert: (row) => {
+      const body = typeof row.body === 'string' ? row.body : '';
+      const question = typeof row.question === 'string' ? row.question : '';
+      const answer = typeof row.answer === 'string' ? row.answer : row.answer === undefined || row.answer === null ? '' : String(row.answer);
+      if (question.length === 0 || answer.length === 0) return [];
+      const problem: ProblemRow = { body, question, answer, source: 'asdiv' };
+      return [JSON.stringify(problem)];
     }
   },
   simplewiki: {
@@ -115,7 +145,7 @@ async function pickCandidate(spec: SourceSpec): Promise<{ dataset: string; confi
 async function main(): Promise<void> {
   const spec = SPECS[SOURCE];
   if (spec === undefined) {
-    console.log('usage: npm run fetch-hf -- <dailydialog|tinystories|simplewiki> [--rows N] [--corpus DIR] [--fresh]');
+    console.log('usage: npm run fetch-hf -- <dailydialog|tinystories|simplewiki|svamp|asdiv> [--rows N] [--corpus DIR] [--fresh]');
     process.exit(1);
   }
   const rows = Number(arg('--rows', String(spec.defaultRows)));

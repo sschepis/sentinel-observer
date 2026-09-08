@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { TeacherAgent } from '../teacher/TeacherAgent';
 import { conceptNetToRelations, parseConceptNetJsonl, type ConceptNetRow } from './conceptnet';
+import { checkProblem, parseProblemRow } from './problems';
 import { WORD_SHAPE, type CurriculumKind, type CurriculumSource } from './types';
 
 /** The files the registry recognizes in a corpus directory. */
@@ -56,8 +57,8 @@ export const KNOWN_SOURCES: ReadonlyArray<Omit<CurriculumSource, 'path'> & { fil
     file: 'problems.jsonl',
     id: 'problems',
     kind: 'problems',
-    license: 'see the fetch CLI that produced it (bAbI: BSD)',
-    description: 'question + checkable answer, graded without an LLM'
+    license: 'see the fetch CLI that produced it (SVAMP: MIT; ASDiv: CC BY-NC 4.0)',
+    description: 'arithmetic word problems with a checkable numeric answer, graded without an LLM'
   }
 ];
 
@@ -84,11 +85,14 @@ export interface FeedReport {
   rows: number;
   /** Rows the adapter refused. */
   skipped: number;
-  /** What the observer took, by kind. */
+  /** What the observer took, by kind (problems: answered correctly). */
   accepted: number;
   agreed: number;
   denied: number;
   negations: number;
+  /** Problems only: answered wrong / abstained. */
+  wrong: number;
+  abstained: number;
   /** Rows left in the source after this step. */
   remaining: number;
   ms: number;
@@ -168,6 +172,8 @@ export class CurriculumFeeder {
       agreed: 0,
       denied: 0,
       negations: 0,
+      wrong: 0,
+      abstained: 0,
       remaining: rows.length - end,
       ms: 0
     };
@@ -227,12 +233,20 @@ export class CurriculumFeeder {
         }
         break;
       }
-      case 'problems':
-        // TASKS.md: the checkable-problem channel is wired by the drill layer
-        // (a later step); rows are consumed so the cursor stays honest, and
-        // counted as skipped so the report says nothing was learned.
-        report.skipped = slice.length;
+      case 'problems': {
+        for (const line of slice) {
+          const row = parseProblemRow(line);
+          if (row === null) {
+            report.skipped += 1;
+            continue;
+          }
+          const check = checkProblem(this.teacher, row);
+          if (check.verdict === 'correct') report.accepted += 1;
+          else if (check.verdict === 'wrong') report.wrong += 1;
+          else report.abstained += 1;
+        }
         break;
+      }
     }
     this.teacher.setCurriculumCursor(source.id, end);
     report.ms = Date.now() - started;
@@ -247,6 +261,9 @@ export function describeFeed(report: FeedReport): string {
     parts.push(`${report.accepted} new edges`, `${report.agreed} agreed`, `${report.denied} denied`, `${report.negations} negations`);
   } else if (report.kind === 'passages') {
     parts.push(`${report.accepted} edges read`, `${report.negations} negations`);
+  } else if (report.kind === 'problems') {
+    const attempted = report.accepted + report.wrong;
+    parts.push(`${report.accepted} right`, `${report.wrong} wrong`, `${report.abstained} abstained`, `accuracy when answering ${attempted === 0 ? '—' : `${((100 * report.accepted) / attempted).toFixed(0)}%`}`);
   } else {
     parts.push(`${report.accepted} taught`);
   }
