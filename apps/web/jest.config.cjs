@@ -29,7 +29,9 @@ module.exports = {
     '<rootDir>/src/teacher/nullArmsBenchmark.test.ts',
     // Corpus ingestion at 5k–50k edges over the full deck: the number the
     // classroom's ingest budget is set from, not a unit test.
-    '<rootDir>/src/curriculum/ingestScaleBenchmark.test.ts'
+    '<rootDir>/src/curriculum/ingestScaleBenchmark.test.ts',
+    // Reads the operator's corpus files (absent in CI): a measurement, not a unit test.
+    '<rootDir>/src/curriculum/passageBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]
