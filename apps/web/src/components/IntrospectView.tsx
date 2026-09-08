@@ -89,8 +89,10 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
     calibration: Array<{ gate: string; report: { samples: number; positiveRate: number; separator: number | null } }>;
     /** TASKS.md #17 — absent from snapshots taken by an older server. */
     deviation?: { answers: number; grounded: number; composed: number; abstained: number; groundedShare: number; composedShare: number; abstainedShare: number };
+    /** The grader check's verdicts — absent from older servers. */
+    graders?: Record<string, { trusted: boolean; auc: number | null; goodPass: number | null; probes: number; at: number; reason: string }>;
   };
-  const training = snapshot.training as Record<string, number> | null;
+  const training = snapshot.training as Record<string, number | boolean | null> | null;
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto px-6 py-5 lg:grid-cols-2">
@@ -184,6 +186,19 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
             />
           </div>
         )}
+        {trust.graders !== undefined && Object.keys(trust.graders).length > 0 && (
+          <div className="mb-2 space-y-1 border-b border-slate-800/60 pb-2">
+            {Object.entries(trust.graders).map(([name, entry]) => (
+              <div key={name} className="text-[11px] text-slate-500">
+                <span className={entry.trusted ? 'text-emerald-300' : 'text-rose-300'}>{entry.trusted ? 'grader trusted' : 'grader untrusted'}</span>{' '}
+                <span className="text-slate-400">{name}</span>
+                {entry.auc !== null ? ` · AUC ${entry.auc.toFixed(2)}` : ''}
+                {entry.goodPass !== null ? ` · ${(entry.goodPass * 100).toFixed(0)}% of correct answers graded strong` : ''}
+                <div className="text-slate-600">{entry.reason}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <Row label="teacher dependence" value={`${(trust.dependence * 100).toFixed(0)}%`} hint="traffic-weighted mean teacher share (1 − λ)" />
         <div className="mt-1 space-y-1 border-t border-slate-800/60 pt-2">
           {Object.entries(trust.lambdas).map(([cls, lambda]) => (
@@ -216,6 +231,13 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
             <Row label="phrases taught" value={String(training.phrasesTaught)} />
             <Row label="self-answered" value={String(training.selfAnswered)} />
             <Row label="drills run / induced" value={`${training.drillsRun} / ${training.drillsInduced}`} />
+            {training.graderChecks !== undefined && (
+              <Row
+                label="grader checks / trusted"
+                value={`${training.graderChecks} / ${training.graderTrusted === null ? 'not yet measured' : training.graderTrusted ? 'yes' : 'NO'}`}
+                hint="known-good vs known-bad answers, graded by the teacher model; an untrusted grader's grades are not applied"
+              />
+            )}
             {training.goalSteps !== undefined && (
               <Row
                 label="goal steps / completed / stalled"

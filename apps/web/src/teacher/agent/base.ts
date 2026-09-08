@@ -54,6 +54,7 @@ import type { LearningGoal, GoalType } from '../plan';
 import { groundingAttribution } from '../grounding';
 import type { BehaviorWeights, BehaviorOption, DriveSignals } from '../drives';
 import type { MeterCategory, SpeechReading } from '../speechAct';
+
 import type { TransitionWeights, ConversationPair } from '../conversation';
 import type { WeightMeta } from '../agedWeights';
 import type { Relation, SourceClass, Negation, RelationPredicate } from '../relations';
@@ -61,6 +62,15 @@ import type { DerivationDenial } from '../rules/types';
 import type { SenseAssignment } from '../senseModel';
 
 export type Constructor<T = object> = new (...args: any[]) => T;
+/** One grader's measured ability to judge (teacher/graderCheck.ts). */
+export interface GraderTrustEntry {
+  trusted: boolean;
+  auc: number | null;
+  goodPass: number | null;
+  probes: number;
+  at: number;
+  reason: string;
+}
 
 /**
  * The type-level contract between faculties: methods one mixin calls on
@@ -456,6 +466,13 @@ export class TeacherAgentCore {
   protected readonly goals: LearningGoal[] = [];
   protected goalLoopToken = 0;
   protected goalLoopRunning = false;
+  /** THE GRADER CHECK (teacher/graderCheck.ts): per-grader trust, measured
+   *  against known-good / known-bad answers. Absent = unmeasured, and an
+   *  unmeasured grader is trusted (the prior); a grader measured UNABLE to
+   *  judge has its grades recorded but never applied. Persisted with the
+   *  learning state (additive). */
+  protected readonly graderTrust = new Map<string, GraderTrustEntry>();
+
   /** TASKS.md #18 — goals that STALLED, per target: the curriculum's
    *  stall signal (a plan the observer could not finish puts its target
    *  first in the lesson queue). Persisted with the learning state. */

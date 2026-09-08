@@ -8,7 +8,7 @@
  * State (persistence, persistEvery, persistCounter, persistChain,
  * persistTimer, dirtySince, bootstrapImportedMeta) lives on TeacherAgentCore.
  */
-import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base';
+import { TeacherAgentCore, type Constructor, type CrossFacultyApi, type GraderTrustEntry } from './base';
 import {
   FSRS_INITIAL_STABILITY,
   FSRS_INITIAL_DIFFICULTY
@@ -278,6 +278,24 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             for (const [target, value] of Object.entries(learningState.goalStalls as Record<string, unknown>)) {
               if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
                 this.goalStalls.set(target, Math.floor(value));
+              }
+            }
+          }
+          if (typeof learningState.graderTrust === 'object' && learningState.graderTrust !== null) {
+            // The grader check's verdicts survive reloads (additive): a judge
+            // measured unable to judge stays gated until it is re-measured.
+            this.graderTrust.clear();
+            for (const [name, entry] of Object.entries(learningState.graderTrust as Record<string, unknown>)) {
+              const e = entry as Partial<GraderTrustEntry> | null;
+              if (e !== null && typeof e === 'object' && typeof e.trusted === 'boolean') {
+                this.graderTrust.set(name, {
+                  trusted: e.trusted,
+                  auc: typeof e.auc === 'number' ? e.auc : null,
+                  goodPass: typeof e.goodPass === 'number' ? e.goodPass : null,
+                  probes: typeof e.probes === 'number' ? e.probes : 0,
+                  at: typeof e.at === 'number' ? e.at : 0,
+                  reason: typeof e.reason === 'string' ? e.reason : ''
+                });
               }
             }
           }
@@ -694,6 +712,8 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
           drillFailures: Object.fromEntries(this.drillFailures),
           // TASKS.md #18 (additive): stalled goals per target.
           goalStalls: Object.fromEntries(this.goalStalls),
+          // The grader check's verdicts (additive).
+          graderTrust: Object.fromEntries(this.graderTrust),
           producedCues: [...this.producedConversationCues],
           cueConfidence: Object.fromEntries(this.cueConfidence),
           relations: this.chaperoneRelations,
@@ -1063,6 +1083,12 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             }
           }
         }
+        if (typeof ls.graderTrust === 'object' && ls.graderTrust !== null) {
+          this.graderTrust.clear();
+          for (const [name, entry] of Object.entries(ls.graderTrust)) {
+            if (typeof entry.trusted === 'boolean') this.graderTrust.set(name, { ...entry });
+          }
+        }
         if (typeof ls.graderReliability === 'object' && ls.graderReliability !== null) {
           this.reliabilityModel.restore(ls.graderReliability as ReliabilitySnapshot);
         }
@@ -1157,6 +1183,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
         drillFailures: Object.fromEntries(this.drillFailures),
         // TASKS.md #18 (additive): stalled goals per target.
         goalStalls: Object.fromEntries(this.goalStalls),
+        graderTrust: Object.fromEntries(this.graderTrust),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined,

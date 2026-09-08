@@ -220,7 +220,15 @@ export async function runAutonomousCycle(
     const prompt = AUTONOMOUS_CREATIVE_PROMPTS.find((p) => !used.has(p.toLowerCase())) ?? AUTONOMOUS_CREATIVE_PROMPTS[0];
     events.push({ role: 'llm', text: prompt, meta: 'creative' });
     const reply = teacher.creativeReply(prompt);
-    if (reply.sentence.trim().length > 0) {
+    if (reply.sentence.trim().length > 0 && !teacher.graderTrusted(grader.name)) {
+      // THE GRADER CHECK found this judge unable to judge: the practice still
+      // happens (composition is its own exercise) but the grade is not asked
+      // for — it would be recorded and discarded, one wasted LLM call per
+      // cycle. The check re-runs on its schedule; a repaired grader resumes.
+      events.push({ role: 'observer', text: reply.sentence, meta: 'creative' });
+      events.push({ role: 'system', text: `creative practice ungraded — grader "${grader.name}" is untrusted (grader check)`, meta: 'grade' });
+      selfAnswered += 1;
+    } else if (reply.sentence.trim().length > 0) {
       events.push({ role: 'observer', text: reply.sentence, meta: 'creative' });
       selfAnswered += 1;
       llmCalls += 1;

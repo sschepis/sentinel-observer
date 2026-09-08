@@ -153,6 +153,9 @@ export interface BootstrapRecord {
     /** TASKS.md #18: goals that stalled, per target — the curriculum's
      *  stall signal survives the record (additive). */
     goalStalls?: Record<string, number>;
+    /** The grader check's verdicts per grader (teacher/graderCheck.ts):
+     *  a judge measured unable to judge stays gated across the record. */
+    graderTrust?: Record<string, { trusted: boolean; auc: number | null; goodPass: number | null; probes: number; at: number; reason: string }>;
     /** Taught cues the observer has actually spoken — the numerator of
      *  recall competency. Without it an imported record reads 0% recall and
      *  creative mode can never unlock. */

@@ -34,6 +34,8 @@ import {
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { fromAutonomousEvent, makeEvent, type LearningEvent } from '../learning/events';
+import { checkGrader, describeGraderCheck, graderProbesFrom } from '../teacher/graderCheck';
+import type { SemanticGrader } from '../teacher/chaperone';
 
 export interface TrainingStats {
   cycles: number;
@@ -49,6 +51,10 @@ export interface TrainingStats {
   goalSteps: number;
   goalsCompleted: number;
   goalsStalled: number;
+  /** The grader check (teacher/graderCheck.ts): checks run, and the latest
+   *  verdict — null until the first conclusive check. */
+  graderChecks: number;
+  graderTrusted: boolean | null;
 }
 
 export const EMPTY_TRAINING_STATS: TrainingStats = {
@@ -63,8 +69,15 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
   drillsMemorized: 0,
   goalSteps: 0,
   goalsCompleted: 0,
-  goalsStalled: 0
+  goalsStalled: 0,
+  graderChecks: 0,
+  graderTrusted: null
 };
+
+/** Cycles between grader checks (the first runs before the first cycle). */
+export const GRADER_CHECK_EVERY = 100;
+/** Probe pairs per check — 2 grader calls each. */
+export const GRADER_CHECK_PROBES = 8;
 
 export interface TrainingLoopOptions {
   /** Server-configured chaperone (endpoint/model/key) — never browser state. */
@@ -80,6 +93,13 @@ export interface TrainingLoopOptions {
   /** GOAL PURSUIT (TASKS.md #18): discover goals and take one plan step per
    *  cycle. Default true; false is the control arm for the bench. */
   pursueGoals?: boolean;
+  /** THE GRADER CHECK: before the first cycle and every `graderCheckEvery`
+   *  cycles, grade known-good and known-bad answers and record whether the
+   *  grader can tell them apart; an untrusted grader's grades are recorded
+   *  but never applied, and creative practice skips the grade call. Default
+   *  on; `graderCheckEvery: 0` disables (the bench control). */
+  graderCheckEvery?: number;
+  graderCheckProbes?: number;
   /** Provider factory (tests inject stubs; default: the settings' provider). */
   providerFactory?: (settings: ChaperoneSettings) => ChaperoneProvider;
   onEvents?: (events: readonly LearningEvent[]) => void;
@@ -128,8 +148,14 @@ export class TrainingLoop {
           : new NullChaperoneProvider();
     const chaperone = new Chaperone(provider);
     const grader = semanticGrader(provider);
+    const checkEvery = this.options.graderCheckEvery ?? GRADER_CHECK_EVERY;
     try {
       while (!controller.signal.aborted) {
+        if (grader !== null && checkEvery > 0 && this.stats.cycles % checkEvery === 0) {
+          const checked = await this.graderCheckStep(grader, controller.signal);
+          if (checked.length > 0) this.options.onEvents?.(checked);
+          if (controller.signal.aborted) break;
+        }
         const cycle = await runAutonomousCycle(this.teacher, chaperone, grader, controller.signal, {
           wordsPerCycle: this.options.wordsPerCycle ?? 3,
           reviewsPerCycle: this.options.reviewsPerCycle ?? 2
@@ -171,6 +197,28 @@ export class TrainingLoop {
     } finally {
       if (this.controller === controller) this.controller = null;
       this.options.onEvents?.([makeEvent({ kind: 'system', label: 'system', text: 'learning stopped' })]);
+    }
+  }
+
+  /**
+   * THE GRADER CHECK (Rule 1 / Rule 3): grade taught pairs' own responses
+   * (known good) and other pairs' responses (known bad); record whether the
+   * grader separates them and reaches the reinforce gate on correct answers.
+   * The verdict gates every creative grade until the next check. A null
+   * provider (no endpoint) never reaches here — semanticGrader returns null.
+   */
+  private async graderCheckStep(grader: SemanticGrader, signal: AbortSignal): Promise<LearningEvent[]> {
+    try {
+      const probes = graderProbesFrom(this.teacher.listConversationPairs(), this.options.graderCheckProbes ?? GRADER_CHECK_PROBES);
+      if (probes.length === 0) return [];
+      const check = await checkGrader(grader, probes, { signal });
+      if (signal.aborted) return [];
+      this.stats.graderChecks += 1;
+      this.teacher.recordGraderCheck(check);
+      if (check.trusted !== null) this.stats.graderTrusted = check.trusted;
+      return [makeEvent({ kind: check.trusted === false ? 'error' : 'system', label: 'grader', text: describeGraderCheck(check) })];
+    } catch (reason) {
+      return [makeEvent({ kind: 'error', label: 'grader', text: `grader check failed: ${reason instanceof Error ? reason.message : String(reason)}` })];
     }
   }
 

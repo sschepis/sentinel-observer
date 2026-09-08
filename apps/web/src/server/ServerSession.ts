@@ -1,6 +1,6 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-06.4';
+export const SERVER_BUILD = '2026-09-08.1';
 
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
@@ -378,7 +378,11 @@ export class ServerSession {
         answer,
         settings.model || settings.endpoint
       );
-      return { score: outcome?.score ?? null, feedback: outcome?.feedback ?? null, graded };
+      const feedback =
+        graded.untrusted === true
+          ? `${outcome?.feedback ?? `graded ${(outcome?.score ?? 0).toFixed(2)}`} — not applied: this grader failed its check (it cannot tell good answers from bad ones)`
+          : outcome?.feedback ?? null;
+      return { score: outcome?.score ?? null, feedback, graded };
     } catch (reason) {
       return {
         score: null,
@@ -534,7 +538,9 @@ export class ServerSession {
         // TASKS.md #17: the deviation meter read from what was SAID (speech
         // act × backing), beside the routing-layer counts it replaces.
         deviation: teacher.deviationMeter(),
-        answerModes: teacher.answerModeCounts()
+        answerModes: teacher.answerModeCounts(),
+        // The grader check's verdicts per grader (teacher/graderCheck.ts).
+        graders: teacher.graderTrustSnapshot()
       },
       training: this.trainingLoop !== null ? this.trainingLoop.statistics() : null
     };

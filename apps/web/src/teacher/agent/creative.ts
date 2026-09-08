@@ -10,7 +10,8 @@
  * authoredAnswers, answerGrades, reliabilityModel, fadeAgreementTelemetry,
  * lambdaTraffic, compositionCost, compositionRng) lives on TeacherAgentCore.
  */
-import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base';
+import { TeacherAgentCore, type Constructor, type CrossFacultyApi, type GraderTrustEntry } from './base';
+import type { GraderCheck } from '../graderCheck';
 import {
   bumpAgedWeights,
   type WeightMeta
@@ -420,18 +421,57 @@ export function CreativeMixin<TBase extends Constructor<TeacherAgentCore & Cross
      * Returns what was applied and whether a re-grade is pending — the caller
      * reports the pending disagreement instead of silently overruling it.
      */
+    /** Record a grader check's verdict. An inconclusive check (trusted ===
+     *  null) changes nothing — the prior stands. */
+    recordGraderCheck(check: GraderCheck): void {
+      if (check.trusted === null) return;
+      this.graderTrust.set(check.grader, {
+        trusted: check.trusted,
+        auc: check.auc,
+        goodPass: check.goodPass,
+        probes: check.probes,
+        at: check.at,
+        reason: check.reason
+      });
+      this.maybePersist();
+    }
+
+    /** Whether a grader's grades may move memory. Unmeasured = trusted. */
+    graderTrusted(name: string): boolean {
+      return this.graderTrust.get(name)?.trusted ?? true;
+    }
+
+    /** The measured trust per grader (read-only, for introspection). */
+    graderTrustSnapshot(): Record<string, GraderTrustEntry> {
+      return Object.fromEntries([...this.graderTrust.entries()].map(([name, entry]) => [name, { ...entry }]));
+    }
+
     gradeCreativeWithReliability(
       provenance: AnswerProvenance | readonly string[],
       score: number | null,
       utterance: string,
       answer: string,
       provider: string
-    ): { stored: boolean; weight: number; disagreement: boolean; regradeId: string | null } {
+    ): { stored: boolean; weight: number; disagreement: boolean; regradeId: string | null; untrusted?: boolean } {
       const producers: AnswerProvenance = Array.isArray(provenance)
         ? { traceIds: [...(provenance as readonly string[])], edges: [] }
         : (provenance as AnswerProvenance);
       if (score === null) {
         return { stored: false, weight: 1, disagreement: false, regradeId: null };
+      }
+      // THE GRADER CHECK GATE: a grader measured unable to tell good from bad
+      // is not feedback. Its grade is recorded in the ledger (neutral — the
+      // producers are still named) and nothing else moves: no reinforcement,
+      // no weakening, no edge or rule confidence, no compose outcome, no gap.
+      // The check re-runs periodically (trainingLoop), so a repaired grader
+      // earns its way back.
+      if (!this.graderTrusted(provider)) {
+        this.recordAnswerGrade(utterance, 'creative', 'neutral', {
+          traceIds: producers.traceIds,
+          edges: producers.edges,
+          ruleIds: producers.ruleIds !== undefined && producers.ruleIds.length > 0 ? producers.ruleIds : undefined
+        });
+        return { stored: false, weight: 0, disagreement: false, regradeId: null, untrusted: true };
       }
 
       const bank = this.session.observer.getMemoryBank();
