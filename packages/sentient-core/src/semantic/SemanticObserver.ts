@@ -442,7 +442,10 @@ export class SemanticObserver implements Initializable {
     >,
     never
   > & { memoryCapacity: number | undefined; safety?: SafetyMonitor };
-  private readonly vocabulary: Readonly<Record<string, readonly number[]>>;
+  /** The word → primes table. Append-only after construction (see
+   *  `extendVocabulary`): an existing entry is never changed, because every
+   *  stored trace was encoded under it. */
+  private readonly vocabulary: Record<string, readonly number[]>;
   /**
    * Sparse-excitation budget, or null when the option is off (the control).
    * Read from the raw options like `memoryMode` — it is not defaulted into
@@ -1490,6 +1493,43 @@ export class SemanticObserver implements Initializable {
   // ─────────────────────────────────────────────────────────────────────────
 
   /** Aggregate state (no simulation advance). */
+  /**
+   * APPEND-ONLY VOCABULARY GROWTH. Adds words the observer did not know at
+   * construction. An entry that already exists is left exactly as it is —
+   * traces stored under the old signature must keep resolving to it — and
+   * is reported as skipped; a word whose signature is not a finite positive
+   * prime list is refused loudly, like the constructor does. Returns the
+   * number of words actually added.
+   */
+  extendVocabulary(words: Readonly<Record<string, readonly number[]>>): number {
+    let added = 0;
+    for (const [rawWord, primes] of Object.entries(words)) {
+      const word = rawWord.toLowerCase();
+      if (this.vocabulary[word] !== undefined) continue;
+      if (!Array.isArray(primes) || primes.length === 0) {
+        throw new NonFiniteValueError(`vocabulary[${word}]`, primes as never);
+      }
+      for (const p of primes) {
+        if (!Number.isFinite(p) || p <= 0 || !Number.isInteger(p)) {
+          throw new NonFiniteValueError(`vocabulary[${word}] prime`, p);
+        }
+      }
+      this.vocabulary[word] = [...primes];
+      added += 1;
+    }
+    return added;
+  }
+
+  /** The signature a word encodes under, or undefined for an unknown word. */
+  vocabularySignature(word: string): readonly number[] | undefined {
+    return this.vocabulary[word.toLowerCase()];
+  }
+
+  /** How many words the observer's vocabulary holds. */
+  vocabularySize(): number {
+    return Object.keys(this.vocabulary).length;
+  }
+
   getState(): SemanticObserverState {
     const metrics = this.field.getMetrics();
     const state = this.field.getState();

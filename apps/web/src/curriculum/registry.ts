@@ -93,6 +93,8 @@ export interface FeedReport {
   /** Problems only: answered wrong / abstained. */
   wrong: number;
   abstained: number;
+  /** Relations only: words the observer learned to know exist this step. */
+  grown: number;
   /** Rows left in the source after this step. */
   remaining: number;
   ms: number;
@@ -109,7 +111,7 @@ function parseRow<T>(line: string): T | null {
 
 export class CurriculumFeeder {
   private readonly lines = new Map<string, string[]>();
-  private vocabulary: ReadonlySet<string> | null = null;
+  private vocabulary: Set<string> | null = null;
   private turn = 0;
 
   constructor(
@@ -137,7 +139,7 @@ export class CurriculumFeeder {
   }
 
   /** The deck vocabulary the adapters filter to (computed once). */
-  private deckVocabulary(): ReadonlySet<string> {
+  private deckVocabulary(): Set<string> {
     if (this.vocabulary === null) {
       this.vocabulary = new Set(this.teacher.listWords().map((entry) => entry.word.word.toLowerCase()).filter((word) => WORD_SHAPE.test(word)));
     }
@@ -174,12 +176,33 @@ export class CurriculumFeeder {
       negations: 0,
       wrong: 0,
       abstained: 0,
+      grown: 0,
       remaining: rows.length - end,
       ms: 0
     };
     switch (source.kind) {
       case 'relations': {
-        const batch = conceptNetToRelations(parseConceptNetJsonl(slice.join('\n')), this.deckVocabulary());
+        const rows = parseConceptNetJsonl(slice.join('\n'));
+        // VOCABULARY GROWTH: a row's unknown end becomes a word the observer
+        // knows exists (word-only, no definition) — provided the other end is
+        // a word it already holds, so the graph stays anchored to what it can
+        // define. Growth happens before conversion so the batch passes the
+        // adapter's both-known filter.
+        const vocabulary = this.deckVocabulary();
+        const toGrow = new Set<string>();
+        for (const row of rows) {
+          const a = row.start.trim();
+          const b = row.end.trim();
+          if (!WORD_SHAPE.test(a) || !WORD_SHAPE.test(b)) continue;
+          if (vocabulary.has(a) && !vocabulary.has(b)) toGrow.add(b);
+          else if (vocabulary.has(b) && !vocabulary.has(a)) toGrow.add(a);
+        }
+        if (toGrow.size > 0) {
+          const growth = this.teacher.growVocabulary([...toGrow]);
+          for (const entry of growth.added) vocabulary.add(entry.word);
+          report.grown = growth.added.length;
+        }
+        const batch = conceptNetToRelations(rows, vocabulary);
         report.skipped = batch.skipped;
         const took = this.teacher.ingestRelationBatch(batch);
         report.accepted = took.accepted;
@@ -258,7 +281,7 @@ export class CurriculumFeeder {
 export function describeFeed(report: FeedReport): string {
   const parts = [`${report.sourceId}: ${report.rows} rows`];
   if (report.kind === 'relations') {
-    parts.push(`${report.accepted} new edges`, `${report.agreed} agreed`, `${report.denied} denied`, `${report.negations} negations`);
+    parts.push(`${report.accepted} new edges`, `${report.agreed} agreed`, `${report.denied} denied`, `${report.negations} negations`, `${report.grown} new words`);
   } else if (report.kind === 'passages') {
     parts.push(`${report.accepted} edges read`, `${report.negations} negations`);
   } else if (report.kind === 'problems') {

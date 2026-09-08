@@ -95,6 +95,8 @@ export interface CrossFacultyApi {
   // ── curriculum ──────────────────────────────────────────────────────────
   nextReview(): string | null;
   nextNewWord(): string | null;
+  growVocabulary(words: ReadonlyArray<string | { word: string; primes: readonly number[] }>): { added: Array<{ word: string; primes: number[] }>; skipped: number };
+  grownWordList(): Array<{ word: string; primes: number[] }>;
   // ── relations ───────────────────────────────────────────────────────────
   relations(): Relation[];
   addEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void;
@@ -435,6 +437,11 @@ export class TeacherAgentCore {
   /** Lazy semantic vocabulary over the teacher's own deck (the sparsity
    *  signal's neighborhood graph) — ~75 ms at the full 20k deck, once. */
   protected curriculumVocabCache: Record<string, number[]> | null = null;
+  /** VOCABULARY GROWTH (agent/curriculum.ts growVocabulary): words the
+   *  observer learned to know exist after construction — corpus terms it has
+   *  edges about but no definition for — with the exact signature each was
+   *  given, so a restore re-adds them byte-identically. Append-only. */
+  protected readonly grownWords = new Map<string, number[]>();
   /** src/curriculum: how far into each registered source the classroom has
    *  ingested (source id → rows consumed). Persisted with the learning state
    *  so a restart resumes where it stopped instead of re-ingesting. */

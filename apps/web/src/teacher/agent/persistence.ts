@@ -67,6 +67,18 @@ import {
   type AnswerGradeEntry
 } from './support';
 
+/** Persisted grown words → growVocabulary entries (malformed rows dropped). */
+function grownWordEntries(value: unknown): Array<{ word: string; primes: number[] }> {
+  if (!Array.isArray(value)) return [];
+  const out: Array<{ word: string; primes: number[] }> = [];
+  for (const entry of value as Array<{ word?: unknown; primes?: unknown }>) {
+    if (typeof entry?.word !== 'string' || !Array.isArray(entry.primes)) continue;
+    const primes = entry.primes.filter((p): p is number => typeof p === 'number' && Number.isInteger(p) && p > 1);
+    if (primes.length > 0) out.push({ word: entry.word, primes });
+  }
+  return out;
+}
+
 /** The origin an ingested (non-derived) edge restores with: the recorded
  *  one when it names an ingestion origin, else 'chaperone' (legacy records
  *  tagged nothing and held only chaperone edges). Regex/authored edges are
@@ -152,6 +164,12 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
 
       this.rebuildLearnedOperators();
       this.rebuildCompositionWeightsFromMemory();
+
+      // VOCABULARY GROWTH: re-add the grown words with their exact signatures
+      // BEFORE the word states are matched, so a grown word's state binds.
+      if (learningState !== null && learningState !== undefined && Array.isArray(learningState.grownWords)) {
+        this.growVocabulary(grownWordEntries(learningState.grownWords));
+      }
 
       if (states !== null) {
         for (const state of states) {
@@ -733,6 +751,8 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
           graderTrust: Object.fromEntries(this.graderTrust),
           // src/curriculum ingestion cursors (additive).
           curriculumCursors: Object.fromEntries(this.curriculumCursors),
+          // Grown words with their exact signatures (additive).
+          grownWords: this.grownWordList(),
           producedCues: [...this.producedConversationCues],
           cueConfidence: Object.fromEntries(this.cueConfidence),
           relations: this.chaperoneRelations,
@@ -848,6 +868,12 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             this.gapTraceIds.add(trace.id);
           }
         }
+      }
+
+      // VOCABULARY GROWTH: grown words come back with their exact signatures
+      // before the word states are matched.
+      if (record.learningState !== undefined && Array.isArray(record.learningState.grownWords)) {
+        this.growVocabulary(grownWordEntries(record.learningState.grownWords));
       }
 
       for (const state of record.wordStates) {
@@ -1210,6 +1236,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
         goalStalls: Object.fromEntries(this.goalStalls),
         graderTrust: Object.fromEntries(this.graderTrust),
         curriculumCursors: Object.fromEntries(this.curriculumCursors),
+        grownWords: this.grownWordList(),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined,

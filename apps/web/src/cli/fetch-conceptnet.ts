@@ -10,7 +10,8 @@
  * gunzip line by line, and keeps only rows that are:
  *   · English on both ends,
  *   · a relation the observer can hold (src/curriculum/conceptnet.ts),
- *   · between two single words of the active deck.
+ *   · between two single words, at least one of them in the active deck (the
+ *     other becomes a word the observer learns to know exists).
  * What comes out is a few tens of MB the server can load whole. Nothing is
  * written anywhere else; the dump itself is not kept unless you passed a
  * local file. Progress every million input lines.
@@ -82,7 +83,10 @@ async function main(): Promise<void> {
     const row = parseConceptNetLine(line);
     if (row === null || row.weight < MIN_WEIGHT) continue;
     if (!WORD_SHAPE.test(row.start) || !WORD_SHAPE.test(row.end)) continue;
-    if (!vocabulary.has(row.start) || !vocabulary.has(row.end) || row.start === row.end) continue;
+    // At least ONE end must be a deck word: the graph stays anchored to words
+    // the observer can define, and the other end becomes a word it learns to
+    // know exists (vocabulary growth, src/curriculum/registry.ts).
+    if ((!vocabulary.has(row.start) && !vocabulary.has(row.end)) || row.start === row.end) continue;
     out.write(`${JSON.stringify(row)}\n`);
     kept += 1;
     perRelation.set(row.rel, (perRelation.get(row.rel) ?? 0) + 1);

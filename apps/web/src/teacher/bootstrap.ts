@@ -158,6 +158,9 @@ export interface BootstrapRecord {
     graderTrust?: Record<string, { trusted: boolean; auc: number | null; goodPass: number | null; probes: number; at: number; reason: string }>;
     /** src/curriculum: rows consumed per registered source (additive). */
     curriculumCursors?: Record<string, number>;
+    /** Vocabulary growth: words learned to exist after construction, with
+     *  the exact signature each was given (re-added byte-identically). */
+    grownWords?: Array<{ word: string; primes: number[] }>;
     /** Taught cues the observer has actually spoken — the numerator of
      *  recall competency. Without it an imported record reads 0% recall and
      *  creative mode can never unlock. */

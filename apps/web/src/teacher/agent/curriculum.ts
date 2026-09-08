@@ -12,11 +12,112 @@ import { TeacherAgentCore, type Constructor, type CrossFacultyApi } from './base
 import { nextCurriculumWord, rankCurriculum, rankLegacy, REVIEW_HISTORY_CAP, type CurriculumConfig, type CurriculumContext, type CurriculumItem } from '../curriculum';
 import { semanticVocabulary } from '../semanticSignature';
 import { clampRange } from '@sschepis/sentient-core';
+import { primeSignature, PRIME_SPACE } from '../primeSignature';
+import { FSRS_INITIAL_DIFFICULTY, FSRS_INITIAL_STABILITY } from '../fsrs';
+import { WORD_SHAPE } from '../../curriculum/types';
+
+/** What growVocabulary did. */
+export interface VocabularyGrowth {
+  /** Words added, in order, with the signature each received. */
+  added: Array<{ word: string; primes: number[] }>;
+  /** Words refused: already known, wrong shape, or a duplicate in the request. */
+  skipped: number;
+}
 
 
 
 export function CurriculumMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
   return class CurriculumFaculty extends Base {
+
+    /**
+     * APPEND-ONLY VOCABULARY GROWTH. A corpus states things about words the
+     * deck never taught ("zebu is-a mammal"). The observer can hold such a
+     * word the way it holds a word it has heard but cannot define: a
+     * word-only entry (empty definition — recognition quizzes only, encounter
+     * counts drive the curiosity to ask what it means) with its own prime
+     * signature, so it encodes, recalls and joins the relation graph like any
+     * deck word.
+     *
+     * The signature is the plain hash scheme (primeSignature), salted until
+     * it collides with nothing the observer already holds. NOTHING EXISTING
+     * MOVES: every stored trace was encoded under the deck's signatures, and
+     * the bench (vocabularyGrowth.test.ts) asserts they are byte-identical
+     * after growth. The deck-derived fingerprint is untouched — grown words
+     * are persisted separately, with their exact primes, and re-added on
+     * restore. Single tokens only: a multi-word concept has no token here.
+     *
+     * `primes` may be supplied (restore) — then the word is re-added with
+     * exactly that signature and never re-salted.
+     */
+    growVocabulary(words: ReadonlyArray<string | { word: string; primes: readonly number[] }>): VocabularyGrowth {
+      const observer = this.session.observer;
+      const added: VocabularyGrowth['added'] = [];
+      let skipped = 0;
+      // Every signature already in use — the deck's and the grown ones — so a
+      // new word never lands on an existing one.
+      const used = new Set<string>();
+      for (const word of this.states.keys()) {
+        const signature = observer.vocabularySignature(word);
+        if (signature !== undefined) used.add(signature.join(','));
+      }
+      for (const primes of this.grownWords.values()) used.add(primes.join(','));
+      for (const entry of words) {
+        const word = (typeof entry === 'string' ? entry : entry.word).trim().toLowerCase();
+        // Two letters at least: a one-letter "word" is a letter, not a word to know.
+        if (word.length < 2 || !WORD_SHAPE.test(word) || this.states.has(word) || observer.vocabularySignature(word) !== undefined) {
+          skipped += 1;
+          continue;
+        }
+        let primes: number[];
+        if (typeof entry !== 'string') {
+          primes = [...entry.primes];
+        } else {
+          let salt = 0;
+          primes = primeSignature(word, PRIME_SPACE, salt);
+          while (used.has(primes.join(','))) {
+            salt += 1;
+            primes = primeSignature(word, PRIME_SPACE, salt);
+          }
+        }
+        used.add(primes.join(','));
+        observer.extendVocabulary({ [word]: primes });
+        (this.knownWords as Set<string>).add(word);
+        this.states.set(word, {
+          word: { word, definition: '', example: '' },
+          traceId: null,
+          taughtAt: null,
+          lastAskedAt: null,
+          lastGrade: null,
+          successes: 0,
+          failures: 0,
+          strengthHistory: [],
+          stability: FSRS_INITIAL_STABILITY,
+          difficulty: FSRS_INITIAL_DIFFICULTY,
+          dueAt: null,
+          lastIntervalDays: null,
+          reviewHistory: []
+        });
+        this.grownWords.set(word, primes);
+        added.push({ word, primes });
+      }
+      if (added.length > 0) {
+        // The sparsity neighborhood and the relation graph both index the
+        // vocabulary; both re-derive on the next read.
+        this.curriculumVocabCache = null;
+        this.invalidateRelations();
+      }
+      return { added, skipped };
+    }
+
+    /** The grown words with their signatures (persisted; read-only). */
+    grownWordList(): Array<{ word: string; primes: number[] }> {
+      return [...this.grownWords.entries()].map(([word, primes]) => ({ word, primes: [...primes] }));
+    }
+
+    /** Whether the observer knows a word exists (deck or grown). */
+    knowsWord(word: string): boolean {
+      return this.states.has(word.trim().toLowerCase());
+    }
 
     /**
      * The observer's curiosity: the next word that NEEDS review. P9: the
