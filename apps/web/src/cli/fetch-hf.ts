@@ -130,7 +130,14 @@ const SPECS: Record<string, SourceSpec> = {
   }
 };
 
-function getJson(url: string): Promise<unknown> {
+/** An HTTP failure that says how long to wait (429 with Retry-After). */
+class HttpError extends Error {
+  constructor(readonly status: number, message: string, readonly retryAfterMs: number | null) {
+    super(message);
+  }
+}
+
+function getJsonOnce(url: string): Promise<unknown> {
   return new Promise((resolveJson, reject) => {
     const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'sentient-observer fetch-hf' };
     if (HF_TOKEN.length > 0) headers.authorization = `Bearer ${HF_TOKEN}`;
@@ -139,8 +146,10 @@ function getJson(url: string): Promise<unknown> {
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
-        if ((response.statusCode ?? 0) !== 200) {
-          reject(new Error(`HTTP ${response.statusCode}: ${body.slice(0, 200)}`));
+        const status = response.statusCode ?? 0;
+        if (status !== 200) {
+          const retryAfter = Number(response.headers['retry-after']);
+          reject(new HttpError(status, `HTTP ${status}${body.startsWith('<') ? '' : `: ${body.slice(0, 120)}`}`, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : null));
           return;
         }
         try {
@@ -152,6 +161,30 @@ function getJson(url: string): Promise<unknown> {
     }).on('error', reject);
   });
 }
+
+/** GET with backoff: a 429 waits what Retry-After says (or the backoff),
+ *  a 5xx / network error backs off (2, 4, 8, 16, 32 s); a 4xx other than
+ *  429 is final (the id or config is wrong). */
+async function getJson(url: string, retries = RETRIES): Promise<unknown> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await getJsonOnce(url);
+    } catch (error) {
+      lastError = error;
+      if (error instanceof HttpError && error.status >= 400 && error.status < 500 && error.status !== 429) throw error;
+      const wait = error instanceof HttpError && error.retryAfterMs !== null ? Math.min(error.retryAfterMs, 120_000) : 2000 * 2 ** attempt;
+      if (attempt + 1 < retries) {
+        console.log(`  ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 60)} — waiting ${(wait / 1000).toFixed(0)} s (retry ${attempt + 1}/${retries - 1})`);
+        await new Promise((resolveWait) => setTimeout(resolveWait, wait));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/** Pause between pages so a long run stays under the API's rate limit. */
+const PAGE_PAUSE_MS = HF_TOKEN.length > 0 ? 150 : 600;
 
 async function pickCandidate(spec: SourceSpec): Promise<{ dataset: string; config: string; split: string; total: number }> {
   for (const candidate of spec.candidates) {
@@ -176,10 +209,10 @@ async function main(): Promise<void> {
   const out = resolve(CORPUS, spec.out);
   mkdirSync(dirname(out), { recursive: true });
   if (FRESH) writeFileSync(out, '');
+  console.log(HF_TOKEN.length > 0 ? 'HF_TOKEN found in the environment (higher rate limits)' : 'no HF_TOKEN — anonymous rate limits; put HF_TOKEN=hf_… in apps/web/.env');
   const picked = await pickCandidate(spec);
   const limit = Math.min(rows, picked.total);
   console.log(`=== fetch-hf ${SOURCE} — ${picked.dataset} (${picked.config}/${picked.split}), ${limit} of ${picked.total} rows → ${out} ===`);
-  if (HF_TOKEN.length > 0) console.log('using the HF_TOKEN from the environment');
   const started = Date.now();
   let read = 0;
   let kept = 0;
@@ -189,17 +222,14 @@ async function main(): Promise<void> {
     const url = `https://datasets-server.huggingface.co/rows?dataset=${encodeURIComponent(picked.dataset)}&config=${encodeURIComponent(picked.config)}&split=${picked.split}&offset=${offset}&length=${length}`;
     type Page = { rows?: Array<{ row?: Record<string, unknown> }> };
     let page: Page | null = null;
-    // Retry with backoff (2, 4, 8, 16, 32 s); a page that still fails is
-    // skipped and reported — one bad gateway must not end a 200-page run.
-    for (let attempt = 0; attempt < RETRIES && page === null; attempt += 1) {
-      try {
-        page = (await getJson(url)) as Page;
-      } catch (error) {
-        const wait = 2000 * 2 ** attempt;
-        console.log(`  page at ${offset} failed (${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 80)}); retry ${attempt + 1}/${RETRIES} in ${wait / 1000} s`);
-        await new Promise((resolveWait) => setTimeout(resolveWait, wait));
-      }
+    // getJson retries with backoff and honors Retry-After; a page that still
+    // fails is skipped and reported — one bad gateway must not end a run.
+    try {
+      page = (await getJson(url)) as Page;
+    } catch (error) {
+      console.log(`  page at ${offset} skipped: ${(error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 80)}`);
     }
+    await new Promise((resolveWait) => setTimeout(resolveWait, PAGE_PAUSE_MS));
     if (page === null) {
       skippedPages.push(offset);
       continue;
