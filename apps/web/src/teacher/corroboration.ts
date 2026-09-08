@@ -44,6 +44,10 @@ export const STRENGTH_CONFIDENT = 1;
  *     P8 baseline — but it still reads as single-source for hedging.
  *   · 1 class, definition → 0.6 — a single LLM-chaperoned source is weak
  *     until another class agrees (operators hedge it "Probably").
+ *   · 1 class, conceptnet → 0.6 — the same: a crowd/reference assertion is
+ *     one outside voice, spoken "Probably" until a taught definition or a
+ *     read passage agrees (src/curriculum). The ConceptNet weight adds a
+ *     small overlay on top (conceptNetConfidenceBump), never the full step.
  *   · 2 / 3 / 4 classes → 1.0 / 1.2 / 1.4 — corroboration promotes; the
  *     margin above 1.0 is headroom that survives small negative grade deltas.
  */
@@ -52,7 +56,7 @@ export function corroborationConfidence(classes: readonly SourceClass[]): number
   if (distinct.length >= 4) return 1.4;
   if (distinct.length === 3) return 1.2;
   if (distinct.length === 2) return 1.0;
-  if (distinct.length === 1) return distinct[0] === 'definition' ? 0.6 : 1.0;
+  if (distinct.length === 1) return distinct[0] === 'definition' || distinct[0] === 'conceptnet' ? 0.6 : 1.0;
   return 0.6;
 }
 

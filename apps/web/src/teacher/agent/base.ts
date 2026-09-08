@@ -435,6 +435,10 @@ export class TeacherAgentCore {
   /** Lazy semantic vocabulary over the teacher's own deck (the sparsity
    *  signal's neighborhood graph) — ~75 ms at the full 20k deck, once. */
   protected curriculumVocabCache: Record<string, number[]> | null = null;
+  /** src/curriculum: how far into each registered source the classroom has
+   *  ingested (source id → rows consumed). Persisted with the learning state
+   *  so a restart resumes where it stopped instead of re-ingesting. */
+  protected readonly curriculumCursors = new Map<string, number>();
 
   /** Live observer state for model visualization (coherence, entropy, ...). */
   observerState(): { coherence: number; entropy: number; orderParameter: number; memoryTraceCount: number; momentCount: number; totalAmplitude: number } | null {

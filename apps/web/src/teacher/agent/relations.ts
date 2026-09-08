@@ -66,6 +66,8 @@ import {
   sharedEdgeKey,
   type InducedConcept
 } from '../conceptSynthesis';
+import { conceptNetConfidenceBump, conceptNetWeightOf } from '../../curriculum/conceptnet';
+import type { RelationBatch } from '../../curriculum/types';
 
 /**
  * H (Phase H): an induced concept node — MDL abstraction over the graph
@@ -250,11 +252,57 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       };
     }
 
+    /**
+     * src/curriculum: ingest one batch from a relation source (ConceptNet and
+     * the like) — multi-valued edges, the source's own confirmed-false claims
+     * as negations, and the source's attestation weight as a small
+     * edge-confidence overlay. Returns what the graph actually took.
+     */
+    ingestRelationBatch(batch: RelationBatch): { accepted: number; agreed: number; denied: number; negations: number } {
+      const before = this.chaperoneRelations.length;
+      // Denials first, so a claim the same batch both asserts and denies is
+      // refused rather than admitted and then contradicted.
+      let negations = 0;
+      for (const negation of batch.negations) {
+        if (!this.knownWords.has(negation.subject)) continue;
+        this.storeNegation(negation.subject, negation.predicate, negation.object, negation.evidence, 'conceptnet');
+        negations += 1;
+      }
+      const applied = this.applyRelations(batch.relations, { allowUnknownSubjects: false, multiValued: true });
+      let bumped = false;
+      for (const relation of batch.relations) {
+        const bump = conceptNetConfidenceBump(conceptNetWeightOf(relation.source));
+        if (bump > 0) {
+          this.bumpEdge(relation.subject, relation.predicate, relation.object, bump);
+          bumped = true;
+        }
+      }
+      if (bumped || negations > 0) this.invalidateRelations();
+      // `agreed` = rows already in the graph (they raised confidence and added
+      // the class): everything relevant that was neither new nor denied.
+      const agreed = Math.max(0, batch.relations.length - applied.accepted - applied.denied);
+      return { accepted: this.chaperoneRelations.length - before, agreed, denied: applied.denied, negations };
+    }
+
+    /** src/curriculum cursors — rows consumed per source (persisted). */
+    curriculumCursor(sourceId: string): number {
+      return this.curriculumCursors.get(sourceId) ?? 0;
+    }
+
+    setCurriculumCursor(sourceId: string, rows: number): void {
+      this.curriculumCursors.set(sourceId, Math.max(0, Math.floor(rows)));
+      this.maybePersist();
+    }
+
+    curriculumCursorSnapshot(): Record<string, number> {
+      return Object.fromEntries(this.curriculumCursors);
+    }
+
     applyRelations(
       relations: readonly Relation[],
-      options: { allowUnknownSubjects?: boolean } = {}
-    ): { accepted: number; conflicts: number } {
-      if (relations.length === 0) return { accepted: 0, conflicts: 0 };
+      options: { allowUnknownSubjects?: boolean; multiValued?: boolean } = {}
+    ): { accepted: number; conflicts: number; denied: number } {
+      if (relations.length === 0) return { accepted: 0, conflicts: 0, denied: 0 };
       // Memory is normally the source of truth for what exists — an edge about
       // a subject the observer never met is dropped. READING is the exception:
       // history, mythology and literature are about NAMED ENTITIES ("Zeus",
@@ -271,7 +319,32 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // Reconcile against the FULL precision-first graph (regex + authored),
       // not just the regex extractor — a same-predicate disagreement with the
       // technical curriculum is a belief to verify too.
-      const { agreed, llmOnly, conflicts } = reconcileRelations(mergeRelations(extracted, authored), relevant);
+      //
+      // MULTI-VALUED ingestion (src/curriculum): a knowledge graph states
+      // many objects per predicate ("dog is-a animal", "dog is-a pet") and
+      // none of them contradicts a taught definition head. Under
+      // `multiValued` a same-predicate different-object edge is an ADDITIONAL
+      // edge, not a conflict; the only thing that refuses it is a stored
+      // confirmed-false negation for exactly that claim (denied, counted).
+      let denied = 0;
+      const { agreed, llmOnly, conflicts } = options.multiValued === true
+        ? (() => {
+            const known = new Set(mergeRelations(extracted, authored).map((r) => edgeKey(r.subject, r.predicate, r.object)));
+            const deniedKeys = new Set(this.negations.map((n) => edgeKey(n.subject, n.predicate, n.object)));
+            const agreedEdges: Relation[] = [];
+            const fresh: Relation[] = [];
+            for (const relation of relevant) {
+              const key = edgeKey(relation.subject, relation.predicate, relation.object);
+              if (deniedKeys.has(key)) {
+                denied += 1;
+                continue;
+              }
+              if (known.has(key)) agreedEdges.push(relation);
+              else fresh.push(relation);
+            }
+            return { agreed: agreedEdges, llmOnly: fresh, conflicts: [] as ReturnType<typeof reconcileRelations>['conflicts'] };
+          })()
+        : reconcileRelations(mergeRelations(extracted, authored), relevant);
 
       // P8/P14: AGREEMENT is evidence — a chaperone edge that matches an
       // existing one bumps that edge's confidence (+1 per agreeing source)
@@ -279,15 +352,17 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // across independent classes (hedging is removed on the next read).
       for (const relation of agreed) {
         this.bumpEdge(relation.subject, relation.predicate, relation.object, +1);
-        this.addEdgeSource(relation.subject, relation.predicate, relation.object, 'definition');
+        this.addEdgeSource(relation.subject, relation.predicate, relation.object, sourceClassForOrigin(relation.origin));
       }
 
       let accepted = 0;
+      // Duplicate check by key set, not a linear scan — the ingested graph
+      // reaches hundreds of thousands of edges (src/curriculum).
+      const held = new Set(this.chaperoneRelations.map((r) => edgeKey(r.subject, r.predicate, r.object)));
       for (const relation of llmOnly) {
-        const duplicate = this.chaperoneRelations.some(
-          (r) => r.subject === relation.subject && r.predicate === relation.predicate && r.object === relation.object
-        );
-        if (!duplicate) {
+        const key = edgeKey(relation.subject, relation.predicate, relation.object);
+        if (!held.has(key)) {
+          held.add(key);
           this.chaperoneRelations.push(relation);
           accepted += 1;
         }
@@ -311,7 +386,7 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // authored pool, and the next relations() read would otherwise repeat
       // both at 20k-deck scale for an identical result.
       this.buildRelationsCache(extracted, authored);
-      return { accepted, conflicts: conflicts.length };
+      return { accepted, conflicts: conflicts.length, denied };
     }
 
     /**

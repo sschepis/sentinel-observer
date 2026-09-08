@@ -36,6 +36,7 @@ import {
 import { fromAutonomousEvent, makeEvent, type LearningEvent } from '../learning/events';
 import { checkGrader, describeGraderCheck, graderProbesFrom } from '../teacher/graderCheck';
 import type { SemanticGrader } from '../teacher/chaperone';
+import { CurriculumFeeder, describeFeed, discoverSources } from '../curriculum/registry';
 
 export interface TrainingStats {
   cycles: number;
@@ -55,6 +56,9 @@ export interface TrainingStats {
    *  verdict — null until the first conclusive check. */
   graderChecks: number;
   graderTrusted: boolean | null;
+  /** src/curriculum: rows consumed from the corpus, and edges/pairs/definitions it took. */
+  curriculumRows: number;
+  curriculumAccepted: number;
 }
 
 export const EMPTY_TRAINING_STATS: TrainingStats = {
@@ -71,8 +75,19 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
   goalsCompleted: 0,
   goalsStalled: 0,
   graderChecks: 0,
-  graderTrusted: null
+  graderTrusted: null,
+  curriculumRows: 0,
+  curriculumAccepted: 0
 };
+
+/** Corpus ingestion cadence: one feed every N cycles (the relation graph is
+ *  rebuilt per feed, so feeds are batched rather than trickled). Measured
+ *  (ingestScaleBenchmark, full deck): a 1,000-row relation feed costs ≈1 s
+ *  and the rebuild ≈0.3 s at 30k edges, ≈1 s at 110k; question latency does
+ *  not move (≈150 ms). A 300k-row corpus lands in a few hours at this pace. */
+export const CURRICULUM_EVERY = 5;
+/** Rows per feed. */
+export const CURRICULUM_BUDGET = 1000;
 
 /** Cycles between grader checks (the first runs before the first cycle). */
 export const GRADER_CHECK_EVERY = 100;
@@ -100,6 +115,12 @@ export interface TrainingLoopOptions {
    *  on; `graderCheckEvery: 0` disables (the bench control). */
   graderCheckEvery?: number;
   graderCheckProbes?: number;
+  /** src/curriculum: the corpus directory to ingest from (absent = none).
+   *  Every `curriculumEvery` cycles the feeder hands the observer
+   *  `curriculumBudget` rows of the next source with rows left. */
+  corpusDir?: string;
+  curriculumEvery?: number;
+  curriculumBudget?: number;
   /** Provider factory (tests inject stubs; default: the settings' provider). */
   providerFactory?: (settings: ChaperoneSettings) => ChaperoneProvider;
   onEvents?: (events: readonly LearningEvent[]) => void;
@@ -110,6 +131,7 @@ export interface TrainingLoopOptions {
 export class TrainingLoop {
   private controller: AbortController | null = null;
   private readonly stats: TrainingStats = { ...EMPTY_TRAINING_STATS };
+  private feeder: CurriculumFeeder | null = null;
 
   constructor(
     private readonly teacher: TeacherAgent,
@@ -149,6 +171,21 @@ export class TrainingLoop {
     const chaperone = new Chaperone(provider);
     const grader = semanticGrader(provider);
     const checkEvery = this.options.graderCheckEvery ?? GRADER_CHECK_EVERY;
+    if (this.options.corpusDir !== undefined && this.feeder === null) {
+      const sources = discoverSources(this.options.corpusDir);
+      this.feeder = new CurriculumFeeder(this.teacher, sources);
+      this.options.onEvents?.([
+        makeEvent({
+          kind: 'system',
+          label: 'curriculum',
+          text:
+            sources.length === 0
+              ? `no corpus sources found in ${this.options.corpusDir}`
+              : `corpus: ${sources.map((source) => `${source.id} (${source.kind}, ${this.feeder!.remaining(source)} rows left)`).join('; ')}`
+        })
+      ]);
+    }
+    const feedEvery = this.options.curriculumEvery ?? CURRICULUM_EVERY;
     try {
       while (!controller.signal.aborted) {
         if (grader !== null && checkEvery > 0 && this.stats.cycles % checkEvery === 0) {
@@ -178,6 +215,10 @@ export class TrainingLoop {
           const goalEvents = await this.goalStep();
           if (goalEvents.length > 0) this.options.onEvents?.(goalEvents);
         }
+        if (this.feeder !== null && feedEvery > 0 && this.stats.cycles % feedEvery === 0 && !controller.signal.aborted) {
+          const fed = this.curriculumStep();
+          if (fed !== null) this.options.onEvents?.([fed]);
+        }
         this.options.onCycle?.(this.statistics());
         if (this.options.researchTopics === true && !controller.signal.aborted) {
           const researched = await this.researchTopicStep(chaperone, controller.signal);
@@ -197,6 +238,20 @@ export class TrainingLoop {
     } finally {
       if (this.controller === controller) this.controller = null;
       this.options.onEvents?.([makeEvent({ kind: 'system', label: 'system', text: 'learning stopped' })]);
+    }
+  }
+
+  /** src/curriculum: one feed from the corpus. Never throws. */
+  private curriculumStep(): LearningEvent | null {
+    if (this.feeder === null) return null;
+    try {
+      const report = this.feeder.step(this.options.curriculumBudget ?? CURRICULUM_BUDGET);
+      if (report === null) return null;
+      this.stats.curriculumRows += report.rows;
+      this.stats.curriculumAccepted += report.accepted;
+      return makeEvent({ kind: 'system', label: 'curriculum', text: describeFeed(report) });
+    } catch (reason) {
+      return makeEvent({ kind: 'error', label: 'curriculum', text: `corpus feed failed: ${reason instanceof Error ? reason.message : String(reason)}` });
     }
   }
 

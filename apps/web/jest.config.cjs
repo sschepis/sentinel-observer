@@ -26,7 +26,10 @@ module.exports = {
     '<rootDir>/src/server/serverParity.test.ts',
     // Null-model arms for the memory substrate (IMPROVEMENT_PLAN §2.1): a
     // measurement that writes bench/null-arms/*.json, not a unit test.
-    '<rootDir>/src/teacher/nullArmsBenchmark.test.ts'
+    '<rootDir>/src/teacher/nullArmsBenchmark.test.ts',
+    // Corpus ingestion at 5k–50k edges over the full deck: the number the
+    // classroom's ingest budget is set from, not a unit test.
+    '<rootDir>/src/curriculum/ingestScaleBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

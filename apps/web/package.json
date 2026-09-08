@@ -19,6 +19,7 @@
     "calibration-bench": "tsx src/cli/calibration-bench.ts",
     "refit-gates": "tsx src/cli/refit-gates.ts",
     "grader-check": "tsx src/cli/grader-check.ts",
+    "fetch-conceptnet": "tsx src/cli/fetch-conceptnet.ts",
     "cde-bench": "tsx src/cli/cde-bench.ts",
     "path-entropy-bench": "tsx src/cli/path-entropy-bench.ts",
     "polysemy-bench": "tsx src/cli/polysemy-bench.ts",

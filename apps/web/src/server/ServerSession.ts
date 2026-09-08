@@ -1,6 +1,6 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-08.1';
+export const SERVER_BUILD = '2026-09-08.2';
 
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
@@ -74,6 +74,8 @@ export interface ServerSessionOptions {
   /** Working store: 'json' (legacy, default) or 'sqlite' (recommended —
    *  one-time migration imports the legacy JSON files when present). */
   store?: 'json' | 'sqlite';
+  /** src/curriculum: corpus directory the classroom ingests from (absent = none). */
+  corpusDir?: string;
 }
 
 export interface ServerSnapshot {
@@ -157,7 +159,8 @@ export class ServerSession {
       trainCadenceMs: options.trainCadenceMs ?? 400,
       chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
       researchTopics: options.researchTopics ?? false,
-      store: options.store ?? 'json'
+      store: options.store ?? 'json',
+      corpusDir: options.corpusDir ?? ''
     };
     this.store =
       this.options.store === 'sqlite'
@@ -246,6 +249,7 @@ export class ServerSession {
         // ANALYSIS.md §6 #16: the boot-time loop dropped this flag, so
         // `--research-topics` was inert until training was toggled via the API.
         researchTopics: this.options.researchTopics ?? false,
+        corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
         onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
         onError: (message) =>
           this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
@@ -297,6 +301,7 @@ export class ServerSession {
           settings: this.options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
           cadenceMs: this.options.trainCadenceMs ?? 400,
           researchTopics: this.options.researchTopics ?? false,
+          corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
           onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
           onError: (message) =>
             this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })

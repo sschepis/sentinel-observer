@@ -156,6 +156,8 @@ export interface BootstrapRecord {
     /** The grader check's verdicts per grader (teacher/graderCheck.ts):
      *  a judge measured unable to judge stays gated across the record. */
     graderTrust?: Record<string, { trusted: boolean; auc: number | null; goodPass: number | null; probes: number; at: number; reason: string }>;
+    /** src/curriculum: rows consumed per registered source (additive). */
+    curriculumCursors?: Record<string, number>;
     /** Taught cues the observer has actually spoken — the numerator of
      *  recall competency. Without it an imported record reads 0% recall and
      *  creative mode can never unlock. */

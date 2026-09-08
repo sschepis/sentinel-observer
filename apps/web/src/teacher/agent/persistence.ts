@@ -67,6 +67,14 @@ import {
   type AnswerGradeEntry
 } from './support';
 
+/** The origin an ingested (non-derived) edge restores with: the recorded
+ *  one when it names an ingestion origin, else 'chaperone' (legacy records
+ *  tagged nothing and held only chaperone edges). Regex/authored edges are
+ *  never persisted — they are re-derived from the deck. */
+function ingestedOrigin(value: unknown): Relation['origin'] {
+  return value === 'conceptnet' || value === 'reading' ? value : 'chaperone';
+}
+
 export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & CrossFacultyApi>>(Base: TBase) {
   return class PersistenceFaculty extends Base {
 
@@ -281,6 +289,13 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
               }
             }
           }
+          if (typeof learningState.curriculumCursors === 'object' && learningState.curriculumCursors !== null) {
+            // src/curriculum: resume each source where the classroom stopped.
+            this.curriculumCursors.clear();
+            for (const [id, rows] of Object.entries(learningState.curriculumCursors as Record<string, unknown>)) {
+              if (typeof rows === 'number' && Number.isFinite(rows) && rows >= 0) this.curriculumCursors.set(id, Math.floor(rows));
+            }
+          }
           if (typeof learningState.graderTrust === 'object' && learningState.graderTrust !== null) {
             // The grader check's verdicts survive reloads (additive): a judge
             // measured unable to judge stays gated until it is re-measured.
@@ -300,8 +315,10 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             }
           }
           if (Array.isArray(learningState.relations)) {
-            // Chaperone edges survive reloads: they were reconciled and tagged
-            // on ingestion, and re-tagging on restore keeps provenance honest.
+            // Ingested edges survive reloads: they were reconciled and tagged
+            // on ingestion. The origin rides the record (legacy records carry
+            // none — those were all chaperone edges); a curriculum-ingested
+            // edge (src/curriculum) keeps its own source class.
             this.chaperoneRelations = (learningState.relations as Array<Partial<Relation>>)
               .filter((r) => typeof r?.subject === 'string' && typeof r?.predicate === 'string' && typeof r?.object === 'string')
               .map((r) => ({
@@ -309,7 +326,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
                 predicate: r.predicate as Relation['predicate'],
                 object: r.object as string,
                 source: typeof r.source === 'string' ? r.source : '',
-                origin: 'chaperone' as const
+                origin: ingestedOrigin(r.origin)
               }));
           }
           // M5 (22.5): the standing hypothesis tier (absent on legacy records —
@@ -714,6 +731,8 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
           goalStalls: Object.fromEntries(this.goalStalls),
           // The grader check's verdicts (additive).
           graderTrust: Object.fromEntries(this.graderTrust),
+          // src/curriculum ingestion cursors (additive).
+          curriculumCursors: Object.fromEntries(this.curriculumCursors),
           producedCues: [...this.producedConversationCues],
           cueConfidence: Object.fromEntries(this.cueConfidence),
           relations: this.chaperoneRelations,
@@ -872,7 +891,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             predicate: r.predicate,
             object: r.object,
             source: typeof r.source === 'string' ? r.source : '',
-            origin: 'chaperone' as const
+            origin: ingestedOrigin((r as { origin?: unknown }).origin)
           }));
         this.invalidateRelations();
       }
@@ -1083,6 +1102,12 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
             }
           }
         }
+        if (typeof ls.curriculumCursors === 'object' && ls.curriculumCursors !== null) {
+          this.curriculumCursors.clear();
+          for (const [id, rows] of Object.entries(ls.curriculumCursors)) {
+            if (typeof rows === 'number' && Number.isFinite(rows) && rows >= 0) this.curriculumCursors.set(id, Math.floor(rows));
+          }
+        }
         if (typeof ls.graderTrust === 'object' && ls.graderTrust !== null) {
           this.graderTrust.clear();
           for (const [name, entry] of Object.entries(ls.graderTrust)) {
@@ -1184,6 +1209,7 @@ export function PersistenceMixin<TBase extends Constructor<TeacherAgentCore & Cr
         // TASKS.md #18 (additive): stalled goals per target.
         goalStalls: Object.fromEntries(this.goalStalls),
         graderTrust: Object.fromEntries(this.graderTrust),
+        curriculumCursors: Object.fromEntries(this.curriculumCursors),
         producedCues: [...this.producedConversationCues],
         cueConfidence: Object.fromEntries(this.cueConfidence),
         bootstrapImportedMeta: this.bootstrapImportedMeta ?? undefined,

@@ -54,7 +54,7 @@ export const RELATION_PREDICATES: readonly RelationPredicate[] = [
 ];
 
 /** Where an edge came from — provenance decides priority on ties. */
-export type RelationOrigin = 'regex' | 'authored' | 'chaperone' | 'reading';
+export type RelationOrigin = 'regex' | 'authored' | 'chaperone' | 'reading' | 'conceptnet';
 
 /**
  * P14 CORROBORATION SOURCE CLASSES — the INDEPENDENT knowledge channels an
@@ -76,8 +76,14 @@ export type RelationOrigin = 'regex' | 'authored' | 'chaperone' | 'reading';
  *                     transcripts.
  *   world-feedback  — the world accepted a graded answer citing the edge
  *                     (a strong semantic grade confirms the claim).
+ *   conceptnet      — the ConceptNet 5 knowledge graph (src/curriculum/
+ *                     conceptnet.ts): a crowd/reference-work assertion,
+ *                     external to the observer's own loop. One class no
+ *                     matter how many ConceptNet contributors attest it —
+ *                     agreeing with a taught definition or a read passage
+ *                     is what corroborates it.
  */
-export type SourceClass = 'curriculum' | 'conversation' | 'world-feedback' | 'definition' | 'reading';
+export type SourceClass = 'curriculum' | 'conversation' | 'world-feedback' | 'definition' | 'reading' | 'conceptnet';
 
 /** Every source class, in policy-order. */
 export const SOURCE_CLASSES: readonly SourceClass[] = [
@@ -85,13 +91,15 @@ export const SOURCE_CLASSES: readonly SourceClass[] = [
   'conversation',
   'world-feedback',
   'definition',
-  'reading'
+  'reading',
+  'conceptnet'
 ];
 
 /** The source class a provenance origin states by itself. */
 export function sourceClassForOrigin(origin: RelationOrigin): SourceClass {
   if (origin === 'chaperone') return 'definition';
   if (origin === 'reading') return 'reading';
+  if (origin === 'conceptnet') return 'conceptnet';
   return 'curriculum';
 }
 
@@ -182,7 +190,7 @@ export interface Negation {
   object: string;
   /** The taught exchange or graded answer that confirmed the falsehood. */
   evidence: string;
-  origin: 'taught' | 'graded' | 'reading';
+  origin: 'taught' | 'graded' | 'reading' | 'conceptnet';
 }
 
 /** A same-predicate disagreement between the regex extractor and the LLM. */
@@ -255,7 +263,7 @@ export function reconcileRelations(
  * with "an independent source agrees").
  */
 export function mergeRelations(...lists: readonly (readonly Relation[])[]): Relation[] {
-  const originPriority: Record<RelationOrigin, number> = { regex: 0, authored: 1, chaperone: 2, reading: 3 };
+  const originPriority: Record<RelationOrigin, number> = { regex: 0, authored: 1, chaperone: 2, reading: 3, conceptnet: 4 };
   const seen = new Map<string, Relation>();
   const merged: Relation[] = [];
   for (const list of lists) {

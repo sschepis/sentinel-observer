@@ -34,6 +34,9 @@
  *   --no-train            boot with the training loop stopped
  *   --store sqlite|json   working store (default json; sqlite migrates the
  *                         legacy JSON files once — recommended)
+ *   --corpus DIR          corpus directory of JSONL sources the classroom
+ *                         ingests under its budget (src/curriculum; env
+ *                         OBSERVER_CORPUS; default ./corpus when it exists)
  *
  * Readout / gate switches (docs/NULL_ARMS.md, TASKS.md #10–12; env only,
  * deliberate operator actions, never defaults):
@@ -95,6 +98,8 @@ const CHAPERONE_MODEL = process.env.OBSERVER_CHAPERONE_MODEL ?? arg('--chaperone
 const RESEARCH_TOPICS = process.env.OBSERVER_RESEARCH_TOPICS === '1' || process.argv.includes('--research-topics');
 const TRAIN = !process.argv.includes('--no-train');
 const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'json');
+const CORPUS_FLAG = process.env.OBSERVER_CORPUS ?? arg('--corpus', '');
+const CORPUS = CORPUS_FLAG.length > 0 ? resolve(CORPUS_FLAG) : existsSync(resolve('./corpus')) ? resolve('./corpus') : '';
 
 const GATES_FILE = process.env.OBSERVER_GATES_FILE ?? '';
 
@@ -137,6 +142,7 @@ async function main(): Promise<void> {
     train: TRAIN,
     store: STORE === 'sqlite' ? 'sqlite' : 'json',
     researchTopics: RESEARCH_TOPICS,
+    corpusDir: CORPUS.length > 0 ? CORPUS : undefined,
     chaperone: CHAPERONE_ENDPOINT.length > 0 ? { endpoint: CHAPERONE_ENDPOINT, apiKey: CHAPERONE_KEY, model: CHAPERONE_MODEL } : undefined
   });
 
@@ -144,7 +150,8 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(
     `[observer-server] booted — ${state.learned}/${state.total} words · competency ${(state.competency * 100).toFixed(1)}% · ` +
-      `restored ${state.restored} traces${state.freshTrained ? ' (fresh core trained)' : ''} · data ${DATA_DIR}`
+      `restored ${state.restored} traces${state.freshTrained ? ' (fresh core trained)' : ''} · data ${DATA_DIR}` +
+      (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : '')
   );
 
   const http = startHttpServer(server, PORT);
