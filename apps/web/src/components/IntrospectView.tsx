@@ -238,6 +238,13 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
                 hint="known-good vs known-bad answers, graded by the teacher model; an untrusted grader's grades are not applied"
               />
             )}
+            {training.curriculumRows !== undefined && (
+              <Row
+                label="corpus rows fed / taken"
+                value={`${training.curriculumRows} / ${training.curriculumAccepted}`}
+                hint="outside corpora (ConceptNet, dialogue, passages, problems) ingested by the classroom under its budget"
+              />
+            )}
             {training.goalSteps !== undefined && (
               <Row
                 label="goal steps / completed / stalled"

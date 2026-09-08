@@ -81,6 +81,16 @@ The merged fixes change behavior the first time the server restarts. Decide thes
 | 32 | Restart the server once more to pick up #28/#29 | Sebastian | Until then the running process still books stalls twice and applies every grade. |
 | 33 | Watch `compose` in behaviorWeights drift back toward 0.3 once no fresh compose outcomes land (driveWeightDays) | — | If the grader is repaired instead, wins will move it directly. |
 
+## Training material (new — docs/CURRICULUM.md)
+
+| # | Task | Who | Note |
+|---|---|---|---|
+| 34 | Curriculum pipeline: registry, budgeted feeder with persisted cursors, held-out slice; ConceptNet → relations (+ its Not* claims as confirmed-false), DailyDialog → pairs, Simple Wikipedia / TinyStories → passages, SVAMP / ASDiv → checkable problems | Claude — done | commits `87a526e` `8abe75b` `aba0c70`. Scale bench: 1,000-row feed ≈ 1 s; question latency unchanged to 110k edges. |
+| 35 | Fill the corpus: `npm run fetch-conceptnet`, then `npm run fetch-hf -- dailydialog / simplewiki / tinystories / svamp / asdiv` | Sebastian | Run on the Mac; the server never downloads. Paste the per-relation counts from ConceptNet and the `kept` counts from the others. |
+| 36 | Run the source benches before the server eats a corpus: `npx jest -c jest.bench.config.cjs --testPathPatterns passageBenchmark` (parse rate + claim sample per prose source) | Sebastian, then Claude reads | Decides the passage budget; narrative is expected to lose to encyclopedia prose. |
+| 37 | Definitions source (Wiktionary glosses for deck words without one) and a story-state engine for bAbI-style questions | Claude | The two shapes without a fetcher / answering path yet. |
+| 38 | Held-out edge recovery bench over the real ConceptNet file (what the graded layer recovers of the held-out tenth) | Claude, after #35 | The ConceptNet analogue of CI gate 1. |
+
 ## Housekeeping
 
 | # | Task | Who |
