@@ -121,6 +121,34 @@ const PROMPT_GROUPS: PromptGroup[] = [
   }
 ];
 
+/** One row of the unfolded derivation: a run of consecutive applications of
+ *  the same rule, shown once with its count and the term it arrived at. A
+ *  division by repeated subtraction applies `nat.lt-ss` thirty-five times
+ *  in a row; thirty-five near-identical lines hide the shape of the work
+ *  that six grouped lines show. */
+interface DerivationGroup {
+  /** 1-based index of the first step in the run. */
+  first: number;
+  ruleId: string;
+  count: number;
+  /** The term after the LAST step of the run. */
+  after: string;
+}
+
+export function groupDerivation(steps: ReadonlyArray<{ ruleId: string; after: string }>): DerivationGroup[] {
+  const groups: DerivationGroup[] = [];
+  steps.forEach((step, index) => {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.ruleId === step.ruleId) {
+      last.count += 1;
+      last.after = step.after;
+    } else {
+      groups.push({ first: index + 1, ruleId: step.ruleId, count: 1, after: step.after });
+    }
+  });
+  return groups;
+}
+
 function ObserverMessage({ message }: { message: ConversationMessage }) {
   const badge = message.mode !== undefined ? MODE_BADGE[message.mode] : null;
   const meterBadge = meterBadgeFor(message);
@@ -152,11 +180,17 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
         )}
         {derived && showWork && (
           <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800/80 bg-slate-950/60 p-2.5 font-mono text-[10.5px] leading-relaxed text-slate-400">
-            {message.derivation!.map((step, index) => (
-              <div key={index} className="whitespace-nowrap">
-                <span className="text-slate-600">{index + 1}.</span>{' '}
-                <span className="text-sky-400/80">{step.ruleId}</span>{' '}
-                <span className="text-slate-600">→</span> {step.after}
+            {groupDerivation(message.derivation!).map((group) => (
+              <div key={group.first} className="flex gap-2 whitespace-nowrap">
+                <span className="w-12 shrink-0 text-right text-slate-600">
+                  {group.count === 1 ? `${group.first}.` : `${group.first}–${group.first + group.count - 1}.`}
+                </span>
+                <span className="w-40 shrink-0 truncate text-sky-400/80" title={group.ruleId}>
+                  {group.ruleId}
+                  {group.count > 1 && <span className="text-slate-500"> ×{group.count}</span>}
+                </span>
+                <span className="text-slate-600">→</span>
+                <span className="text-slate-300">{group.after}</span>
               </div>
             ))}
             {message.steps !== undefined && message.derivation!.length < message.steps && (

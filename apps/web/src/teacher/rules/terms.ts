@@ -168,3 +168,122 @@ export function termBits(term: Term): number {
       return 4 + term.args.reduce((sum, arg) => sum + termBits(arg), 0);
   }
 }
+
+// ── Readable form (derivation display) ──────────────────────────────────────
+// `termToString` is the canonical key: exact, typed, and unreadable for a
+// human ("nat.s(nat.s(nat.s(…" thirty-six deep for the numeral 36). The
+// derivation trace the chat unfolds is for a person, so it is printed in the
+// notation the rules stand for: Peano numerals as digits, `ite` as
+// if/then/else, the arithmetic and logic heads as infix. Display only —
+// never a hash, never compared.
+
+const INFIX: Readonly<Record<string, string>> = {
+  'nat.add': '+',
+  'int.add': '+',
+  'eq.plus': '+',
+  'nat.sub': '−',
+  'int.sub': '−',
+  'eq.minus': '−',
+  'nat.mul': '×',
+  'eq.times': '×',
+  'nat.div': '÷',
+  'nat.mod': 'mod',
+  'nat.pow': '^',
+  'nat.lt': '<',
+  'nat.gt': '>',
+  'nat.ge': '≥',
+  'nat.eq': '=',
+  'eq.rel': '=',
+  'bool.and': '∧',
+  'bool.or': '∨'
+};
+
+/** Count a `nat.s` chain iteratively (a numeral can be tens of thousands
+ *  deep). Returns the depth and the innermost non-`nat.s` term. */
+function peelNumeral(term: Term): { depth: number; core: Term } {
+  let depth = 0;
+  let core = term;
+  while (core.t === 'sym' && core.head === 'nat.s' && core.args.length === 1) {
+    depth += 1;
+    core = core.args[0];
+  }
+  return { depth, core };
+}
+
+/** Binding strength of an infix head — higher binds tighter. A child is
+ *  parenthesized when it binds looser than its parent (or equally, on the
+ *  right: `a − (b − c)`); comparison under arithmetic never happens, and
+ *  arithmetic under a comparison needs no brackets ("x + 2 = 5"). */
+const PRECEDENCE: Readonly<Record<string, number>> = {
+  '=': 1, '<': 1, '>': 1, '≥': 1,
+  '∨': 2,
+  '∧': 3,
+  '+': 4, '−': 4,
+  '×': 5, '÷': 5, 'mod': 5,
+  '^': 6
+};
+
+function infixPrecedence(term: Term): number | null {
+  if (term.t !== 'sym' || term.args.length !== 2) return null;
+  const op = INFIX[term.head];
+  return op === undefined ? null : PRECEDENCE[op] ?? 4;
+}
+
+/** The readable form of a term. Bounded by `maxChars` (default 80) like
+ *  the canonical trace serialization, so a pathological term still cannot
+ *  balloon the record. */
+export function prettyTerm(term: Term, maxChars = 80): string {
+  /** A child under an operator of precedence `parent`: bracketed when it
+   *  binds looser (or equally on the right), or when it is an if/then/else. */
+  const wrap = (child: Term, parent: number, right = false): string => {
+    const text = pretty(child);
+    if (child.t === 'sym' && child.head === 'ite') return `(${text})`;
+    const prec = infixPrecedence(child);
+    if (prec === null) return text;
+    return prec < parent || (right && prec === parent) ? `(${text})` : text;
+  };
+  const pretty = (node: Term): string => {
+    switch (node.t) {
+      case 'var':
+        return `?${node.name}`;
+      case 'lit':
+        return typeof node.value === 'string' ? `"${node.value}"` : String(node.value);
+      case 'sym': {
+        if (node.head === 'nat.z' && node.args.length === 0) return '0';
+        if (node.head === 'nat.s' && node.args.length === 1) {
+          const { depth, core } = peelNumeral(node);
+          if (core.t === 'sym' && core.head === 'nat.z' && core.args.length === 0) return String(depth);
+          // A numeral wrapped around an unreduced expression: "(x − 1) + 3".
+          return `${wrap(core, PRECEDENCE['+'])} + ${depth}`;
+        }
+        if (node.head === 'ite' && node.args.length === 3) {
+          return `if ${pretty(node.args[0])} then ${pretty(node.args[1])} else ${pretty(node.args[2])}`;
+        }
+        if (node.head === 'int.neg' && node.args.length === 1) return `−${wrap(node.args[0], 7)}`;
+        if (node.head === 'int.abs' && node.args.length === 1) return `|${pretty(node.args[0])}|`;
+        if (node.head === 'bool.not' && node.args.length === 1) return `¬${wrap(node.args[0], 7)}`;
+        if (node.head === 'list.nil' && node.args.length === 0) return '[]';
+        if (node.head === 'list.cons' && node.args.length === 2) {
+          const items: string[] = [];
+          let cursor: Term = node;
+          while (cursor.t === 'sym' && cursor.head === 'list.cons' && cursor.args.length === 2) {
+            items.push(pretty(cursor.args[0]));
+            cursor = cursor.args[1];
+          }
+          const tail = cursor.t === 'sym' && cursor.head === 'list.nil' ? '' : ` | ${pretty(cursor)}`;
+          return `[${items.join(', ')}${tail}]`;
+        }
+        if (node.head.startsWith('var.') && node.args.length === 0) return node.head.slice(4);
+        const infix = INFIX[node.head];
+        if (infix !== undefined && node.args.length === 2) {
+          const prec = PRECEDENCE[infix] ?? 4;
+          return `${wrap(node.args[0], prec)} ${infix} ${wrap(node.args[1], prec, true)}`;
+        }
+        if (node.args.length === 0) return node.head;
+        return `${node.head}(${node.args.map(pretty).join(', ')})`;
+      }
+    }
+  };
+  const text = pretty(term);
+  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}

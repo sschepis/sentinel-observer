@@ -20,7 +20,7 @@
  * to decline/ASK — never a confident answer.
  */
 
-import { isLiteral, matchPattern, substitute, hashTerm, serializeBounded, tSym, type Term } from './terms';
+import { isLiteral, matchPattern, substitute, hashTerm, prettyTerm, tSym, type Term } from './terms';
 import type { DerivationStep, RewriteOutcome, RuleStore } from './types';
 
 export const RULE_DEFAULT_FUEL = 10_000;
@@ -215,16 +215,18 @@ export function reduce(store: RuleStore, term: Term, options: EngineOptions = {}
     if (next.status === 'stuck') {
       return { outcome: { status: 'stuck', term: current }, ruleIds: [...ruleIds], steps };
     }
-    const before = trace.length < maxTrace ? serializeBounded(current) : '';
+    // The trace is for a PERSON (the chat's "show the work"): readable
+    // notation, bounded like the canonical form. Never a hash.
+    const before = trace.length < maxTrace ? prettyTerm(current) : '';
     current = next.next;
     steps += 1;
     if (next.ruleId !== undefined) {
       ruleIds.add(next.ruleId);
       if (trace.length < maxTrace) {
-        trace.push({ ruleId: next.ruleId, before, after: serializeBounded(next.next) });
+        trace.push({ ruleId: next.ruleId, before, after: prettyTerm(next.next) });
       }
     } else if (trace.length < maxTrace) {
-      trace.push({ ruleId: ITE, before, after: serializeBounded(next.next) });
+      trace.push({ ruleId: ITE, before, after: prettyTerm(next.next) });
     }
   }
 }

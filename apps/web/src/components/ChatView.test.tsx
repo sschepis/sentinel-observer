@@ -1,6 +1,6 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ChatView } from './ChatView';
+import { ChatView, groupDerivation } from './ChatView';
 import type { ChatController } from '../chat/useChat';
 import { VoiceService } from '../speech/voice';
 
@@ -114,8 +114,28 @@ describe('ChatView', () => {
     const toggle = screen.getByRole('button', { name: /show the work/ });
     expect(toggle).toBeDefined();
     fireEvent.click(toggle);
-    expect(screen.getAllByText(/nat.add-s/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/1\./).length).toBeGreaterThan(0);
+    // Consecutive applications of one rule are ONE row: "1–2. nat.add-s ×2 → <last term>".
+    expect(screen.getAllByText(/nat.add-s/).length).toBe(1);
+    expect(screen.getByText(/×2/)).toBeDefined();
+    expect(screen.getByText('1–2.')).toBeDefined();
+    expect(screen.getByText('s(s(add(s^5, s^5)))')).toBeDefined();
+    expect(screen.queryByText('s(add(s^6, s^5))')).toBeNull();
+    expect(screen.getByText('3.')).toBeDefined();
+  });
+
+  it('groupDerivation collapses runs of the same rule and keeps the last term of each run', () => {
+    expect(
+      groupDerivation([
+        { ruleId: 'a', after: '1' },
+        { ruleId: 'a', after: '2' },
+        { ruleId: 'b', after: '3' },
+        { ruleId: 'a', after: '4' }
+      ])
+    ).toEqual([
+      { first: 1, ruleId: 'a', count: 2, after: '2' },
+      { first: 3, ruleId: 'b', count: 1, after: '3' },
+      { first: 4, ruleId: 'a', count: 1, after: '4' }
+    ]);
   });
 
   it('R8: hides the derivation toggle when the answer did not derive', () => {

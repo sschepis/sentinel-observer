@@ -230,3 +230,27 @@ describe('peano — deck registration', () => {
     if (outcome.status === 'normal') expect(outcome.term).toEqual(natFromDecimal(4));
   });
 });
+
+describe('peano — the derivation trace reads as decimal arithmetic', () => {
+  test('div(36, 6): every traced step prints numerals as digits and heads as operators, and steps run in readable groups', () => {
+    const { outcome } = reduce(freshStore(), tSym('nat.div', [natFromDecimal(36), natFromDecimal(6)]));
+    expect(outcome.status).toBe('normal');
+    if (outcome.status !== 'normal') return;
+    const trace = outcome.steps;
+    expect(trace.length).toBeGreaterThan(10);
+    for (const step of trace) {
+      expect(step.after).not.toContain('nat.s(');
+      expect(step.after).not.toContain('#b:');
+      expect(step.after).not.toContain('#n:');
+    }
+    // The first step unfolds the division into its conditional.
+    expect(trace[0].after).toMatch(/^if 36 < 6 then 0 else /);
+    // The 36 < 6 comparison is decided in a run of six lt-ss steps, then lt-sz.
+    expect(trace.slice(1, 7).every((step) => step.ruleId === 'nat.lt-ss')).toBe(true);
+    expect(trace[7].ruleId).toBe('nat.lt-sz');
+    const decided = trace.find((step) => step.ruleId === 'nat.lt-sz');
+    expect(decided?.after).toMatch(/^if false then 0 else /);
+    // eslint-disable-next-line no-console
+    console.log(trace.slice(0, 12).map((step, i) => `${i + 1}. ${step.ruleId} → ${step.after}`).join('\n'));
+  });
+});
