@@ -21,6 +21,7 @@
     "grader-check": "tsx src/cli/grader-check.ts",
     "fetch-conceptnet": "tsx src/cli/fetch-conceptnet.ts",
     "fetch-hf": "tsx src/cli/fetch-hf.ts",
+    "shuffle-corpus": "tsx src/cli/shuffle-corpus.ts",
     "cde-bench": "tsx src/cli/cde-bench.ts",
     "path-entropy-bench": "tsx src/cli/path-entropy-bench.ts",
     "polysemy-bench": "tsx src/cli/polysemy-bench.ts",

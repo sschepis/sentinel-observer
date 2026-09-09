@@ -618,6 +618,15 @@ export class TeacherAgent extends TeacherAgentComposed {
     // like that?" -> "alway"). Known words are preferred referents. Clock and
     // date questions use a DUMMY "it" ("what time is it") — never resolved.
     const known = this.knownWords;
+    const profileStart = Date.now();
+    let profileLast = profileStart;
+    const laps: string[] = [];
+    const lap = (label: string): void => {
+      if (process.env.OBSERVER_PROFILE_CHAT !== '1') return;
+      const now = Date.now();
+      laps.push(`${label} ${now - profileLast} ms`);
+      profileLast = now;
+    };
     const resolved = isClockOrDateQuestion(utterance)
       ? utterance.trim()
       : resolveReferences(utterance, this.workingMemory.all(), (word) => known.has(word));
@@ -636,6 +645,10 @@ export class TeacherAgent extends TeacherAgentComposed {
       sessionStarted: episodicTurn.sessionStarted
     });
     const finish = <T extends ChatAnswer>(answer: T): ChatAnswerWithMemory => {
+      if (process.env.OBSERVER_PROFILE_CHAT === '1') {
+        lap(`finish(${answer.mode})`);
+        console.log(`[chat] "${utterance.slice(0, 40)}" ${Date.now() - profileStart} ms · ${laps.join(' · ')}`);
+      }
       // TASKS.md #17: the deviation meter reads the ANSWER — what it said and
       // what backs it — never the branch that returned it.
       const speech = readSpeech(answer);
@@ -663,6 +676,7 @@ export class TeacherAgent extends TeacherAgentComposed {
       return finish({ mode: 'decline', provenance: EMPTY_PROVENANCE });
     }
 
+    lap('prelude: evidence+episodic');
     // 0. Clock/date are DETERMINISTIC TRUTH — they must beat any memorized
     //    content (a taught "I do not know the time yet." is stale once the
     //    observer can tell time).
@@ -821,6 +835,7 @@ export class TeacherAgent extends TeacherAgentComposed {
       return finish({ mode: 'ask', response: senseAsk, provenance: EMPTY_PROVENANCE });
     }
 
+    lap('memorized+negation+sense');
     // 2. Operators: answer novel questions from memory deterministically.
     const operator = applyOperator(resolved, {
       isTaught: (word) => {
@@ -1012,6 +1027,7 @@ export class TeacherAgent extends TeacherAgentComposed {
       }
     }
 
+    lap('operators+tiers');
     // 3. Creative composition once unlocked — recent turns join the seed
     //    pool so the observer can continue the topic it was just on. The
     //    CURIOSITY drive can veto composition: when the observer is
@@ -1091,6 +1107,7 @@ export class TeacherAgent extends TeacherAgentComposed {
       }
     }
 
+    lap('rules+compose');
     // 4. ASK: the observer does not know — it asks. The utterance is
     //    recorded as a gap; when the answer arrives (LLM or human) it is
     //    memorized normally and decay decides its fate.

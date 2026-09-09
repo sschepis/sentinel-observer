@@ -12,9 +12,14 @@
  *   · a relation the observer can hold (src/curriculum/conceptnet.ts),
  *   · between two single words, at least one of them in the active deck (the
  *     other becomes a word the observer learns to know exists).
- * What comes out is a few tens of MB the server can load whole. Nothing is
- * written anywhere else; the dump itself is not kept unless you passed a
- * local file. Progress every million input lines.
+ * What comes out is a few tens of MB the server can load whole, in a SEEDED
+ * RANDOM ORDER: the dump is sorted by relation and then alphabetically, and
+ * a feeder eating it in that order would teach every antonym of every word
+ * starting with "a" before a single is-a edge (measured: 42k IsA rows sat
+ * between rows 20k and 63k). Shuffling makes every feed a fair sample of the
+ * whole and the held-out tenth a random one. Nothing is written anywhere
+ * else; the dump itself is not kept unless you passed a local file. Progress
+ * every million input lines.
  *
  * License: ConceptNet 5 is CC BY-SA 4.0 (Speer, Chin & Havasi 2017).
  */
@@ -27,6 +32,7 @@ import type { Readable } from 'node:stream';
 import { ACTIVE_DECK } from '../teacher/decks';
 import { CONCEPTNET_RELATIONS, parseConceptNetLine } from '../curriculum/conceptnet';
 import { WORD_SHAPE } from '../curriculum/types';
+import { mulberry32 } from '@sschepis/sentient-core';
 
 const DEFAULT_URL = 'https://s3.amazonaws.com/conceptnet/downloads/2019/edges/conceptnet-assertions-5.7.0.csv.gz';
 
@@ -66,13 +72,13 @@ async function main(): Promise<void> {
   console.log(`=== fetch-conceptnet — ${IN.length > 0 ? `reading ${IN}` : `downloading ${DEFAULT_URL}`} ===`);
   console.log(`deck vocabulary: ${vocabulary.size} single words · relations kept: ${Object.keys(CONCEPTNET_RELATIONS).join(', ')} · min weight ${MIN_WEIGHT}`);
   mkdirSync(dirname(OUT), { recursive: true });
-  const out = createWriteStream(OUT);
   const source = await openSource();
   const lines = createInterface({ input: source.pipe(createGunzip()), crlfDelay: Infinity });
   const started = Date.now();
   let read = 0;
   let kept = 0;
   const perRelation = new Map<string, number>();
+  const keptRows: string[] = [];
   for await (const line of lines) {
     read += 1;
     if (read % 1_000_000 === 0) {
@@ -87,10 +93,18 @@ async function main(): Promise<void> {
     // the observer can define, and the other end becomes a word it learns to
     // know exists (vocabulary growth, src/curriculum/registry.ts).
     if ((!vocabulary.has(row.start) && !vocabulary.has(row.end)) || row.start === row.end) continue;
-    out.write(`${JSON.stringify(row)}\n`);
+    keptRows.push(JSON.stringify(row));
     kept += 1;
     perRelation.set(row.rel, (perRelation.get(row.rel) ?? 0) + 1);
   }
+  // Seeded shuffle (Fisher–Yates), so the same dump gives the same file.
+  const rng = mulberry32(0x5eed);
+  for (let i = keptRows.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [keptRows[i], keptRows[j]] = [keptRows[j], keptRows[i]];
+  }
+  const out = createWriteStream(OUT);
+  for (const line of keptRows) out.write(`${line}\n`);
   await new Promise<void>((done) => out.end(done));
   console.log(`done: ${read} lines read, ${kept} rows kept in ${((Date.now() - started) / 1000).toFixed(0)} s → ${OUT}`);
   for (const [rel, count] of [...perRelation.entries()].sort((a, b) => b[1] - a[1])) {

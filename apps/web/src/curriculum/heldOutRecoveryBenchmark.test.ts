@@ -59,6 +59,7 @@ const STATE_SERIES = resolve(STATE_DIR, 'series.json');
 interface Checkpoint {
   config: { steps: number; budget: number; probes: number; taught: number };
   probes: Probe[];
+  seen: Probe[];
   series: StepRecord[];
   /** Set when the artifact was written: the checkpoint is spent. */
   done?: boolean;
@@ -96,6 +97,12 @@ interface StepRecord {
   recoveredHedged: number;
   wrong: number;
   abstained: number;
+  /** CONTROL: the same reading over claims the observer WAS shown (rows of
+   *  the first feed, both ends taught) — should rise toward 100% once fed;
+   *  if it does not move, the pipeline is broken, not the inference. */
+  seenRecovered: number;
+  seenAsked: number;
+  seenRate: number;
   recoveryRate: number;
   recoveryDelta: number;
   byRelation: Record<string, { asked: number; recovered: number }>;
@@ -168,19 +175,29 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     }
     const feeder = new CurriculumFeeder(teacher, sources);
     const source = sources[0];
-    const save = (series: StepRecord[], probes: Probe[]): void => {
+    const save = (series: StepRecord[], probes: Probe[], seenProbes: Probe[]): void => {
       mkdirSync(STATE_DIR, { recursive: true });
       writeFileSync(STATE_RECORD, JSON.stringify(teacher.exportBootstrap()));
-      const state: Checkpoint = { config: { steps: STEPS, budget: BUDGET, probes: PROBES, taught: TAUGHT }, probes, series };
+      const state: Checkpoint = { config: { steps: STEPS, budget: BUDGET, probes: PROBES, taught: TAUGHT }, probes, seen: seenProbes, series };
       writeFileSync(STATE_SERIES, JSON.stringify(state));
     };
 
-    // The fixed concept set: the deck's single words (never the grown ones,
-    // so vocabulary growth cannot move the mean by adding ignorance).
-    const deckWords = new Set(ACTIVE_DECK.map((e) => e.word.toLowerCase()).filter((w) => WORD_SHAPE.test(w)));
+    // The fixed concept set: the TAUGHT deck words — the ones the observer
+    // can speak about (the operator layer answers only about taught words),
+    // never the grown ones, so vocabulary growth cannot move the mean by
+    // adding ignorance. The deck is frequency-ordered, so the first TAUGHT
+    // words are the common ones ConceptNet has the most to say about.
+    const deckWords = new Set(
+      ACTIVE_DECK.slice(0, TAUGHT)
+        .map((e) => e.word.toLowerCase())
+        .filter((w) => WORD_SHAPE.test(w))
+    );
 
-    // The fixed held-out probe sample: rows with a closed question form, both
-    // ends single words, drawn deterministically from the held-out tenth.
+    // The fixed held-out probe sample: rows with a closed question form, BOTH
+    // ends taught deck words (so a probe is answerable from the start and
+    // recovery measures inference — inheritance, chains, the graded layer —
+    // not whether a rare word happened to be grown or taught), drawn
+    // deterministically from the held-out tenth.
     const heldOut = parseConceptNetJsonl(feeder.heldOutRows(source).join('\n'));
     const rng = mulberry32(0x5eed);
     const candidates: Probe[] = [];
@@ -188,6 +205,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       const mapping = CONCEPTNET_RELATIONS[row.rel];
       if (mapping === undefined || mapping.negation === true) continue;
       if (!WORD_SHAPE.test(row.start) || !WORD_SHAPE.test(row.end)) continue;
+      if (!deckWords.has(row.start) || !deckWords.has(row.end)) continue;
       const subject = mapping.swap === true ? row.end : row.start;
       const object = mapping.swap === true ? row.start : row.end;
       const question = yesNoQuestion(mapping.predicate, subject, object);
@@ -199,12 +217,35 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
     }
     const probes = checkpoint !== null ? checkpoint.probes : candidates.slice(0, PROBES);
-    console.log(`held-out rows: ${heldOut.length} · askable: ${candidates.length} · probing ${probes.length} · feeding ${STEPS} × ${BUDGET} rows of ${feeder.remaining(source)}`);
+    // The control sample: claims from the FIRST feed (rows the observer will
+    // have been shown after step 1), both ends taught, same question forms.
+    const firstFeed = parseConceptNetJsonl(
+      feeder
+        .rowsOf(source)
+        .slice(0, BUDGET)
+        .filter((_, index) => index % 10 !== 9)
+        .join('\n')
+    );
+    const seenCandidates: Probe[] = [];
+    for (const row of firstFeed) {
+      const mapping = CONCEPTNET_RELATIONS[row.rel];
+      if (mapping === undefined || mapping.negation === true) continue;
+      if (!WORD_SHAPE.test(row.start) || !WORD_SHAPE.test(row.end)) continue;
+      if (!deckWords.has(row.start) || !deckWords.has(row.end)) continue;
+      const subject = mapping.swap === true ? row.end : row.start;
+      const object = mapping.swap === true ? row.start : row.end;
+      const question = yesNoQuestion(mapping.predicate, subject, object);
+      if (question === null) continue;
+      seenCandidates.push({ row, predicate: mapping.predicate, question });
+    }
+    const seen = checkpoint !== null ? checkpoint.seen : seenCandidates.slice(0, 50);
+    console.log(`held-out rows: ${heldOut.length} · askable with both ends taught: ${candidates.length} · probing ${probes.length} (+ ${seen.length} seen-claim controls) · feeding ${STEPS} × ${BUDGET} rows of ${feeder.remaining(source)}`);
 
     const store = teacher.soundnessStore();
     const measure = (step: number, rows: number, edgesAdded: number, grown: number, previous: StepRecord | null): StepRecord => {
       const started = Date.now();
       const entropy = teacher.networkEntropy({ concepts: deckWords, topN: 0 });
+      console.log(`    entropy read in ${entropy.ms} ms`);
       const byRelation: Record<string, { asked: number; recovered: number }> = {};
       const byPath: Record<string, number> = {};
       let recoveredFlat = 0;
@@ -229,6 +270,13 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       }
       const recovered = recoveredFlat + recoveredHedged;
       const recoveryRate = probes.length === 0 ? 0 : recovered / probes.length;
+      let seenRecovered = 0;
+      let seenAsked = 0;
+      for (const probe of seen) {
+        const reading = readYesNo(teacher.chatAnswer(probe.question));
+        if (reading === 'yes' || reading === 'yes-hedged') seenRecovered += 1;
+        else if (reading === 'abstained') seenAsked += 1;
+      }
       return {
         step,
         rows,
@@ -243,6 +291,9 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
         recoveredHedged,
         wrong,
         abstained,
+        seenRecovered,
+        seenAsked,
+        seenRate: seen.length === 0 ? 0 : seenRecovered / seen.length,
         recoveryRate,
         recoveryDelta: previous === null ? 0 : recoveryRate - previous.recoveryRate,
         byRelation,
@@ -256,8 +307,8 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     if (series.length === 0) {
       record = measure(0, 0, 0, 0, null);
       series.push(record);
-      console.log(`  step 0: entropy mean ${record.entropyMean.toFixed(3)} · recovery ${(record.recoveryRate * 100).toFixed(1)}% (${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked) · ${record.ms} ms`);
-      if (STEPS_PER_RUN > 0) save(series, probes);
+      console.log(`  step 0: entropy mean ${record.entropyMean.toFixed(3)} · recovery ${(record.recoveryRate * 100).toFixed(1)}% (${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked) · seen-control ${(record.seenRate * 100).toFixed(0)}% · ${record.ms} ms`);
+      if (STEPS_PER_RUN > 0) save(series, probes, seen);
     } else {
       record = series[series.length - 1];
     }
@@ -270,13 +321,14 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
         return;
       }
       const fed = feeder.feed(source, BUDGET);
+      console.log(`  step ${step}: fed ${fed.rows} rows in ${fed.ms} ms (graph ${teacher.relations().length} edges)`);
       record = measure(step, fed.rows, fed.accepted, fed.grown, record);
       series.push(record);
       ranThisRun += 1;
       console.log(
-        `  step ${step}: +${fed.accepted} edges (+${fed.grown} words) · entropy mean ${record.entropyMean.toFixed(3)} (Δ ${record.entropyDelta >= 0 ? '+' : ''}${record.entropyDelta.toFixed(4)}) · recovery ${(record.recoveryRate * 100).toFixed(1)}% (Δ ${record.recoveryDelta >= 0 ? '+' : ''}${(record.recoveryDelta * 100).toFixed(1)}) · ${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked · ${record.ms} ms`
+        `  step ${step}: +${fed.accepted} edges (+${fed.grown} words) · entropy mean ${record.entropyMean.toFixed(3)} (Δ ${record.entropyDelta >= 0 ? '+' : ''}${record.entropyDelta.toFixed(4)}) · recovery ${(record.recoveryRate * 100).toFixed(1)}% (Δ ${record.recoveryDelta >= 0 ? '+' : ''}${(record.recoveryDelta * 100).toFixed(1)}) · ${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked · seen-control ${(record.seenRate * 100).toFixed(0)}% · ${record.ms} ms`
       );
-      if (STEPS_PER_RUN > 0) save(series, probes);
+      if (STEPS_PER_RUN > 0) save(series, probes, seen);
       if (fed.remaining === 0) {
         exhausted = true;
         break;
@@ -300,7 +352,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       at: new Date().toISOString(),
       corpus: source.path,
       config: { steps: STEPS, budget: BUDGET, probes: probes.length, taught: TAUGHT, heldOutRows: heldOut.length, askable: candidates.length },
-      recovery: { before: first.recoveryRate, after: last.recoveryRate, byRelation: last.byRelation, byPath: last.byPath, wrongAfter: last.wrong, abstainedAfter: last.abstained },
+      recovery: { before: first.recoveryRate, after: last.recoveryRate, seenControlBefore: first.seenRate, seenControlAfter: last.seenRate, byRelation: last.byRelation, byPath: last.byPath, wrongAfter: last.wrong, abstainedAfter: last.abstained },
       entropy: { meanBefore: first.entropyMean, meanAfter: last.entropyMean, totalBefore: first.entropyTotal, totalAfter: last.entropyTotal },
       prediction: {
         statement: 'steps that lower the network entropy most show the largest held-out recovery gains: expect rho(Δentropy, Δrecovery) < 0',

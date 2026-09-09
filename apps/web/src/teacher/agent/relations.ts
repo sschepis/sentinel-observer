@@ -402,6 +402,7 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      * too, and chain walks run over sense nodes without crossing senses.
      */
     protected buildRelationsCache(extracted: readonly Relation[], authored: readonly Relation[]): Relation[] {
+      const tMerge = Date.now();
       // Provenance priority on ties: regex > authored > chaperone. Chaperone
       // edges that CONFLICTED with a regex edge were already diverted to
       // beliefs in applyRelations, so what lands here is agreed or new.
@@ -440,11 +441,17 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // M5 (22.2): refresh the HYPOTHESIS tier — loose-extraction edges the
       // precision graph intentionally drops become standing hypotheses, ready
       // for corroboration-driven promotion.
+      const tH = Date.now();
       this.refreshHypothesisEdges(this.relationsCache);
+      const tI = Date.now();
       // H (Phase H): re-derive the induced concept nodes over the asserted
       // graph (MDL abstraction, §9) — flag-gated, deterministic.
       this.refreshInducedConcepts();
+      const tG = Date.now();
       this.rebuildRelationalHologram();
+      if (process.env.OBSERVER_PROFILE_REBUILD === '1') {
+        console.log(`[rebuild]   merge+classes ${tH - tMerge} ms · hypotheses ${tI - tH} ms · induced ${tG - tI} ms · hologram ${Date.now() - tG} ms`);
+      }
       return this.relationsCache;
     }
 
@@ -520,10 +527,17 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
      *  unsplit view are populated by the one build). */
     protected ensureRelationsBuilt(): void {
       if (this.relationsCache === null) {
+        const t0 = Date.now();
         const extracted = extractRelations(
           [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
         );
-        this.buildRelationsCache(extracted, this.authoredRelationPool());
+        const t1 = Date.now();
+        const authored = this.authoredRelationPool();
+        const t2 = Date.now();
+        this.buildRelationsCache(extracted, authored);
+        if (process.env.OBSERVER_PROFILE_REBUILD === '1') {
+          console.log(`[rebuild] extract ${t1 - t0} ms · authored pool ${t2 - t1} ms · build ${Date.now() - t2} ms · ${this.relationsCache?.length ?? 0} edges`);
+        }
       }
     }
 
@@ -756,6 +770,7 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // precision-first graph intentionally drops ("a bird is a creature" when
       // creature is not a deck word, "with feathers" when feathers is not).
       // The graded layer answers those with unbind scores, never as edges.
+      const tLoose = Date.now();
       for (const relation of extractRelations(
         [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition })),
         { loose: true }
@@ -764,11 +779,17 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
         list.push(relation);
         bySubject.set(relation.subject, list);
       }
+      const tBind = Date.now();
+      let bound = 0;
       for (const [subject, edges] of bySubject) {
         this.relationalHologram.setTrace(
           subject,
           edges.map((relation) => ({ predicate: relation.predicate, object: relation.object }))
         );
+        bound += edges.length;
+      }
+      if (process.env.OBSERVER_PROFILE_REBUILD === '1') {
+        console.log(`[rebuild]     hologram: loose extraction ${tBind - tLoose} ms · bind ${Date.now() - tBind} ms over ${bySubject.size} subjects / ${bound} edges / ${this.relationalHologram.objectCount} objects`);
       }
     }
 

@@ -1,0 +1,4281 @@
+{
+  "at": "2026-09-09T07:06:30.810Z",
+  "corpus": "/Users/sschepis/Development/sentient-observer/apps/web/corpus/conceptnet.en.jsonl",
+  "config": {
+    "steps": 65,
+    "budget": 1000,
+    "probes": 200,
+    "taught": 2000,
+    "heldOutRows": 7194,
+    "askable": 449
+  },
+  "recovery": {
+    "before": 0.065,
+    "after": 0.29,
+    "seenControlBefore": 0,
+    "seenControlAfter": 0,
+    "byRelation": {
+      "used-for": {
+        "asked": 22,
+        "recovered": 0
+      },
+      "located-in": {
+        "asked": 46,
+        "recovered": 0
+      },
+      "is-a": {
+        "asked": 88,
+        "recovered": 41
+      },
+      "causes": {
+        "asked": 3,
+        "recovered": 0
+      },
+      "has-property": {
+        "asked": 13,
+        "recovered": 7
+      },
+      "requires": {
+        "asked": 6,
+        "recovered": 0
+      },
+      "capable-of": {
+        "asked": 4,
+        "recovered": 0
+      },
+      "has-part": {
+        "asked": 16,
+        "recovered": 9
+      },
+      "made-of": {
+        "asked": 2,
+        "recovered": 1
+      }
+    },
+    "byPath": {
+      "derived": 41,
+      "direct edge": 6,
+      "inherited": 11
+    },
+    "wrongAfter": 0,
+    "abstainedAfter": 142
+  },
+  "entropy": {
+    "meanBefore": 10.156,
+    "meanAfter": 9.471,
+    "totalBefore": 20311.566,
+    "totalAfter": 18942.011
+  },
+  "prediction": {
+    "statement": "steps that lower the network entropy most show the largest held-out recovery gains: expect rho(Δentropy, Δrecovery) < 0",
+    "rhoEntropyDelta": -0.26322148473350554,
+    "rhoEdgesAddedNull": -0.2797760667708895,
+    "steps": 65
+  },
+  "series": [
+    {
+      "step": 0,
+      "rows": 0,
+      "edgesAdded": 0,
+      "grown": 0,
+      "entropyTotal": 20311.566,
+      "entropyMean": 10.156,
+      "entropyWeighted": 20311.566,
+      "entropyDelta": 0,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 27292
+    },
+    {
+      "step": 1,
+      "rows": 1000,
+      "edgesAdded": 846,
+      "grown": 397,
+      "entropyTotal": 20287.98,
+      "entropyMean": 10.144,
+      "entropyWeighted": 27476.954,
+      "entropyDelta": -0.012,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 33508
+    },
+    {
+      "step": 2,
+      "rows": 1000,
+      "edgesAdded": 842,
+      "grown": 371,
+      "entropyTotal": 20277.877,
+      "entropyMean": 10.139,
+      "entropyWeighted": 34648.994,
+      "entropyDelta": -0.005,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36475
+    },
+    {
+      "step": 3,
+      "rows": 1000,
+      "edgesAdded": 832,
+      "grown": 304,
+      "entropyTotal": 20270.849,
+      "entropyMean": 10.135,
+      "entropyWeighted": 41813.323,
+      "entropyDelta": -0.004,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 35955
+    },
+    {
+      "step": 4,
+      "rows": 1000,
+      "edgesAdded": 814,
+      "grown": 277,
+      "entropyTotal": 20250.911,
+      "entropyMean": 10.125,
+      "entropyWeighted": 48957.855,
+      "entropyDelta": -0.01,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36128
+    },
+    {
+      "step": 5,
+      "rows": 1000,
+      "edgesAdded": 857,
+      "grown": 294,
+      "entropyTotal": 20243.591,
+      "entropyMean": 10.122,
+      "entropyWeighted": 56123.514,
+      "entropyDelta": -0.003,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 35542
+    },
+    {
+      "step": 6,
+      "rows": 1000,
+      "edgesAdded": 877,
+      "grown": 181,
+      "entropyTotal": 20235.138,
+      "entropyMean": 10.118,
+      "entropyWeighted": 63276.091,
+      "entropyDelta": -0.004,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36139
+    },
+    {
+      "step": 7,
+      "rows": 1000,
+      "edgesAdded": 898,
+      "grown": 149,
+      "entropyTotal": 20230.865,
+      "entropyMean": 10.115,
+      "entropyWeighted": 70437.097,
+      "entropyDelta": -0.003,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36118
+    },
+    {
+      "step": 8,
+      "rows": 1000,
+      "edgesAdded": 897,
+      "grown": 163,
+      "entropyTotal": 20226.252,
+      "entropyMean": 10.113,
+      "entropyWeighted": 77598.158,
+      "entropyDelta": -0.002,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36157
+    },
+    {
+      "step": 9,
+      "rows": 1000,
+      "edgesAdded": 893,
+      "grown": 146,
+      "entropyTotal": 20222.958,
+      "entropyMean": 10.111,
+      "entropyWeighted": 84756.385,
+      "entropyDelta": -0.002,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36056
+    },
+    {
+      "step": 10,
+      "rows": 1000,
+      "edgesAdded": 896,
+      "grown": 154,
+      "entropyTotal": 20220.719,
+      "entropyMean": 10.11,
+      "entropyWeighted": 91916.616,
+      "entropyDelta": -0.001,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36950
+    },
+    {
+      "step": 11,
+      "rows": 1000,
+      "edgesAdded": 899,
+      "grown": 135,
+      "entropyTotal": 20217.656,
+      "entropyMean": 10.109,
+      "entropyWeighted": 99069.073,
+      "entropyDelta": -0.001,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36884
+    },
+    {
+      "step": 12,
+      "rows": 1000,
+      "edgesAdded": 896,
+      "grown": 137,
+      "entropyTotal": 20206.141,
+      "entropyMean": 10.103,
+      "entropyWeighted": 106200.074,
+      "entropyDelta": -0.006,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 36639
+    },
+    {
+      "step": 13,
+      "rows": 1000,
+      "edgesAdded": 893,
+      "grown": 134,
+      "entropyTotal": 20201.99,
+      "entropyMean": 10.101,
+      "entropyWeighted": 113350.635,
+      "entropyDelta": -0.002,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 37093
+    },
+    {
+      "step": 14,
+      "rows": 1000,
+      "edgesAdded": 897,
+      "grown": 149,
+      "entropyTotal": 20192.262,
+      "entropyMean": 10.096,
+      "entropyWeighted": 120478.865,
+      "entropyDelta": -0.005,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 38309
+    },
+    {
+      "step": 15,
+      "rows": 1000,
+      "edgesAdded": 898,
+      "grown": 169,
+      "entropyTotal": 20189.344,
+      "entropyMean": 10.095,
+      "entropyWeighted": 127632.552,
+      "entropyDelta": -0.001,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 38549
+    },
+    {
+      "step": 16,
+      "rows": 1000,
+      "edgesAdded": 886,
+      "grown": 200,
+      "entropyTotal": 20157.161,
+      "entropyMean": 10.079,
+      "entropyWeighted": 134420.886,
+      "entropyDelta": -0.016,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 38012
+    },
+    {
+      "step": 17,
+      "rows": 1000,
+      "edgesAdded": 895,
+      "grown": 177,
+      "entropyTotal": 20149.57,
+      "entropyMean": 10.075,
+      "entropyWeighted": 141501.869,
+      "entropyDelta": -0.004,
+      "recovered": 13,
+      "recoveredFlat": 13,
+      "recoveredHedged": 0,
+      "wrong": 0,
+      "abstained": 187,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.065,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 2
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 3
+      },
+      "ms": 55569
+    },
+    {
+      "step": 18,
+      "rows": 1000,
+      "edgesAdded": 871,
+      "grown": 114,
+      "entropyTotal": 20112.961,
+      "entropyMean": 10.056,
+      "entropyWeighted": 148174.984,
+      "entropyDelta": -0.019,
+      "recovered": 15,
+      "recoveredFlat": 13,
+      "recoveredHedged": 2,
+      "wrong": 0,
+      "abstained": 185,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.075,
+      "recoveryDelta": 0.009999999999999995,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5
+      },
+      "ms": 107324
+    },
+    {
+      "step": 19,
+      "rows": 1000,
+      "edgesAdded": 899,
+      "grown": 109,
+      "entropyTotal": 20084.907,
+      "entropyMean": 10.042,
+      "entropyWeighted": 154993.724,
+      "entropyDelta": -0.014,
+      "recovered": 15,
+      "recoveredFlat": 13,
+      "recoveredHedged": 2,
+      "wrong": 0,
+      "abstained": 185,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.075,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 0
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5
+      },
+      "ms": 60074
+    },
+    {
+      "step": 20,
+      "rows": 1000,
+      "edgesAdded": 894,
+      "grown": 118,
+      "entropyTotal": 20063.639,
+      "entropyMean": 10.032,
+      "entropyWeighted": 161896.571,
+      "entropyDelta": -0.01,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 45806
+    },
+    {
+      "step": 21,
+      "rows": 1000,
+      "edgesAdded": 863,
+      "grown": 237,
+      "entropyTotal": 20019.489,
+      "entropyMean": 10.01,
+      "entropyWeighted": 168625.57,
+      "entropyDelta": -0.022,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 38508
+    },
+    {
+      "step": 22,
+      "rows": 1000,
+      "edgesAdded": 808,
+      "grown": 486,
+      "entropyTotal": 19997.361,
+      "entropyMean": 9.999,
+      "entropyWeighted": 175458.787,
+      "entropyDelta": -0.011,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 38882
+    },
+    {
+      "step": 23,
+      "rows": 1000,
+      "edgesAdded": 783,
+      "grown": 452,
+      "entropyTotal": 19973.469,
+      "entropyMean": 9.987,
+      "entropyWeighted": 181184.284,
+      "entropyDelta": -0.012,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 37334
+    },
+    {
+      "step": 24,
+      "rows": 1000,
+      "edgesAdded": 804,
+      "grown": 412,
+      "entropyTotal": 19951.745,
+      "entropyMean": 9.976,
+      "entropyWeighted": 188010.747,
+      "entropyDelta": -0.011,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 37407
+    },
+    {
+      "step": 25,
+      "rows": 1000,
+      "edgesAdded": 783,
+      "grown": 408,
+      "entropyTotal": 19943.111,
+      "entropyMean": 9.972,
+      "entropyWeighted": 194876.756,
+      "entropyDelta": -0.004,
+      "recovered": 16,
+      "recoveredFlat": 13,
+      "recoveredHedged": 3,
+      "wrong": 0,
+      "abstained": 184,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.08,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 10
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 10,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 668629
+    },
+    {
+      "step": 26,
+      "rows": 1000,
+      "edgesAdded": 788,
+      "grown": 384,
+      "entropyTotal": 19925.312,
+      "entropyMean": 9.963,
+      "entropyWeighted": 201505.541,
+      "entropyDelta": -0.009,
+      "recovered": 17,
+      "recoveredFlat": 13,
+      "recoveredHedged": 4,
+      "wrong": 0,
+      "abstained": 183,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.085,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 11
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 11,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 756133
+    },
+    {
+      "step": 27,
+      "rows": 1000,
+      "edgesAdded": 791,
+      "grown": 400,
+      "entropyTotal": 19912.573,
+      "entropyMean": 9.956,
+      "entropyWeighted": 208247.428,
+      "entropyDelta": -0.007,
+      "recovered": 17,
+      "recoveredFlat": 13,
+      "recoveredHedged": 4,
+      "wrong": 0,
+      "abstained": 183,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.085,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 11
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 11,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 4161409
+    },
+    {
+      "step": 28,
+      "rows": 1000,
+      "edgesAdded": 809,
+      "grown": 399,
+      "entropyTotal": 19896.621,
+      "entropyMean": 9.948,
+      "entropyWeighted": 214905.508,
+      "entropyDelta": -0.008,
+      "recovered": 18,
+      "recoveredFlat": 13,
+      "recoveredHedged": 5,
+      "wrong": 0,
+      "abstained": 182,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.09,
+      "recoveryDelta": 0.0049999999999999906,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 12
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 12,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 36028
+    },
+    {
+      "step": 29,
+      "rows": 1000,
+      "edgesAdded": 798,
+      "grown": 403,
+      "entropyTotal": 19874.347,
+      "entropyMean": 9.937,
+      "entropyWeighted": 221486.451,
+      "entropyDelta": -0.011,
+      "recovered": 19,
+      "recoveredFlat": 13,
+      "recoveredHedged": 6,
+      "wrong": 0,
+      "abstained": 181,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.095,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 13
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 13,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 35610
+    },
+    {
+      "step": 30,
+      "rows": 1000,
+      "edgesAdded": 816,
+      "grown": 328,
+      "entropyTotal": 19830.883,
+      "entropyMean": 9.915,
+      "entropyWeighted": 227887.815,
+      "entropyDelta": -0.022,
+      "recovered": 19,
+      "recoveredFlat": 13,
+      "recoveredHedged": 6,
+      "wrong": 0,
+      "abstained": 181,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.095,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 13
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 13,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 36464
+    },
+    {
+      "step": 31,
+      "rows": 1000,
+      "edgesAdded": 815,
+      "grown": 443,
+      "entropyTotal": 19810.821,
+      "entropyMean": 9.905,
+      "entropyWeighted": 234515.346,
+      "entropyDelta": -0.01,
+      "recovered": 19,
+      "recoveredFlat": 13,
+      "recoveredHedged": 6,
+      "wrong": 0,
+      "abstained": 181,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.095,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 13
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 13,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 36995
+    },
+    {
+      "step": 32,
+      "rows": 1000,
+      "edgesAdded": 822,
+      "grown": 385,
+      "entropyTotal": 19786.506,
+      "entropyMean": 9.893,
+      "entropyWeighted": 241092.596,
+      "entropyDelta": -0.012,
+      "recovered": 19,
+      "recoveredFlat": 13,
+      "recoveredHedged": 6,
+      "wrong": 0,
+      "abstained": 181,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.095,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 13
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 13,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 37000
+    },
+    {
+      "step": 33,
+      "rows": 1000,
+      "edgesAdded": 814,
+      "grown": 338,
+      "entropyTotal": 19762.319,
+      "entropyMean": 9.881,
+      "entropyWeighted": 247758.653,
+      "entropyDelta": -0.012,
+      "recovered": 19,
+      "recoveredFlat": 13,
+      "recoveredHedged": 6,
+      "wrong": 0,
+      "abstained": 181,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.095,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 13
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 1
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 13,
+        "direct edge": 5,
+        "inherited": 1
+      },
+      "ms": 37108
+    },
+    {
+      "step": 34,
+      "rows": 1000,
+      "edgesAdded": 807,
+      "grown": 427,
+      "entropyTotal": 19742.493,
+      "entropyMean": 9.871,
+      "entropyWeighted": 254372.852,
+      "entropyDelta": -0.01,
+      "recovered": 21,
+      "recoveredFlat": 13,
+      "recoveredHedged": 8,
+      "wrong": 0,
+      "abstained": 179,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.105,
+      "recoveryDelta": 0.009999999999999995,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 14
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 2
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 14,
+        "direct edge": 5,
+        "inherited": 2
+      },
+      "ms": 36701
+    },
+    {
+      "step": 35,
+      "rows": 1000,
+      "edgesAdded": 802,
+      "grown": 381,
+      "entropyTotal": 19701.668,
+      "entropyMean": 9.851,
+      "entropyWeighted": 260721.743,
+      "entropyDelta": -0.02,
+      "recovered": 21,
+      "recoveredFlat": 13,
+      "recoveredHedged": 8,
+      "wrong": 0,
+      "abstained": 179,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.105,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 14
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 2
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 14,
+        "direct edge": 5,
+        "inherited": 2
+      },
+      "ms": 36167
+    },
+    {
+      "step": 36,
+      "rows": 1000,
+      "edgesAdded": 801,
+      "grown": 347,
+      "entropyTotal": 19681.132,
+      "entropyMean": 9.841,
+      "entropyWeighted": 266355.227,
+      "entropyDelta": -0.01,
+      "recovered": 22,
+      "recoveredFlat": 13,
+      "recoveredHedged": 9,
+      "wrong": 0,
+      "abstained": 178,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.11,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 15
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 2
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 15,
+        "direct edge": 5,
+        "inherited": 2
+      },
+      "ms": 36309
+    },
+    {
+      "step": 37,
+      "rows": 1000,
+      "edgesAdded": 801,
+      "grown": 382,
+      "entropyTotal": 19662.533,
+      "entropyMean": 9.831,
+      "entropyWeighted": 272698.379,
+      "entropyDelta": -0.01,
+      "recovered": 24,
+      "recoveredFlat": 13,
+      "recoveredHedged": 11,
+      "wrong": 0,
+      "abstained": 176,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.12,
+      "recoveryDelta": 0.009999999999999995,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 16
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 16,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 36419
+    },
+    {
+      "step": 38,
+      "rows": 1000,
+      "edgesAdded": 808,
+      "grown": 422,
+      "entropyTotal": 19631.619,
+      "entropyMean": 9.816,
+      "entropyWeighted": 278869.154,
+      "entropyDelta": -0.015,
+      "recovered": 24,
+      "recoveredFlat": 13,
+      "recoveredHedged": 11,
+      "wrong": 0,
+      "abstained": 176,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.12,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 16
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 16,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 36551
+    },
+    {
+      "step": 39,
+      "rows": 1000,
+      "edgesAdded": 813,
+      "grown": 416,
+      "entropyTotal": 19622.124,
+      "entropyMean": 9.811,
+      "entropyWeighted": 285299.58,
+      "entropyDelta": -0.005,
+      "recovered": 25,
+      "recoveredFlat": 13,
+      "recoveredHedged": 12,
+      "wrong": 0,
+      "abstained": 175,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.125,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 17
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 17,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 36774
+    },
+    {
+      "step": 40,
+      "rows": 1000,
+      "edgesAdded": 816,
+      "grown": 428,
+      "entropyTotal": 19605.133,
+      "entropyMean": 9.803,
+      "entropyWeighted": 291655.663,
+      "entropyDelta": -0.008,
+      "recovered": 26,
+      "recoveredFlat": 13,
+      "recoveredHedged": 13,
+      "wrong": 0,
+      "abstained": 174,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.13,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 36840
+    },
+    {
+      "step": 41,
+      "rows": 1000,
+      "edgesAdded": 809,
+      "grown": 372,
+      "entropyTotal": 19582.872,
+      "entropyMean": 9.791,
+      "entropyWeighted": 297942.485,
+      "entropyDelta": -0.012,
+      "recovered": 26,
+      "recoveredFlat": 13,
+      "recoveredHedged": 13,
+      "wrong": 0,
+      "abstained": 174,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.13,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 36909
+    },
+    {
+      "step": 42,
+      "rows": 1000,
+      "edgesAdded": 803,
+      "grown": 402,
+      "entropyTotal": 19567.707,
+      "entropyMean": 9.784,
+      "entropyWeighted": 304190.338,
+      "entropyDelta": -0.007,
+      "recovered": 26,
+      "recoveredFlat": 13,
+      "recoveredHedged": 13,
+      "wrong": 0,
+      "abstained": 174,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.13,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 3
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 3,
+        "direct edge": 5
+      },
+      "ms": 38093
+    },
+    {
+      "step": 43,
+      "rows": 1000,
+      "edgesAdded": 806,
+      "grown": 326,
+      "entropyTotal": 19541.127,
+      "entropyMean": 9.771,
+      "entropyWeighted": 310285.66,
+      "entropyDelta": -0.013,
+      "recovered": 27,
+      "recoveredFlat": 13,
+      "recoveredHedged": 14,
+      "wrong": 0,
+      "abstained": 173,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.135,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 39541
+    },
+    {
+      "step": 44,
+      "rows": 1000,
+      "edgesAdded": 795,
+      "grown": 393,
+      "entropyTotal": 19508.137,
+      "entropyMean": 9.754,
+      "entropyWeighted": 316211.885,
+      "entropyDelta": -0.017,
+      "recovered": 27,
+      "recoveredFlat": 13,
+      "recoveredHedged": 14,
+      "wrong": 0,
+      "abstained": 173,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.135,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 39758
+    },
+    {
+      "step": 45,
+      "rows": 1000,
+      "edgesAdded": 818,
+      "grown": 436,
+      "entropyTotal": 19487.074,
+      "entropyMean": 9.744,
+      "entropyWeighted": 321537.75,
+      "entropyDelta": -0.01,
+      "recovered": 27,
+      "recoveredFlat": 13,
+      "recoveredHedged": 14,
+      "wrong": 0,
+      "abstained": 173,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.135,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 39478
+    },
+    {
+      "step": 46,
+      "rows": 1000,
+      "edgesAdded": 818,
+      "grown": 432,
+      "entropyTotal": 19463.235,
+      "entropyMean": 9.732,
+      "entropyWeighted": 327690.57,
+      "entropyDelta": -0.012,
+      "recovered": 27,
+      "recoveredFlat": 13,
+      "recoveredHedged": 14,
+      "wrong": 0,
+      "abstained": 173,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.135,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 18
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 18,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 39786
+    },
+    {
+      "step": 47,
+      "rows": 1000,
+      "edgesAdded": 799,
+      "grown": 380,
+      "entropyTotal": 19429.428,
+      "entropyMean": 9.715,
+      "entropyWeighted": 333838.379,
+      "entropyDelta": -0.017,
+      "recovered": 30,
+      "recoveredFlat": 13,
+      "recoveredHedged": 17,
+      "wrong": 0,
+      "abstained": 170,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.15,
+      "recoveryDelta": 0.014999999999999986,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 21
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 21,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 39791
+    },
+    {
+      "step": 48,
+      "rows": 1000,
+      "edgesAdded": 809,
+      "grown": 439,
+      "entropyTotal": 19378.331,
+      "entropyMean": 9.689,
+      "entropyWeighted": 339527.759,
+      "entropyDelta": -0.026,
+      "recovered": 30,
+      "recoveredFlat": 13,
+      "recoveredHedged": 17,
+      "wrong": 0,
+      "abstained": 170,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.15,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 21
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 4
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 21,
+        "inherited": 4,
+        "direct edge": 5
+      },
+      "ms": 40803
+    },
+    {
+      "step": 49,
+      "rows": 1000,
+      "edgesAdded": 812,
+      "grown": 413,
+      "entropyTotal": 19348.401,
+      "entropyMean": 9.674,
+      "entropyWeighted": 345283.156,
+      "entropyDelta": -0.015,
+      "recovered": 34,
+      "recoveredFlat": 13,
+      "recoveredHedged": 21,
+      "wrong": 0,
+      "abstained": 166,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.17,
+      "recoveryDelta": 0.020000000000000018,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 24
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 24,
+        "inherited": 5,
+        "direct edge": 5
+      },
+      "ms": 42653
+    },
+    {
+      "step": 50,
+      "rows": 1000,
+      "edgesAdded": 819,
+      "grown": 372,
+      "entropyTotal": 19309.41,
+      "entropyMean": 9.655,
+      "entropyWeighted": 350840.674,
+      "entropyDelta": -0.019,
+      "recovered": 37,
+      "recoveredFlat": 13,
+      "recoveredHedged": 24,
+      "wrong": 0,
+      "abstained": 163,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.185,
+      "recoveryDelta": 0.014999999999999986,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 27
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 4
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 27,
+        "inherited": 5,
+        "direct edge": 5
+      },
+      "ms": 42811
+    },
+    {
+      "step": 51,
+      "rows": 1000,
+      "edgesAdded": 807,
+      "grown": 384,
+      "entropyTotal": 19278.778,
+      "entropyMean": 9.639,
+      "entropyWeighted": 356585.921,
+      "entropyDelta": -0.016,
+      "recovered": 39,
+      "recoveredFlat": 13,
+      "recoveredHedged": 26,
+      "wrong": 0,
+      "abstained": 161,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.195,
+      "recoveryDelta": 0.010000000000000009,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 28
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 5
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 28,
+        "inherited": 6,
+        "direct edge": 5
+      },
+      "ms": 43157
+    },
+    {
+      "step": 52,
+      "rows": 1000,
+      "edgesAdded": 811,
+      "grown": 351,
+      "entropyTotal": 19261.753,
+      "entropyMean": 9.631,
+      "entropyWeighted": 362267.666,
+      "entropyDelta": -0.008,
+      "recovered": 40,
+      "recoveredFlat": 13,
+      "recoveredHedged": 27,
+      "wrong": 0,
+      "abstained": 160,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.2,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 29
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 5
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 29,
+        "inherited": 6,
+        "direct edge": 5
+      },
+      "ms": 43591
+    },
+    {
+      "step": 53,
+      "rows": 1000,
+      "edgesAdded": 819,
+      "grown": 304,
+      "entropyTotal": 19232.881,
+      "entropyMean": 9.616,
+      "entropyWeighted": 367887.983,
+      "entropyDelta": -0.015,
+      "recovered": 41,
+      "recoveredFlat": 13,
+      "recoveredHedged": 28,
+      "wrong": 0,
+      "abstained": 159,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.205,
+      "recoveryDelta": 0.004999999999999977,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 30
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 5
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 30,
+        "inherited": 6,
+        "direct edge": 5
+      },
+      "ms": 42807
+    },
+    {
+      "step": 54,
+      "rows": 1000,
+      "edgesAdded": 829,
+      "grown": 394,
+      "entropyTotal": 19221.314,
+      "entropyMean": 9.611,
+      "entropyWeighted": 373686.233,
+      "entropyDelta": -0.005,
+      "recovered": 44,
+      "recoveredFlat": 13,
+      "recoveredHedged": 31,
+      "wrong": 0,
+      "abstained": 156,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.22,
+      "recoveryDelta": 0.015000000000000013,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 33
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 5
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 5
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 33,
+        "inherited": 6,
+        "direct edge": 5
+      },
+      "ms": 42674
+    },
+    {
+      "step": 55,
+      "rows": 1000,
+      "edgesAdded": 832,
+      "grown": 373,
+      "entropyTotal": 19186.628,
+      "entropyMean": 9.593,
+      "entropyWeighted": 379046.148,
+      "entropyDelta": -0.018,
+      "recovered": 48,
+      "recoveredFlat": 13,
+      "recoveredHedged": 35,
+      "wrong": 0,
+      "abstained": 152,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.24,
+      "recoveryDelta": 0.01999999999999999,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 35
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 6
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 35,
+        "inherited": 8,
+        "direct edge": 5
+      },
+      "ms": 42406
+    },
+    {
+      "step": 56,
+      "rows": 1000,
+      "edgesAdded": 805,
+      "grown": 358,
+      "entropyTotal": 19171.875,
+      "entropyMean": 9.586,
+      "entropyWeighted": 384513.272,
+      "entropyDelta": -0.007,
+      "recovered": 49,
+      "recoveredFlat": 13,
+      "recoveredHedged": 36,
+      "wrong": 0,
+      "abstained": 151,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.245,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 36
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 6
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 36,
+        "inherited": 8,
+        "direct edge": 5
+      },
+      "ms": 45925
+    },
+    {
+      "step": 57,
+      "rows": 1000,
+      "edgesAdded": 809,
+      "grown": 342,
+      "entropyTotal": 19148.526,
+      "entropyMean": 9.574,
+      "entropyWeighted": 389933.552,
+      "entropyDelta": -0.012,
+      "recovered": 50,
+      "recoveredFlat": 13,
+      "recoveredHedged": 37,
+      "wrong": 0,
+      "abstained": 150,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.25,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 37
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 6
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 37,
+        "inherited": 8,
+        "direct edge": 5
+      },
+      "ms": 43265
+    },
+    {
+      "step": 58,
+      "rows": 1000,
+      "edgesAdded": 807,
+      "grown": 355,
+      "entropyTotal": 19125.767,
+      "entropyMean": 9.563,
+      "entropyWeighted": 395095.511,
+      "entropyDelta": -0.011,
+      "recovered": 51,
+      "recoveredFlat": 13,
+      "recoveredHedged": 38,
+      "wrong": 0,
+      "abstained": 149,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.255,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 37
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 37,
+        "inherited": 9,
+        "direct edge": 5
+      },
+      "ms": 41673
+    },
+    {
+      "step": 59,
+      "rows": 1000,
+      "edgesAdded": 804,
+      "grown": 409,
+      "entropyTotal": 19104.186,
+      "entropyMean": 9.552,
+      "entropyWeighted": 400427.651,
+      "entropyDelta": -0.011,
+      "recovered": 51,
+      "recoveredFlat": 13,
+      "recoveredHedged": 38,
+      "wrong": 0,
+      "abstained": 149,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.255,
+      "recoveryDelta": 0,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 37
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 37,
+        "inherited": 9,
+        "direct edge": 5
+      },
+      "ms": 41982
+    },
+    {
+      "step": 60,
+      "rows": 1000,
+      "edgesAdded": 821,
+      "grown": 373,
+      "entropyTotal": 19075.158,
+      "entropyMean": 9.538,
+      "entropyWeighted": 405294.162,
+      "entropyDelta": -0.014,
+      "recovered": 52,
+      "recoveredFlat": 13,
+      "recoveredHedged": 39,
+      "wrong": 0,
+      "abstained": 148,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.26,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 38
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 38,
+        "inherited": 9,
+        "direct edge": 5
+      },
+      "ms": 42198
+    },
+    {
+      "step": 61,
+      "rows": 1000,
+      "edgesAdded": 827,
+      "grown": 428,
+      "entropyTotal": 19048.149,
+      "entropyMean": 9.524,
+      "entropyWeighted": 410334.308,
+      "entropyDelta": -0.014,
+      "recovered": 53,
+      "recoveredFlat": 13,
+      "recoveredHedged": 40,
+      "wrong": 0,
+      "abstained": 147,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.265,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 39
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 6
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 39,
+        "inherited": 9,
+        "direct edge": 5
+      },
+      "ms": 42323
+    },
+    {
+      "step": 62,
+      "rows": 1000,
+      "edgesAdded": 797,
+      "grown": 324,
+      "entropyTotal": 19027.805,
+      "entropyMean": 9.514,
+      "entropyWeighted": 415593.905,
+      "entropyDelta": -0.01,
+      "recovered": 54,
+      "recoveredFlat": 13,
+      "recoveredHedged": 41,
+      "wrong": 0,
+      "abstained": 146,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.27,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 39
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 7
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 39,
+        "inherited": 10,
+        "direct edge": 5
+      },
+      "ms": 42614
+    },
+    {
+      "step": 63,
+      "rows": 1000,
+      "edgesAdded": 804,
+      "grown": 335,
+      "entropyTotal": 18961.425,
+      "entropyMean": 9.481,
+      "entropyWeighted": 418695.887,
+      "entropyDelta": -0.033,
+      "recovered": 56,
+      "recoveredFlat": 13,
+      "recoveredHedged": 43,
+      "wrong": 0,
+      "abstained": 144,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.28,
+      "recoveryDelta": 0.010000000000000009,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 41
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 7
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 7
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 41,
+        "inherited": 10,
+        "direct edge": 5
+      },
+      "ms": 42892
+    },
+    {
+      "step": 64,
+      "rows": 1000,
+      "edgesAdded": 738,
+      "grown": 213,
+      "entropyTotal": 18941.901,
+      "entropyMean": 9.471,
+      "entropyWeighted": 423908.212,
+      "entropyDelta": -0.01,
+      "recovered": 57,
+      "recoveredFlat": 13,
+      "recoveredHedged": 44,
+      "wrong": 0,
+      "abstained": 143,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.285,
+      "recoveryDelta": 0.004999999999999949,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 41
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 7
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 8
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 41,
+        "direct edge": 6,
+        "inherited": 10
+      },
+      "ms": 45351
+    },
+    {
+      "step": 65,
+      "rows": 1000,
+      "edgesAdded": 837,
+      "grown": 218,
+      "entropyTotal": 18942.011,
+      "entropyMean": 9.471,
+      "entropyWeighted": 429220.633,
+      "entropyDelta": 0,
+      "recovered": 58,
+      "recoveredFlat": 13,
+      "recoveredHedged": 45,
+      "wrong": 0,
+      "abstained": 142,
+      "seenRecovered": 0,
+      "seenAsked": 0,
+      "seenRate": 0,
+      "recoveryRate": 0.29,
+      "recoveryDelta": 0.0050000000000000044,
+      "byRelation": {
+        "used-for": {
+          "asked": 22,
+          "recovered": 0
+        },
+        "located-in": {
+          "asked": 46,
+          "recovered": 0
+        },
+        "is-a": {
+          "asked": 88,
+          "recovered": 41
+        },
+        "causes": {
+          "asked": 3,
+          "recovered": 0
+        },
+        "has-property": {
+          "asked": 13,
+          "recovered": 7
+        },
+        "requires": {
+          "asked": 6,
+          "recovered": 0
+        },
+        "capable-of": {
+          "asked": 4,
+          "recovered": 0
+        },
+        "has-part": {
+          "asked": 16,
+          "recovered": 9
+        },
+        "made-of": {
+          "asked": 2,
+          "recovered": 1
+        }
+      },
+      "byPath": {
+        "derived": 41,
+        "direct edge": 6,
+        "inherited": 11
+      },
+      "ms": 45090
+    }
+  ]
+}
