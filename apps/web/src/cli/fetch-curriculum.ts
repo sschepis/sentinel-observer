@@ -17,7 +17,7 @@
  *
  * Attribution: article text is CC BY-SA 4.0, from simple.wikipedia.org.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const SUBJECTS: Record<string, string[]> = {
@@ -101,6 +101,26 @@ async function fetchBatch(titles: readonly string[], attempt = 0): Promise<Map<s
 
 const slug = (title: string): string => title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
+/**
+ * THE CLASSROOM ONLY READS FIVE FILENAMES. `curriculum/registry.ts` matches
+ * `passages.jsonl` and four siblings exactly, and never recurses — so the
+ * `<subject>/<slug>.txt` tree this CLI has always written was invisible to
+ * the server, and every article fetched through it reached nothing but the
+ * one-shot `npm run read` CLI. Each article is therefore ALSO appended as a
+ * passages row, which is the shape the reader ingests: {title, text,
+ * source}. Rows already present (by title) are not appended twice, so
+ * re-running the fetch is safe.
+ */
+function appendPassage(corpusDir: string, subject: string, title: string, text: string): boolean {
+  const path = join(corpusDir, 'passages.jsonl')
+  if (existsSync(path)) {
+    const needle = `"title":${JSON.stringify(title)}`
+    if (readFileSync(path, 'utf8').includes(needle)) return false
+  }
+  appendFileSync(path, `${JSON.stringify({ title, text, source: `curriculum:${subject}` })}\n`)
+  return true
+}
+
 async function main(): Promise<void> {
   const out = flag('out') ?? 'corpus'
   const only = flag('topic')
@@ -108,6 +128,7 @@ async function main(): Promise<void> {
 
   let files = 0
   let words = 0
+  let rows = 0
   for (const subject of subjects) {
     const titles = SUBJECTS[subject]
     if (titles === undefined) {
@@ -120,12 +141,18 @@ async function main(): Promise<void> {
       const batch = titles.slice(i, i + 1)
       // Resume-friendly: an already-fetched article is never re-requested.
       if (existsSync(join(directory, `${slug(batch[0])}.txt`))) {
-        console.log(`  have  ${subject}/${slug(batch[0])}.txt`)
+        // Already fetched — but an article fetched before this CLI wrote
+        // passages rows has never reached the classroom, so top it up.
+        const text = readFileSync(join(directory, `${slug(batch[0])}.txt`), 'utf8').trim()
+        const added = text.length > 0 && appendPassage(out, subject, batch[0], text)
+        if (added) rows += 1
+        console.log(`  have  ${subject}/${slug(batch[0])}.txt${added ? ' (added its passages row)' : ''}`)
         continue
       }
       const extracts = await fetchBatch(batch)
       for (const [title, text] of extracts) {
         writeFileSync(join(directory, `${slug(title)}.txt`), `${text}\n`)
+        if (appendPassage(out, subject, title, text)) rows += 1
         const count = text.split(/\s+/).length
         files += 1
         words += count
@@ -139,7 +166,7 @@ async function main(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 4000))
     }
   }
-  console.log(`\n${files} files, ${words} words -> ${out}/`)
+  console.log(`\n${files} files, ${words} words -> ${out}/ · ${rows} new rows in ${out}/passages.jsonl (what the classroom reads)`)
   console.log('Text: Simple English Wikipedia, CC BY-SA 4.0.')
 }
 
