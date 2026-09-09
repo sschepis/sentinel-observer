@@ -145,6 +145,11 @@ export interface StoryQuantity {
   /** The possessor a take-away took FROM ("picked 7 apples from her TREE") —
    *  the other party to the event, whose perspective flips the sign. */
   fromParty: string | null;
+  /** THE CLAUSE PAID THIS OUT. Kept even when the quantity became a rate,
+   *  because a net of rates needs a sign and the rate role would otherwise
+   *  throw the loss verb away: "has to pay $216 rent every week" is a cost
+   *  per week, not an income per week (TASKS #82). */
+  paid: boolean;
 }
 
 export interface StoryQuestion {
@@ -674,7 +679,8 @@ function readBody(body: string): { quantities: StoryQuantity[]; unknowns: number
           clause: clauseIndex,
           sentence: clause.sentence,
           possession: false,
-          fromParty: null
+          fromParty: null,
+          paid: false
         });
         continue;
       }
@@ -705,7 +711,8 @@ function readBody(body: string): { quantities: StoryQuantity[]; unknowns: number
         clause: clauseIndex,
         sentence: clause.sentence,
         possession,
-        fromParty: loss ? (clause.lower.match(/\bfrom (?:her|his|their|the|its)\s+([a-z]+)/)?.[1] ?? null) : null
+        fromParty: loss ? (clause.lower.match(/\bfrom (?:her|his|their|the|its)\s+([a-z]+)/)?.[1] ?? null) : null,
+        paid: loss
       });
     }
   }
@@ -1239,6 +1246,49 @@ function finish(
 }
 
 /**
+ * A NET OF RATES over the same groups (TASKS #82). "Lewis earns $491 every
+ * week during the 1181 weeks of harvest. If he has to pay $216 rent every
+ * week" states two rates and asks for neither of them alone: the answer is
+ * (491 − 216) × 1181, and the sign comes from the clause that stated each
+ * one. It reads only when the question ACCOUNTS FOR EVERY RATE — by naming
+ * what each one counts ("53 flowers and 181 sticks in each pot — how many
+ * flowers and sticks in all") or by asking for money when every rate is an
+ * amount of money — and only over one group noun. A story whose income
+ * cannot cover its costs is a negative rate, which the decks have no sign
+ * for: it declines.
+ */
+function netOfRates(rates: StoryQuantity[], question: StoryQuestion): Amount | null {
+  const groupNoun = rates[0].groupNoun;
+  if (groupNoun === null || !rates.every((q) => sameNoun(q.groupNoun, groupNoun))) return null;
+  const namesEach = rates.every((q) => q.noun !== null && question.nouns.some((n) => sameNoun(n, q.noun)));
+  // MONEY IS ONE KIND; THINGS ARE MANY. Two amounts of money over the same
+  // groups always compose — an income and another income add, an income and
+  // a cost subtract — because "dollars" and "dollars" are not two kinds of
+  // thing to choose between. Two rates over one THING are the opposite:
+  // "each basket has 10 red peaches and 2 green peaches — how many GREEN
+  // peaches?" is a partition, the question chooses, and adding them
+  // answered 84 where the story says 14.
+  const allMoney = rates.every(isMoneyAmount) && question.nouns.some((n) => MONEY_NOUNS.has(n));
+  if (!allMoney && rates.some((q) => rates.some((other) => other !== q && sameNoun(q.noun, other.noun)))) return null;
+  if (!namesEach && !allMoney) return null;
+  const income = rates.filter((q) => !q.paid);
+  const costs = rates.filter((q) => q.paid);
+  if (income.length === 0) return null;
+  let acc = sumOf(income.map((q) => q.exact));
+  if (acc === null) return null;
+  for (const cost of costs) {
+    const next = subA(acc, amount(cost.exact));
+    if (next === null) return null;
+    acc = next;
+  }
+  return acc;
+}
+
+/** An amount of money, however the clause names it ("$216 rent"). */
+const isMoneyAmount = (q: StoryQuantity): boolean =>
+  (q.noun !== null && MONEY_NOUNS.has(q.noun)) || q.slots.mod.some((w) => MONEY_NOUNS.has(w)) || q.premodifiers.some((w) => MONEY_NOUNS.has(w));
+
+/**
  * Which of several stated rates the question is asking about. They have to
  * contrast the way two kinds of quantity contrast — a different thing
  * counted, over the same groups — and the question has to name exactly one
@@ -1247,6 +1297,20 @@ function finish(
  */
 function pickRate(rates: StoryQuantity[], question: StoryQuestion): StoryQuantity | null {
   if (question.stemNoun === null) return null;
+  // TWO AMOUNTS OF MONEY ARE NEVER A CHOICE. They compose (see
+  // `netOfRates`), and if the net could not read them the honest answer is
+  // a decline — never one of them picked out by a word. Checked before the
+  // word test below, which would otherwise pick "$28 every week during the
+  // HARVEST" out of a story that also earns $939 a week of overtime.
+  if (rates.filter(isMoneyAmount).length > 1) return null;
+  // Rates over the same noun contrast by their WORDS, and the question's
+  // words choose between them exactly as they choose between two plain
+  // quantities of one kind: "16 red peaches and 18 green peaches in each
+  // basket — how many RED peaches". A word every rate shares ('basket')
+  // separates nothing, so only a discriminating one counts.
+  const discriminatingTags = (q: StoryQuantity): string[] => q.tags.filter((t) => !rates.every((other) => other.tags.includes(t)));
+  const byTag = rates.filter((q) => discriminatingTags(q).some((t) => question.tags.includes(t)));
+  if (byTag.length === 1) return byTag[0];
   // Every rate the question names, not just the first: "Each pot has 53
   // flowers and 181 sticks in it. How many flowers AND sticks are there in
   // all?" names both, so there is nothing to choose and the shape declines
@@ -1257,15 +1321,39 @@ function pickRate(rates: StoryQuantity[], question: StoryQuestion): StoryQuantit
   if (!sameNoun(chosen.noun, question.stemNoun)) return null;
   const rest = rates.filter((q) => q !== chosen);
   if (!rest.every((q) => q.noun !== null && !sameNoun(q.noun, chosen.noun) && sameNoun(q.groupNoun, chosen.groupNoun))) return null;
-  // TWO AMOUNTS OF MONEY OVER THE SAME GROUPS ARE A NET, NOT A CHOICE.
-  // "Lewis earns $491 every week during the 1181 weeks of harvest. If he
-  // has to pay $216 rent every week" is (491 − 216) × 1181; naming one of
-  // them answers a different question, and the shape has no sign for a
-  // rate that is paid out. Decline.
-  const money = (q: StoryQuantity): boolean =>
-    (q.noun !== null && MONEY_NOUNS.has(q.noun)) || q.slots.mod.some((w) => MONEY_NOUNS.has(w)) || q.premodifiers.some((w) => MONEY_NOUNS.has(w));
-  if (money(chosen) && rest.some(money)) return null;
   return chosen;
+}
+
+/**
+ * HOW MANY GROUPS THE RATE APPLIES TO. An explicit "each of the N" IS the
+ * count, and then nothing else may be left over. Otherwise the count is the
+ * story the remaining quantities tell ABOUT THE GROUPS — one number in the
+ * simple case, and a gain, a loss or what is left when the story moves
+ * them. That is the first COMPOSED derivation this engine builds (TASKS
+ * #68): "Kaleb bought 14 boxes and gave 5 to his brother; each box has 6
+ * pieces inside it" is (14 − 5) × 6, one term two operations deep, and the
+ * narrative's own soundness rules (every quantity placed, no negative
+ * intermediate) still decide it.
+ */
+function countOfGroups(
+  groupNoun: string | null,
+  groupCounts: StoryQuantity[],
+  plain: StoryQuantity[],
+  question: StoryQuestion,
+  unknowns: number
+): Amount | null {
+  if (groupCounts.length > 0) {
+    if (groupCounts.length !== 1 || plain.length > 0) return null;
+    return amount(groupCounts[0].exact);
+  }
+  if (groupNoun === null || plain.length === 0) return null;
+  // A quantity with no noun of its own joins the group story only when it
+  // TAKES FROM it: "gave 5 to his little brother" can only be five of the
+  // boxes just mentioned, while "We ordered 17 pizzas … if there are 25 of
+  // us" adds a number that counts something else entirely. An unnamed
+  // ADDITION to a rate story is the third thing this shape cannot place.
+  if (!plain.every((q) => sameNoun(q.noun, groupNoun) || (q.noun === null && q.role === 'loss'))) return null;
+  return narrative(plain, question.kind, unknowns, question.text);
 }
 
 function build(
@@ -1284,12 +1372,22 @@ function build(
     // and they contrast by what they count — so the question's noun rules
     // one out, which is exactly the accounting the soundness rule wants
     // (TASKS #68). Two rates and no noun to choose by still declines.
-    const rate = rates.length === 1 ? rates[0] : pickRate(rates, question);
-    if (rate === null) return null;
     // A residual question is a rate question too, once the count can be a
     // story rather than a single number ("gave 5 of his 14 boxes away —
     // how many pieces does he still have?").
     if (question.kind !== 'total' && question.kind !== 'change' && question.kind !== 'residual') return null;
+    // Several rates the question accounts for ALL of are a net, not a
+    // choice — one rate per group, arrived at by adding what comes in and
+    // subtracting what goes out (TASKS #82).
+    const net = rates.length > 1 ? netOfRates(rates, question) : null;
+    if (net !== null) {
+      const netGroupNoun = rates[0].groupNoun;
+      if (netGroupNoun === null) return null;
+      const count = countOfGroups(netGroupNoun, groupCounts, plain, question, unknowns);
+      return count === null ? null : { amount: mulA(net, count), shape: 'net of rates × groups' };
+    }
+    const rate = rates.length === 1 ? rates[0] : pickRate(rates, question);
+    if (rate === null) return null;
     const perNoun = rate.noun;
     const groupNoun = rate.groupNoun;
     const asksPer = question.nouns.some((n) => sameNoun(n, perNoun));
@@ -1305,33 +1403,11 @@ function build(
       return shared === null ? null : { amount: shared, shape: 'groups = whole ÷ per' };
     }
     if (!asksPer && question.nouns.length > 0) return null;
-    // per × groups. An explicit "each of the N" IS the count, and then
-    // nothing else may be left over.
-    if (groupCounts.length > 0) {
-      if (groupCounts.length !== 1 || plain.length > 0) return null;
-      return { amount: mulA(amount(groupCounts[0].exact), amount(rate.exact)), shape: 'per × groups' };
-    }
-    // Otherwise the count is the story the remaining quantities tell ABOUT
-    // THE GROUPS — one number in the simple case, and a gain, a loss or
-    // what is left when the story moves them. That is the first COMPOSED
-    // derivation this engine builds (TASKS #68): "Kaleb bought 14 boxes and
-    // gave 5 to his brother; each box has 6 pieces" is (14 − 5) × 6, a
-    // term two operations deep, and the narrative's own soundness rules
-    // (every quantity placed, no negative intermediate) still decide it.
-    // Every remaining quantity has to count the groups, or the story holds
-    // a third thing this shape cannot place.
-    if (groupNoun === null || plain.length === 0) return null;
-    // A quantity with no noun of its own joins the group story only when it
-    // TAKES FROM it: "gave 5 to his little brother" can only be five of the
-    // boxes just mentioned, while "We ordered 17 pizzas … if there are 25
-    // of us" adds a number that counts something else entirely. An unnamed
-    // ADDITION to a rate story is the third thing this shape cannot place.
-    if (!plain.every((q) => sameNoun(q.noun, groupNoun) || (q.noun === null && q.role === 'loss'))) return null;
-    const groups = narrative(plain, question.kind, unknowns, question.text);
+    const groups = countOfGroups(groupNoun, groupCounts, plain, question, unknowns);
     if (groups === null) return null;
     return {
       amount: mulA(groups, amount(rate.exact)),
-      shape: plain.length > 1 ? 'per × groups after the story' : 'per × groups'
+      shape: groupCounts.length === 0 && plain.length > 1 ? 'per × groups after the story' : 'per × groups'
     };
   }
   // -------- a share with no stated rate: whole ÷ groups --------

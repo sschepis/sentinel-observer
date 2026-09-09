@@ -197,17 +197,33 @@ const READS: Array<[string, number, string, string]> = [
     'Kaleb bought 14 boxes of chocolate candy and gave 5 to his little brother. If each box has 6 pieces inside it, how many pieces did Kaleb still have?',
     54, 'per × groups after the story', 'a rate over a story that lost something: (14 − 5) × 6'
   ],
+  // A NET OF RATES (TASKS #82): several rates over the same groups, all of
+  // them accounted for, with the sign taken from the clause that stated
+  // each one. All three were declines until the reader stopped throwing
+  // away whether a RATE's clause was a loss.
+  [
+    'Lewis earns $ 491 every week during the 1181 weeks of harvest. If he has to pay $ 216 rent every week How much money will have at the end of the harvest season?',
+    324775, 'net of rates × groups', 'an income and a cost per week: (491 − 216) × 1181'
+  ],
+  [
+    'Lewis earns $ 28 every week during the 1091 weeks of harvest. He also earns $ 939 per week for working overtime. If he works overtime every week How much money does he earn during harvest season?',
+    1054997, 'net of rates × groups', 'two incomes per week'
+  ],
+  [
+    'There are 466 pots. Each pot has 53 flowers and 181 sticks in it. How many flowers and sticks are there in all?',
+    109044, 'net of rates × groups', 'the question names both rates, so it asks for their sum'
+  ],
+  [
+    'There are 7 baskets of peaches. Each basket has 10 red peaches and 2 green peaches. How many green peaches are in the baskets altogether?',
+    14, 'per × groups', 'two rates over ONE noun contrast by their words: the question chooses, never sums'
+  ],
 ];
 
 /** prompt, and the reason this story is beyond the engine. */
 const DECLINES: Array<[string, string]> = [
   [
-    'There are 466 pots. Each pot has 53 flowers and 181 sticks in it. How many flowers and sticks are there in all?',
-    'two rates and the question names BOTH: nothing to choose, and no shape for their sum yet'
-  ],
-  [
-    'Lewis earns $ 491 every week during the 1181 weeks of harvest. If he has to pay $ 216 rent every week How much money will have at the end of the harvest season?',
-    'two amounts of money over the same groups are a net, not a choice'
+    'At band practice there were 4 rows of students with 8 students in each row and then another 9 students in the back. How many students were there total?',
+    'the 9 in the back was read as a second rate per row: two rates over one noun with nothing to choose by'
   ],
   [
     'We ordered 17 pizzas. Each pizza has 4 slices. If there are 25 of us How many slices of pizza are there altogether?',
