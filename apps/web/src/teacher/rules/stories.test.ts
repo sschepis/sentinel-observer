@@ -5,7 +5,11 @@ import { ACTIVE_DECK } from '../decks';
 import { TeacherAgent } from '../TeacherAgent';
 import { generateExercises, verify, type Exercise } from '../technical/verify';
 import { matchArgs } from '../technical/dsl';
-import { parseGeneralStory, GENERAL_STORY_PARSER_ENABLED, parseRewritePrompt } from './parse';
+import { parseGeneralStory, GENERAL_STORY_PARSER_ENABLED, parseRewritePrompt, decodeNormalForm } from './parse';
+import { RuleStore } from './types';
+import { reduce } from './engine';
+import { PEANO_RULES } from './peano';
+import { DIGITS_RULES } from './digits';
 import { runDrill } from '../technical/drill';
 import { CHECKABLE_CONCEPTS } from '../technical/index';
 import type { DeckWord } from '../deck';
@@ -17,6 +21,25 @@ const OPTIONS = {
   memoryMode: 'compact' as const,
   vocabulary: deckVocabulary([...DECK], PRIME_SPACE)
 };
+
+/**
+ * THE DISPATCH'S ANSWER, if it has one. The two-number parser below must
+ * still decline every shape it cannot defend, but since TASKS #64 the
+ * story-state engine sits in the same dispatch and DOES read subtraction,
+ * division and comparison stories. So these tests no longer assert "no
+ * answer" at the dispatch level — they assert the stronger property: an
+ * answer, if there is one, is the right one.
+ */
+function dispatchValue(prompt: string): number | null {
+  const parsed = parseRewritePrompt(prompt);
+  if (parsed === null) return null;
+  const reduction = reduce(RULE_TEST_STORE, parsed.term, { fuel: parsed.fuel });
+  if (reduction.outcome.status !== 'normal') return null;
+  const spoken = decodeNormalForm(reduction.outcome.term);
+  return spoken === null ? null : Number(spoken);
+}
+
+const RULE_TEST_STORE = new RuleStore([...PEANO_RULES, ...DIGITS_RULES]);
 
 async function freshTeacher(): Promise<TeacherAgent> {
   const session = new ObserverSession(OPTIONS, 100);
@@ -143,22 +166,26 @@ describe('R9 — the general story parser (stretch, held-out gated)', () => {
     expect(parseRewritePrompt(story)).toBeNull();
   });
 
-  test('C1 review fix: take-away stories are DECLINED — never answered as sums', () => {
+  test('C1 review fix: take-away stories are never SUMMED — the two-number parser declines them and the story engine subtracts', () => {
     // The review finding: two-quantity change stories classified as add
     // ("Sam has 10 apples and gives away 3" → confidently "13"). The
-    // decrease lexicon and the residual-question net must refuse every
-    // shape, and chatAnswer must NOT derive.
-    const takeAways = [
-      'Sam has 10 apples and gives away 3. How many apples does Sam have?',
-      'There are 8 cookies and Tom eats 5 of them. How many cookies does Tom have left?',
-      'Leo has 12 candies and loses 4. How many candies does Leo have?',
-      'The jar had 10 cookies and Noor ate 4 of them. How many cookies are left?',
-      'Rosa bought 9 stickers and sold 3 of them. How many stickers does Rosa have?',
-      'A tank held 6 liters and 2 leaked out. How many liters are still in the tank?'
+    // decrease lexicon and the residual-question net still refuse every
+    // shape here. What changed with TASKS #64 is that the dispatch no
+    // longer has to stay silent: the story-state engine reads the same
+    // stories as subtractions, so the assertion is the stronger one —
+    // whatever comes out must be right.
+    const takeAways: Array<[string, number]> = [
+      ['Sam has 10 apples and gives away 3. How many apples does Sam have?', 7],
+      ['There are 8 cookies and Tom eats 5 of them. How many cookies does Tom have left?', 3],
+      ['Leo has 12 candies and loses 4. How many candies does Leo have?', 8],
+      ['The jar had 10 cookies and Noor ate 4 of them. How many cookies are left?', 6],
+      ['Rosa bought 9 stickers and sold 3 of them. How many stickers does Rosa have?', 6],
+      ['A tank held 6 liters and 2 leaked out. How many liters are still in the tank?', 4]
     ];
-    for (const story of takeAways) {
+    for (const [story, answer] of takeAways) {
       expect(parseGeneralStory(story)).toBeNull();
-      expect(parseRewritePrompt(story)).toBeNull();
+      const value = dispatchValue(story);
+      if (value !== null) expect({ story, value }).toEqual({ story, value: answer });
     }
   });
 
@@ -199,9 +226,29 @@ describe('R9 — the general story parser (stretch, held-out gated)', () => {
       'At the zoo, I see 35 elephants and 48 tigers. How many legs do I see?',
       "There are 22 bicycles and 3 cars in the garage at Gordon's apartment building. How many wheels are there in the garage?"
     ];
+    // The two-number parser must decline every one of these. The dispatch
+    // as a whole may now answer some of them through the story-state engine
+    // (TASKS #64) — a comparison, a division, a stated whole — and where it
+    // does, the answer must be the corpus's.
+    const CORRECT: Record<string, number> = {
+      'Zachary did 51 push-ups and David did 44 push-ups in gym class today. How many more push-ups did Zachary do than David?': 7,
+      'A grocery store had 19 bottles of diet soda and 60 bottles of regular soda. How many more bottles of regular soda than diet soda did they have?': 41,
+      'There are 396 students going to a trivia competition. If each school van can hold 9 students, how many vans will they need?': 44,
+      "Jesse's room is 19 feet wide and 20 feet long. How much longer is her room than it is wide?": 1,
+      'Melissa scored 12 points in each game. If she scored a total of 36 points How many games did she play?': 3,
+      'While heating the wings, Charlie decided to make metal supports for the wings. If he needs 635 lbs of metal and he has 276 lbs in storage, how much additional metal does he need to buy?': 359,
+      'A waiter had 3 customers. After some more arrived he had 8 customers. How many new customers arrived?': 5,
+      'Tommy had some balloons. His mom gave him 34 more balloons for his birthday. Then, Tommy had 60 balloons. How many balloons did Tommy have to start with?': 26
+    };
     for (const story of guesses) {
       expect(parseGeneralStory(story)).toBeNull();
-      expect(parseRewritePrompt(story)).toBeNull();
+      const value = dispatchValue(story);
+      if (value !== null) {
+        const expected = CORRECT[story];
+        // An answer to a story with no recorded answer here would be a new
+        // reading nobody has checked: fail loudly rather than trust it.
+        expect({ story, value }).toEqual({ story, value: expected });
+      }
     }
     // And the shapes it DOES understand still answer — a sum asked as a
     // third kind, a sum with a total cue, equal groups.

@@ -1,78 +1,78 @@
 {
-  "at": "2026-09-09T10:40:03.974Z",
+  "at": "2026-09-09T17:30:05.496Z",
   "sample": 300,
   "rows": 3004,
   "totals": {
-    "correct": 15,
+    "correct": 53,
     "wrong": 0,
-    "abstained": 285
+    "abstained": 247
   },
   "bySource": {
     "svamp": {
-      "correct": 2,
+      "correct": 16,
       "wrong": 0,
-      "abstained": 79
+      "abstained": 65
     },
     "asdiv": {
-      "correct": 13,
+      "correct": 37,
       "wrong": 0,
-      "abstained": 206
+      "abstained": 182
     }
   },
   "needBuckets": {
     "decrease/residual": {
       "seen": 122,
-      "correct": 1,
+      "correct": 21,
       "wrong": 0,
-      "abstained": 121
+      "abstained": 101
     },
     "3+ quantities": {
       "seen": 123,
-      "correct": 0,
+      "correct": 9,
       "wrong": 0,
-      "abstained": 123
+      "abstained": 114
     },
     "total": {
       "seen": 50,
-      "correct": 9,
+      "correct": 17,
       "wrong": 0,
-      "abstained": 41
+      "abstained": 33
     },
     "≤1 number stated": {
       "seen": 56,
-      "correct": 0,
+      "correct": 9,
       "wrong": 0,
-      "abstained": 56
+      "abstained": 47
     },
     "multiplicative": {
       "seen": 20,
-      "correct": 1,
+      "correct": 3,
       "wrong": 0,
-      "abstained": 19
+      "abstained": 17
     },
     "rate (each/per)": {
       "seen": 94,
-      "correct": 4,
+      "correct": 12,
       "wrong": 0,
-      "abstained": 90
+      "abstained": 82
     },
     "other": {
       "seen": 14,
-      "correct": 2,
+      "correct": 1,
       "wrong": 0,
-      "abstained": 12
+      "abstained": 13
     },
     "3+ sentences": {
       "seen": 63,
-      "correct": 2,
+      "correct": 10,
       "wrong": 0,
-      "abstained": 61
+      "abstained": 53
     },
     "units": {
       "seen": 29,
-      "correct": 0,
+      "correct": 5,
       "wrong": 0,
-      "abstained": 29
+      "abstained": 24
     },
     "fraction/decimal": {
       "seen": 12,
@@ -82,9 +82,9 @@
     },
     "comparison": {
       "seen": 10,
-      "correct": 0,
+      "correct": 1,
       "wrong": 0,
-      "abstained": 10
+      "abstained": 9
     },
     "division/sharing": {
       "seen": 7,
@@ -107,7 +107,7 @@
     {
       "prompt": "Dan has $ 4. He bought a candy bar for $ 8. Then his friend have him $ 5 How much money is left?",
       "expected": "1",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "reply": "I do not know what \"money\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "3+ quantities"
@@ -167,14 +167,6 @@
       ]
     },
     {
-      "prompt": "Jack received 6 emails in the morning and 8 emails in the afternoon. How many more emails did Jack receive in the afternoon than in the morning?",
-      "expected": "2",
-      "reply": "I do not know what \"morning\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual"
-      ]
-    },
-    {
       "prompt": "A baker is putting cupcakes on trays to cool. She put 3 cupcakes on the first tray, 6 cupcakes on the second tray, 12 cupcakes on the third tray, and 24 cupcakes on the fourth tray. If this pattern continues, how many cupcakes will the baker put on the fifth tray?",
       "expected": "48 (cupcakes)",
       "reply": "I do not know what \"tray\" means. Could you teach me?",
@@ -188,24 +180,6 @@
       "reply": "I do not know what \"baker\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
-        "3+ quantities"
-      ]
-    },
-    {
-      "prompt": "Tyler had 15 dogs. Each dog had five puppies. How many puppies does Tyler now have?",
-      "expected": "75 (puppies)",
-      "reply": "I do not know what \"tyler\" means. Could you teach me?",
-      "needs": [
-        "rate (each/per)",
-        "≤1 number stated"
-      ]
-    },
-    {
-      "prompt": "A chef was making soups. She made 2 bowls of chicken soup, 2 bowls of mushroom soup and 7 bowls of tomato soup. How many bowls of soup did she make total?",
-      "expected": "11 (bowls of soup)",
-      "reply": "I do not know what \"soup\" means. Could you teach me?",
-      "needs": [
-        "total",
         "3+ quantities"
       ]
     },
@@ -245,16 +219,6 @@
       ]
     },
     {
-      "prompt": "With 28 dollars 2 packs of dvds can be bought. How much does each pack cost?",
-      "expected": "14",
-      "reply": "I do not know what \"cost\" means. Could you teach me?",
-      "needs": [
-        "rate (each/per)",
-        "multiplicative",
-        "units"
-      ]
-    },
-    {
       "prompt": "A summer sports camp had 88 soccer campers, basketball campers and football campers. If 24 of them were basketball campers and 32 of them were football campers, how many soccer campers were there?",
       "expected": "32 (soccer campers)",
       "reply": "I do not know what \"campers\" means. Could you teach me?",
@@ -278,15 +242,6 @@
       "needs": [
         "3+ quantities",
         "3+ sentences"
-      ]
-    },
-    {
-      "prompt": "Paul got a box of 440 crayons for his birthday. During the school year he gave 111 crayons to his friends while he lost 106 crayons. How many crayons did he have left?",
-      "expected": "223",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual",
-        "3+ quantities"
       ]
     },
     {
@@ -328,24 +283,6 @@
       ]
     },
     {
-      "prompt": "Julia played tag with 12 kids on Monday. She played tag with 7 kids on Tuesday. How many kids did she play with altogether?",
-      "expected": "19 (kids)",
-      "reply": "I do not know what \"altogether\" means. Could you teach me?",
-      "needs": [
-        "total"
-      ]
-    },
-    {
-      "prompt": "Mrs. Hilt has $10. She spends $3 on a toy truck and $2 on a pencil case. How much money does she have left?",
-      "expected": "5 (dollars)",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual",
-        "3+ quantities",
-        "3+ sentences"
-      ]
-    },
-    {
       "prompt": "Rachel has 4 apple trees. She picked 7 apples from each of her trees. Now the trees have a total 29 apples still on them. How many apples did Rachel pick in all?",
       "expected": "28",
       "reply": "I do not know what \"pick\" means. Could you teach me?",
@@ -354,6 +291,14 @@
         "total",
         "3+ quantities",
         "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "In a school, there are 542 girls and 387 boys. How many pupils are there in that school?",
+      "expected": "929 (pupils)",
+      "reply": "I do not know what \"pupils\" means. Could you teach me?",
+      "needs": [
+        "other"
       ]
     },
     {
@@ -386,7 +331,7 @@
     {
       "prompt": "A waiter had 8 customers. After some left he still had 5 customers. Then he got 99 new customers How many customers left?",
       "expected": "3",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "reply": "I do not know what \"customers\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "3+ quantities"
@@ -450,15 +395,6 @@
       "expected": "11 (apples)",
       "reply": "I do not know what \"together\" means. Could you teach me?",
       "needs": [
-        "≤1 number stated"
-      ]
-    },
-    {
-      "prompt": "Dave had sixteen apps on his phone. After deleting some, he had eight left. How many apps did he delete?",
-      "expected": "8 (apps)",
-      "reply": "I do not know what \"delete\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual",
         "≤1 number stated"
       ]
     },
@@ -642,6 +578,71 @@
         "rate (each/per)",
         "3+ sentences"
       ]
+    },
+    {
+      "prompt": "Faye was placing her pencils and crayons into 11 rows with 31 pencils and 27 crayons in each row. How many pencils and crayons does she have altogether?",
+      "expected": "638",
+      "reply": "I do not know what \"crayons\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "total",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "There were 73 parents, 724 pupils and 744 teachers in the program. How many people were present in the program?",
+      "expected": "1541",
+      "reply": "I do not know what \"present\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Rebecca wants to split a collection of eggs into groups of 5. Rebecca has 20 eggs and 6 marbles. How many more eggs does Rebecca have than marbles?",
+      "expected": "14",
+      "reply": "I do not know what \"marbles\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "multiplicative",
+        "division/sharing",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "The ratio of boys to girls at the basketball game is 8:5. There are 30 girls. How many more boys are there than girls?",
+      "expected": "18 (boys)",
+      "reply": "I do not know what \"girls\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Time in the Philippines is one hour ahead of the time in Japan. Luz who is in Manila called up her friend who is in Japan at 12:55 am on 25 December 2014. What day and time was it in Japan?",
+      "expected": "11:55 p.m. on 24 December 2014.",
+      "reply": "I do not know what \"japan\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "units"
+      ]
+    },
+    {
+      "prompt": "A full moon occurs every 30 days. If the last full moon occurred on a Friday, how many days will pass before a full moon occurs again on a Friday?",
+      "expected": "210 (days)",
+      "reply": "I do not know what \"friday\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "Last week Fred had 60 dollars and Jason had 19 dollars. Jason washed cars over the weekend and now has 33 dollars. How much money did Jason make washing cars?",
+      "expected": "14",
+      "reply": "I do not know what \"cars\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "units"
+      ]
     }
   ],
   "rightSample": [
@@ -651,14 +652,49 @@
       "reply": "The answer is 629."
     },
     {
+      "prompt": "Jack received 6 emails in the morning and 8 emails in the afternoon. How many more emails did Jack receive in the afternoon than in the morning?",
+      "expected": "2",
+      "reply": "The answer is 2."
+    },
+    {
+      "prompt": "Tyler had 15 dogs. Each dog had five puppies. How many puppies does Tyler now have?",
+      "expected": "75 (puppies)",
+      "reply": "The answer is 75."
+    },
+    {
+      "prompt": "A chef was making soups. She made 2 bowls of chicken soup, 2 bowls of mushroom soup and 7 bowls of tomato soup. How many bowls of soup did she make total?",
+      "expected": "11 (bowls of soup)",
+      "reply": "The answer is 11."
+    },
+    {
+      "prompt": "With 28 dollars 2 packs of dvds can be bought. How much does each pack cost?",
+      "expected": "14",
+      "reply": "The answer is 14."
+    },
+    {
+      "prompt": "Paul got a box of 440 crayons for his birthday. During the school year he gave 111 crayons to his friends while he lost 106 crayons. How many crayons did he have left?",
+      "expected": "223",
+      "reply": "The answer is 223."
+    },
+    {
       "prompt": "The first act included 5 clown mobiles, each stuffed with 28 clowns. How many clowns are inside all the clown mobiles combined?",
       "expected": "140 (clowns)",
       "reply": "The answer is 140."
     },
     {
-      "prompt": "In a school, there are 542 girls and 387 boys. How many pupils are there in that school?",
-      "expected": "929 (pupils)",
-      "reply": "The answer is 929."
+      "prompt": "Julia played tag with 12 kids on Monday. She played tag with 7 kids on Tuesday. How many kids did she play with altogether?",
+      "expected": "19 (kids)",
+      "reply": "The answer is 19."
+    },
+    {
+      "prompt": "Mrs. Hilt has $10. She spends $3 on a toy truck and $2 on a pencil case. How much money does she have left?",
+      "expected": "5 (dollars)",
+      "reply": "The answer is 5."
+    },
+    {
+      "prompt": "Dave had sixteen apps on his phone. After deleting some, he had eight left. How many apps did he delete?",
+      "expected": "8 (apps)",
+      "reply": "The answer is 8."
     },
     {
       "prompt": "Bianca was practicing for a marathon. To prepare she ran 8 miles the first day and 4 miles the next day. How many miles did Bianca run altogether?",
@@ -666,14 +702,79 @@
       "reply": "The answer is 12."
     },
     {
+      "prompt": "Last Thursday Drew had $30. Over the weekend he received some money for cutting the grass. He now has $61. How much money did he get paid for cutting the grass?",
+      "expected": "31 (dollars)",
+      "reply": "The answer is 31."
+    },
+    {
+      "prompt": "Next on his shopping list are the eggs. If he needs 222 eggs for his cake and his friend Andrew gave him 155, how many more eggs should he buy?",
+      "expected": "67 (eggs)",
+      "reply": "The answer is 67."
+    },
+    {
+      "prompt": "Zachary did 51 push-ups and David did 44 push-ups in gym class today. How many more push-ups did Zachary do than David?",
+      "expected": "7",
+      "reply": "The answer is 7."
+    },
+    {
+      "prompt": "A delivery driver had to make three more stops on his route. At each stop he had to drop off nine boxes. How many boxes does he have?",
+      "expected": "27 (boxes)",
+      "reply": "The answer is 27."
+    },
+    {
+      "prompt": "For Gwen's birthday she received five dollars. If she spent three dollars. How much money did she still have?",
+      "expected": "2 (dollars)",
+      "reply": "The answer is 2."
+    },
+    {
       "prompt": "Jerry had 8 action figures on a shelf in his room. Later he added 2 more figures to the shelf. How many action figures were on his shelf total?",
       "expected": "10 (action figures)",
       "reply": "The answer is 10."
     },
     {
+      "prompt": "Jesse's room is 19 feet wide and 20 feet long. How much longer is her room than it is wide?",
+      "expected": "1",
+      "reply": "The answer is 1."
+    },
+    {
+      "prompt": "Bernard had 15 red notebooks, 17 blue notebooks and 19 white notebooks. He gave some of them to Tom and had 5 left. How many notebooks did Bernard give Tom?",
+      "expected": "46 (notebooks)",
+      "reply": "The answer is 46."
+    },
+    {
+      "prompt": "6 packs of dvds can be bought with 120 dollars. How much does each pack cost?",
+      "expected": "20",
+      "reply": "The answer is 20."
+    },
+    {
+      "prompt": "There are 396 students going to a trivia competition. If each school van can hold 9 students, how many vans will they need?",
+      "expected": "44 (vans)",
+      "reply": "The answer is 44."
+    },
+    {
+      "prompt": "Mike collected seventy-one cans to recycle on Monday and twenty-seven more on Tuesday. How many cans did Mike collect all together?",
+      "expected": "98 (cans)",
+      "reply": "The answer is 98."
+    },
+    {
       "prompt": "It is Buddy's first day at a new school and he is feeling very nervous. His day begins with some bacon and egg prepared by his mother. After eating and preparing, Buddy headed out to catch the school bus from the nearest bus stop. Including Buddy, there were 39 students that got on the bus during the first stop. If 29 more students got on the bus at the second stop, how many students are riding the bus?",
       "expected": "68 (students)",
       "reply": "The answer is 68."
+    },
+    {
+      "prompt": "Will was drawing super heroes on a sheet of scrap paper. He drew two heroes on the front and seven heroes on the back. How many heroes did he draw total?",
+      "expected": "9 (heroes)",
+      "reply": "The answer is 9."
+    },
+    {
+      "prompt": "I have 80 cents to buy candy. If each gumdrop costs 4 cents, how many gumdrops can I buy?",
+      "expected": "20 (gumdrops)",
+      "reply": "The answer is 20."
+    },
+    {
+      "prompt": "Jessie weighed 71 kilograms. After she started to go jogging everyday she lost 20 kilograms. How much does she weigh now?",
+      "expected": "51",
+      "reply": "The answer is 51."
     },
     {
       "prompt": "If you had 37 bags of cookies with 19 cookies in each bag, how many cookies would you have?",
@@ -686,14 +787,49 @@
       "reply": "The answer is 760."
     },
     {
+      "prompt": "There are 544 pots. Each pot has 32 flowers in it. How many flowers are there in all?",
+      "expected": "17408 (flowers)",
+      "reply": "The answer is 17408."
+    },
+    {
+      "prompt": "Mrs. Hilt wants to make a border around her garden. She needs 125 rocks to complete the border. She has 64 rocks. How many more rocks does she need to complete the border?",
+      "expected": "61 (rocks)",
+      "reply": "The answer is 61."
+    },
+    {
+      "prompt": "Brian has 39 pencils. He gives 18 pencils to a friend. He buys 22 more pencils. How many pencils does Brian have now?",
+      "expected": "43 (pencils)",
+      "reply": "The answer is 43."
+    },
+    {
       "prompt": "Shelby's teacher gives out gold stars for great math work. Yesterday, Shelby earned 4 gold stars. Today, she earned 3 more. How many gold stars did Shelby earn in all?",
       "expected": "7 (gold stars)",
       "reply": "The answer is 7."
     },
     {
+      "prompt": "Helen the hippo and her friends are preparing for thanksgiving at Helen's house. Helen baked 144 chocolate chip cookies and 397 raisin cookies yesterday. And she baked 85 raisin cookies and 403 chocolate chip cookies this morning. How many raisin cookies did Helen bake?",
+      "expected": "482",
+      "reply": "The answer is 482."
+    },
+    {
       "prompt": "There were 58 geese and 37 ducks in the marsh. How many birds were there in all?",
       "expected": "95 (birds)",
       "reply": "The answer is 95."
+    },
+    {
+      "prompt": "Each table in a break room can seat eight people. If the break room has four tables, how many people can sit in there?",
+      "expected": "32 (people)",
+      "reply": "The answer is 32."
+    },
+    {
+      "prompt": "Paul had 50 books. After buying some in a garage sale he had 151 left. How many books did he buy?",
+      "expected": "101",
+      "reply": "The answer is 101."
+    },
+    {
+      "prompt": "James has 1222 balloons. Amy has 513 balloons. How many more balloons does James have than Amy?",
+      "expected": "709 (balloons)",
+      "reply": "The answer is 709."
     },
     {
       "prompt": "There are many different books in the ' crazy silly school ' series. If you have read 13 of the books and are yet to read 8 books How many books are there in the ' crazy silly school ' series?",
@@ -711,14 +847,69 @@
       "reply": "The answer is 420."
     },
     {
+      "prompt": "Josh lost 11 marbles. If he had 19 marbles in his collection earlier How many marbles does he have now?",
+      "expected": "8",
+      "reply": "The answer is 8."
+    },
+    {
+      "prompt": "Elizabeth studied 25 minutes for her science test. She studied 35 minutes for her math test. How long did Elizabeth study altogether?",
+      "expected": "60 (minutes)",
+      "reply": "The answer is 60."
+    },
+    {
+      "prompt": "A grocery store had 19 bottles of diet soda and 60 bottles of regular soda. How many more bottles of regular soda than diet soda did they have?",
+      "expected": "41",
+      "reply": "The answer is 41."
+    },
+    {
       "prompt": "Haley's mom was buying extra school supplies for Haley and her sister. If she bought 2 reams of paper for Haley and 3 reams for her sister, how many did she buy total?",
       "expected": "5 (reams of paper)",
       "reply": "The answer is 5."
     },
     {
+      "prompt": "Lana had eleven DS games. If she bought two more games, how many would she have total?",
+      "expected": "13 (DS games)",
+      "reply": "The answer is 13."
+    },
+    {
+      "prompt": "Mikayla has a huge collection of music CDs. She gave 15 CDs to her friend. Now she has 78 CDs left. How many CDs were in Mikayla's collection at first?",
+      "expected": "93 (CDs)",
+      "reply": "The answer is 93."
+    },
+    {
+      "prompt": "Annie's mother has also been asked to be a part of the surprise. She was tasked to be in charge of drinks. She made 25 glasses of orange juice, 15 glasses of grape juice and 5 glasses of apple juice. How many glasses of juice would there be?",
+      "expected": "45 (glasses)",
+      "reply": "The answer is 45."
+    },
+    {
+      "prompt": "Mary is baking a cake. The recipe calls for 12 cups of flour and 13 cups of sugar. She already put in 2 cups of sugar. How many more cups of sugar does she need to add?",
+      "expected": "11",
+      "reply": "The answer is 11."
+    },
+    {
       "prompt": "Students from Flora Middle School were asked to participate in the event. They planted 47 apple trees and 27 orange trees in the forest near their school. How many trees in total did the students plant?",
       "expected": "74 (trees)",
       "reply": "The answer is 74."
+    },
+    {
+      "prompt": "Paco had 28 cookies. He ate some of them and had 7 cookies left. How many cookies did Paco eat?",
+      "expected": "21",
+      "reply": "The answer is 21."
+    },
+    {
+      "prompt": "3 raccoons are playing in the woods. 2 go home to eat dinner. How many raccoons are left in the woods?",
+      "expected": "1 (raccoons)",
+      "reply": "The answer is 1."
+    },
+    {
+      "prompt": "6 green peaches, 60 yellow peaches and 2 red peaches are in the basket. How many more green peaches than red peaches are in the basket?",
+      "expected": "4",
+      "reply": "The answer is 4."
+    },
+    {
+      "prompt": "A pet store had six kittens. If they got another three kittens, how many would they have total?",
+      "expected": "9 (kittens)",
+      "reply": "The answer is 9."
     }
   ]
 }

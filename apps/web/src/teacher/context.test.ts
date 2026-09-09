@@ -56,6 +56,53 @@ describe('reference resolution', () => {
     expect(resolveReferences('what about it?', window)).toBe('what about apple?');
   });
 
+  it('never rewrites a pronoun to a word the observer does not know', () => {
+    // THE 2026-09-09 BENCH FINDING. A word-problem turn ended on "than"
+    // ("how many more push-ups … than David"), so the next question's
+    // pronouns were rewritten to it: "her friend had 23 games" became "than
+    // friend had 23 games", and the observer answered a sentence no reader
+    // could parse. Two things now prevent it — "than" is grammatical
+    // vocabulary and can never be a referent, and a referent the observer
+    // does not know is not substituted at all.
+    const window = [{ role: 'user' as const, text: 'How many more push-ups did Zachary do than David?', at: 1 }];
+    const asked = 'Katie had 72 games and her friend had 23 games. How many do they have total?';
+    // "than" is grammatical vocabulary: never a referent, whatever the
+    // observer's vocabulary says.
+    expect(lastEntity(window)).not.toBe('than');
+    // And this utterance names its own subject before the pronoun, so
+    // nothing from the previous turn is substituted into it at all.
+    expect(resolveReferences(asked, window, () => true)).toBe(asked);
+    expect(resolveReferences(asked, window, (word) => word !== 'david')).toBe(asked);
+    // And an entity the observer has no word for is left alone.
+    const unknown = [{ role: 'user' as const, text: 'A zebu.', at: 1 }];
+    expect(resolveReferences('what about it?', unknown, (word) => word !== 'zebu')).toBe('what about it?');
+    expect(resolveReferences('what about it?', unknown, (word) => word === 'zebu')).toBe('what about zebu?');
+  });
+
+  it('keeps a possessive phrase intact — "her friend" is not an anaphor', () => {
+    const window = [{ role: 'user' as const, text: 'I like apples.', at: 1 }];
+    const known = (word: string) => word === 'apple';
+    expect(resolveReferences('her friend ate one', window, known)).toBe('her friend ate one');
+    expect(resolveReferences('this page is nice', window, known)).toBe('this page is nice');
+    // A bare pronoun still resolves.
+    expect(resolveReferences('what about it?', window, known)).toBe('what about apple?');
+    expect(resolveReferences('do you like them?', window, known)).toBe('do you like apple?');
+  });
+
+  it('does not reach into the previous turn when the utterance names its own subject', () => {
+    // The bench finding: "A pet store had six kittens. If they got another
+    // three kittens, how many would they have total?" had "they" rewritten
+    // to the previous problem's entity, and the observer answered a story
+    // nobody told it.
+    const window = [{ role: 'user' as const, text: 'I like apples.', at: 1 }];
+    const known = (word: string) => word === 'apple';
+    const story = 'A pet store had six kittens. If they got another three kittens, how many would they have total?';
+    expect(resolveReferences(story, window, known)).toBe(story);
+    // A bare pronoun with nothing before it still resolves from memory.
+    expect(resolveReferences('what about it?', window, known)).toBe('what about apple?');
+    expect(resolveReferences('is it sweet?', window, known)).toBe('is apple sweet?');
+  });
+
   it('leaves the utterance unchanged without a pronoun', () => {
     const window = [{ role: 'user' as const, text: 'I like apples.', at: 1 }];
     expect(resolveReferences('what is the capital of mars', window)).toBe('what is the capital of mars');

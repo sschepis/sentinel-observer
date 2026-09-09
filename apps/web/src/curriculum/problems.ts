@@ -31,6 +31,10 @@ export interface ProblemRow {
 export type ProblemVerdict = 'correct' | 'wrong' | 'abstained';
 
 export interface ProblemCheck {
+  /** WHICH LAYER SPOKE. A wrong answer is only fixable once you know where
+   *  it came from: the rewrite engine (and which rules), a compiled rule, a
+   *  memorized exchange or the creative layer. */
+  layer?: string;
   prompt: string;
   expected: number | null;
   got: number | null;
@@ -93,5 +97,7 @@ export function checkProblem(teacher: TeacherAgent, row: ProblemRow): ProblemChe
       teacher.weakenRule(ruleId, 1, { evidence: 'verified-wrong', expected: row.answer, input: prompt.slice(0, 80) });
     }
   }
-  return { prompt, expected, got, response: answer.response, mode: answer.mode, verdict: correct ? 'correct' : 'wrong' };
+  const operator = answer.mode === 'operator' ? answer.operator : null;
+  const layer = [answer.mode, operator?.kind, (answer.provenance.ruleIds ?? []).slice(0, 4).join('+')].filter((part) => part !== undefined && part !== '').join(':');
+  return { prompt, expected, got, response: answer.response, mode: answer.mode, layer, verdict: correct ? 'correct' : 'wrong' };
 }

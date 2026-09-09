@@ -15,7 +15,8 @@
 
 import { matchArgs, type DSLValue } from '../technical/dsl';
 import { natFromDecimal, natToDecimal } from './peano';
-import { digitsFromDecimal } from './digits';
+import { parseStory } from './story';
+import { digitsFromDecimal, digitsToDecimal } from './digits';
 import { intToDecimal } from './int';
 import { parseLogicDrill } from './logic';
 import { tLit, tSym, type Term } from './terms';
@@ -221,6 +222,16 @@ export function parseRewritePrompt(prompt: string): ParsedRewritePrompt | null {
     if (term === null) continue;
     return { drill, term, fuel: FAMILY_FUEL[drill] ?? RULE_DEFAULT_FUEL };
   }
+  // THE STORY-STATE ENGINE (TASKS #64) — a word problem read as a state:
+  // quantities with nouns, owners and roles (gained, lost, a later state, a
+  // rate), a question kind (total, residual, start, change, difference,
+  // share), and a derivation only when every quantity is accounted for.
+  // It covers subtraction, division and equal groups, so it runs BEFORE the
+  // two-number parser below; both decline far more often than they answer.
+  const story = parseStory(text);
+  if (story !== null) {
+    return { drill: `story-${story.shape.replace(/[^a-z]+/g, '-')}`, term: story.term, fuel: RULE_DEFAULT_FUEL };
+  }
   // R9 stretch: a story no template anchors is still a story — the general
   // parser classifies it by its OPERATION CUES (each/every/per → mul;
   // two same-subject quantities joined by "and" → add) and lifts the two
@@ -413,6 +424,12 @@ export function decodeNormalForm(term: Term): string | null {
     if (natural !== null) return String(natural);
     const integer = intToDecimal(term);
     if (integer !== null) return String(integer);
+    // The DIGITS deck's normal form is a digit list (least-significant
+    // first). Until this branch existed the whole deck was unreachable from
+    // a spoken answer — every column-wise derivation decoded to null and
+    // became an ASK (TASKS #69).
+    const digits = digitsToDecimal(term);
+    if (digits !== null) return String(digits);
   }
   return null;
 }

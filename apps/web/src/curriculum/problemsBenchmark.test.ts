@@ -84,7 +84,7 @@ describe('word problems (src/curriculum/problems.ts)', () => {
 
     const bySource: Record<string, { correct: number; wrong: number; abstained: number }> = {};
     const needBuckets: Record<string, { seen: number; correct: number; wrong: number; abstained: number }> = {};
-    const wrongs: Array<{ prompt: string; expected: string; got: number | null; reply: string }> = [];
+    const wrongs: Array<{ prompt: string; expected: string; got: number | null; reply: string; layer: string }> = [];
     const abstained: Array<{ prompt: string; expected: string; reply: string; needs: string[] }> = [];
     const rights: Array<{ prompt: string; expected: string; reply: string }> = [];
     const started = Date.now();
@@ -99,7 +99,7 @@ describe('word problems (src/curriculum/problems.ts)', () => {
         bucket[check.verdict] += 1;
       }
       const reply = check.response.length === 0 ? '(declined)' : check.response;
-      if (check.verdict === 'wrong') wrongs.push({ prompt: problemPrompt(row), expected: row.answer, got: check.got, reply });
+      if (check.verdict === 'wrong') wrongs.push({ prompt: problemPrompt(row), expected: row.answer, got: check.got, reply, layer: check.layer ?? check.mode });
       else if (check.verdict === 'abstained') abstained.push({ prompt: problemPrompt(row), expected: row.answer, reply, needs: needsOf(row) });
       else rights.push({ prompt: problemPrompt(row), expected: row.answer, reply });
     }
@@ -114,7 +114,7 @@ describe('word problems (src/curriculum/problems.ts)', () => {
         .sort((a, b) => b[1].seen - a[1].seen)
         .map(([need, b]) => `    ${need.padEnd(20)} ${String(b.seen).padStart(4)} seen · ${String(b.correct).padStart(3)} right · ${String(b.wrong).padStart(3)} wrong · ${String(b.abstained).padStart(3)} abstained`),
       `  every wrong answer (${wrongs.length}):`,
-      ...wrongs.map((w) => `    "${w.prompt}" → expected ${w.expected}, got ${w.got} — ${w.reply.slice(0, 90)}`),
+      ...wrongs.map((w) => `    "${w.prompt}" → expected ${w.expected}, got ${w.got} — ${w.reply.slice(0, 70)} [${w.layer}]`),
       `  ${Math.min(SHOW, rights.length)} of the right answers:`,
       ...rights.slice(0, SHOW).map((r) => `    "${r.prompt}" → ${r.reply.slice(0, 70)}`),
       `  ${Math.min(SHOW, abstained.length)} of the abstentions:`,

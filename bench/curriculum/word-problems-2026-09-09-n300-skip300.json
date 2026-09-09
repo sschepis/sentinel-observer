@@ -1,22 +1,22 @@
 {
-  "at": "2026-09-09T10:54:55.352Z",
+  "at": "2026-09-09T17:37:52.952Z",
   "sample": 300,
   "rows": 3004,
   "totals": {
-    "correct": 10,
+    "correct": 40,
     "wrong": 0,
-    "abstained": 290
+    "abstained": 260
   },
   "bySource": {
     "asdiv": {
-      "correct": 9,
+      "correct": 30,
       "wrong": 0,
-      "abstained": 216
+      "abstained": 195
     },
     "svamp": {
-      "correct": 1,
+      "correct": 10,
       "wrong": 0,
-      "abstained": 74
+      "abstained": 65
     }
   },
   "needBuckets": {
@@ -28,39 +28,39 @@
     },
     "units": {
       "seen": 38,
-      "correct": 0,
+      "correct": 3,
       "wrong": 0,
-      "abstained": 38
+      "abstained": 35
     },
     "3+ quantities": {
       "seen": 125,
-      "correct": 0,
+      "correct": 8,
       "wrong": 0,
-      "abstained": 125
+      "abstained": 117
     },
     "rate (each/per)": {
       "seen": 90,
-      "correct": 6,
+      "correct": 10,
       "wrong": 0,
-      "abstained": 84
+      "abstained": 80
     },
     "total": {
       "seen": 61,
-      "correct": 6,
+      "correct": 11,
       "wrong": 0,
-      "abstained": 55
+      "abstained": 50
     },
     "decrease/residual": {
       "seen": 128,
-      "correct": 1,
+      "correct": 16,
       "wrong": 0,
-      "abstained": 127
+      "abstained": 112
     },
     "≤1 number stated": {
       "seen": 53,
-      "correct": 0,
+      "correct": 7,
       "wrong": 0,
-      "abstained": 53
+      "abstained": 46
     },
     "division/sharing": {
       "seen": 10,
@@ -70,21 +70,21 @@
     },
     "3+ sentences": {
       "seen": 56,
-      "correct": 0,
+      "correct": 3,
       "wrong": 0,
-      "abstained": 56
+      "abstained": 53
     },
     "comparison": {
       "seen": 15,
-      "correct": 0,
+      "correct": 1,
       "wrong": 0,
-      "abstained": 15
+      "abstained": 14
     },
     "other": {
       "seen": 17,
-      "correct": 1,
+      "correct": 2,
       "wrong": 0,
-      "abstained": 16
+      "abstained": 15
     },
     "fraction/decimal": {
       "seen": 11,
@@ -143,7 +143,7 @@
     {
       "prompt": "There were 44 laptops in the shop, and Mike divided them equally into 5 rows. How many are left?",
       "expected": "4 (laptops)",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "reply": "I do not know what \"rows\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "division/sharing"
@@ -187,7 +187,7 @@
     {
       "prompt": "She had 35 mistletoe stickers and wanted to place them equally in 8 cards. How many mistletoe stickers will she have left?",
       "expected": "3 (mistletoe stickers)",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "reply": "I do not know what \"stickers\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "division/sharing"
@@ -258,14 +258,6 @@
       "reply": "I do not know what \"species\" means. Could you teach me?",
       "needs": [
         "3+ quantities"
-      ]
-    },
-    {
-      "prompt": "Winter is almost here and most animals are migrating to warmer countries. There are 67 bird families living near the mountain. If 32 bird families flew away for winter, how many bird families were left near the mountain?",
-      "expected": "35 (bird families)",
-      "reply": "I do not know what \"mountain\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual"
       ]
     },
     {
@@ -416,14 +408,6 @@
       ]
     },
     {
-      "prompt": "There were 8 people on the bus. At the next stop 12 more people got on the bus and 3 people got off. How many people are there on the bus now?",
-      "expected": "17",
-      "reply": "I do not know what \"bus\" means. Could you teach me?",
-      "needs": [
-        "3+ quantities"
-      ]
-    },
-    {
       "prompt": "A chef had 40 apples and 54 peaches. After making some pies, he had 39 apples left. How many apples did he use?",
       "expected": "1",
       "reply": "I do not know what \"apples\" means. Could you teach me?",
@@ -433,18 +417,9 @@
       ]
     },
     {
-      "prompt": "Daniel had some noodles. He gave 12 noodles to William. Now Daniel only has 54 noodles. How many noodles did Daniel have to begin with?",
-      "expected": "66 (noodles)",
-      "reply": "I do not know what \"begin\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual",
-        "3+ sentences"
-      ]
-    },
-    {
       "prompt": "Cindy's mom baked 1215 cookies. Paul's dad baked 1112 cookies. They both brought them to school for a party. How many cookies did they have altogether?",
       "expected": "2327 (cookies)",
-      "reply": "I do not know what \"altogether\" means. Could you teach me?",
+      "reply": "I do not know what \"cookies\" means. Could you teach me?",
       "needs": [
         "total",
         "3+ sentences"
@@ -514,14 +489,6 @@
       ]
     },
     {
-      "prompt": "It's getting dark so he decided to take one last stop. He took a cab to the Metropolitan Museum of Art. If he saw 465 pieces of Asian art and 527 pieces of Egyptian art, how many pieces of art did he see?",
-      "expected": "992 (pieces of art)",
-      "reply": "I do not know what \"art\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual"
-      ]
-    },
-    {
       "prompt": "The taxi charges in a city comprise of a fixed charge together with the charge for the distance covered. For a journey of 10 km, the charge paid is $75 and for a journey of 15 km, the charge paid is $110. What will a person have to pay for traveling a distance of 25 km?",
       "expected": "180 (dollars)",
       "reply": "I do not know what \"distance\" means. Could you teach me?",
@@ -533,7 +500,7 @@
     {
       "prompt": "Robin is making bead necklaces. She wants to use 31 beads to make 4 necklaces. If she wants each necklace to have the same number of beads, how many beads will she have left over?",
       "expected": "3 (beads)",
-      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "reply": "I do not know what \"beads\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "rate (each/per)"
@@ -557,14 +524,6 @@
       ]
     },
     {
-      "prompt": "A pet supply store has 600 bags of dog food and 327 bags of cat food. How many more bags of dog food are there than cat food?",
-      "expected": "273 (bags)",
-      "reply": "I do not know what \"food\" means. Could you teach me?",
-      "needs": [
-        "decrease/residual"
-      ]
-    },
-    {
       "prompt": "A sofa and a love seat together costs $444. The sofa costs double the love seat. How much do they each cost?",
       "expected": "148 (dollars); 296 (dollars)",
       "reply": "I do not know what \"cost\" means. Could you teach me?",
@@ -577,7 +536,7 @@
     {
       "prompt": "Suzanne read the first 15 pages of her book on Monday. She read 16 more pages than that on Tuesday. Then there were 18 pages left. How many pages are in Suzanne's book altogether?",
       "expected": "64 (pages)",
-      "reply": "I do not know what \"altogether\" means. Could you teach me?",
+      "reply": "I do not know what \"suzanne's\" means. Could you teach me?",
       "needs": [
         "decrease/residual",
         "total",
@@ -613,14 +572,6 @@
       ]
     },
     {
-      "prompt": "Luke played 177 rounds of a trivia game. If he gained 46 points in each round How many points did he score in the game?",
-      "expected": "8142",
-      "reply": "I do not know what \"score\" means. Could you teach me?",
-      "needs": [
-        "rate (each/per)"
-      ]
-    },
-    {
       "prompt": "In Haley's class, 5 are boys who love to play marbles. If Haley has 35 marbles, how many will each of the boys receive?",
       "expected": "7 (marbles)",
       "reply": "I do not know what \"receive\" means. Could you teach me?",
@@ -638,6 +589,61 @@
         "total",
         "3+ quantities"
       ]
+    },
+    {
+      "prompt": "The woods behind Jerry's house were 6 miles wide and 3 miles long. What is the area of the woods?",
+      "expected": "18 (square miles)",
+      "reply": "I do not know what \"woods\" means. Could you teach me?",
+      "needs": [
+        "other"
+      ]
+    },
+    {
+      "prompt": "Roger collected 42 pennies, 36 nickels and 15 dimes. He donated some of his coins and had 27 coins left. How many coins did Roger donate?",
+      "expected": "66 (coins)",
+      "reply": "I do not know what \"donate\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Maria had twenty-five pieces of gum. Tommy gave her sixteen more pieces. Luis gave her twenty more pieces. How many pieces of gum does Maria have now?",
+      "expected": "61 (pieces of gum)",
+      "reply": "I do not know what \"maria\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "≤1 number stated",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "There are thirty-eight dogwood trees currently in the park. Park workers will plant more dogwood trees today. When the workers are finished there will be fifty-six dogwood trees in the park. How many dogwood trees did the workers plant today ?",
+      "expected": "18 (dogwood trees)",
+      "reply": "I do not know what \"plant\" means. Could you teach me?",
+      "needs": [
+        "≤1 number stated",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Andrew found some empty bins to put cans into for recycling. He put 2 empty cans in the first bin, 4 empty cans in the second bin, 7 empty cans in the third bin, 11 empty cans in the fourth bin, and 16 empty cans in the fifth bin. If this pattern continues, how many empty cans will Andrew put in the sixth bin?",
+      "expected": "22 (empty cans)",
+      "reply": "I do not know what \"bin\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Zachary did 19 push-ups in gym class today. David did 39 more push-ups than Zachary. John did 13 push-ups less than david. How many push-ups did David do?",
+      "expected": "58",
+      "reply": "I do not know what \"david\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "comparison",
+        "3+ quantities",
+        "3+ sentences"
+      ]
     }
   ],
   "rightSample": [
@@ -652,9 +658,39 @@
       "reply": "The answer is 16."
     },
     {
+      "prompt": "Winter is almost here and most animals are migrating to warmer countries. There are 67 bird families living near the mountain. If 32 bird families flew away for winter, how many bird families were left near the mountain?",
+      "expected": "35 (bird families)",
+      "reply": "The answer is 35."
+    },
+    {
       "prompt": "Ben was also given 7 trays of eggs to examine. If each tray has 10 eggs, how many eggs did Ben examine in total?",
       "expected": "70 (eggs)",
       "reply": "The answer is 70."
+    },
+    {
+      "prompt": "There were 8 people on the bus. At the next stop 12 more people got on the bus and 3 people got off. How many people are there on the bus now?",
+      "expected": "17",
+      "reply": "The answer is 17."
+    },
+    {
+      "prompt": "Daniel had some noodles. He gave 12 noodles to William. Now Daniel only has 54 noodles. How many noodles did Daniel have to begin with?",
+      "expected": "66 (noodles)",
+      "reply": "The answer is 66."
+    },
+    {
+      "prompt": "It's getting dark so he decided to take one last stop. He took a cab to the Metropolitan Museum of Art. If he saw 465 pieces of Asian art and 527 pieces of Egyptian art, how many pieces of art did he see?",
+      "expected": "992 (pieces of art)",
+      "reply": "The answer is 992."
+    },
+    {
+      "prompt": "A pet supply store has 600 bags of dog food and 327 bags of cat food. How many more bags of dog food are there than cat food?",
+      "expected": "273 (bags)",
+      "reply": "The answer is 273."
+    },
+    {
+      "prompt": "Luke played 177 rounds of a trivia game. If he gained 46 points in each round How many points did he score in the game?",
+      "expected": "8142",
+      "reply": "The answer is 8142."
     },
     {
       "prompt": "An architect was building a hotel downtown. He built it 3 stories tall with 8 rooms on each story. How many rooms does the hotel have totaled?",
@@ -662,9 +698,69 @@
       "reply": "The answer is 24."
     },
     {
+      "prompt": "Albert is inviting 34 friends to a party. He has 1802 cookies. How many cookies will each friend get?",
+      "expected": "53 (cookies)",
+      "reply": "The answer is 53."
+    },
+    {
       "prompt": "Garrett went shopping for snack supplies and bought 6 oatmeal raisin granola bars and 8 peanut granola bars. How many granola bars did he buy in all?",
       "expected": "14 (granola bars)",
       "reply": "The answer is 14."
+    },
+    {
+      "prompt": "Randy has 97 blocks. He uses some blocks to build a tower. If there are 72 blocks left How many blocks did he use to build the tower?",
+      "expected": "25",
+      "reply": "The answer is 25."
+    },
+    {
+      "prompt": "Roden went to a pet shop. He bought 15 gold fish and 7 blue fish. How many fish did he buy?",
+      "expected": "22 (fish)",
+      "reply": "The answer is 22."
+    },
+    {
+      "prompt": "Jesse's room is 12 feet long and 11 feet wide. How much longer is her room than it is wide?",
+      "expected": "1",
+      "reply": "The answer is 1."
+    },
+    {
+      "prompt": "There were eight red roses and two white roses in the vase. Melanie cut some more roses from her flower garden. There are now fourteen red roses in the vase. How many red roses did she cut ?",
+      "expected": "6 (red roses)",
+      "reply": "The answer is 6."
+    },
+    {
+      "prompt": "The Vance family walked over to the post office. They bought 2 rooster stamps and 2 daffodil stamps. How many stamps did they buy in all?",
+      "expected": "4 (stamps)",
+      "reply": "The answer is 4."
+    },
+    {
+      "prompt": "While playing a video game Ned lost thirteen lives. Now he has seventy lives. How many lives did Ned have at the start?",
+      "expected": "83 (lives)",
+      "reply": "The answer is 83."
+    },
+    {
+      "prompt": "Gino has 15 brown bears, 24 white bears, and 27 black bears. How many bears does Gino have?",
+      "expected": "66 (bears)",
+      "reply": "The answer is 66."
+    },
+    {
+      "prompt": "Mike got twenty-eight GB of space on his disk drive to backup his files. If his files would take up twenty-six GB, how many GB would he have left?",
+      "expected": "2 (GB)",
+      "reply": "The answer is 2."
+    },
+    {
+      "prompt": "Frank got fifteen pounds of mushroom for family barbecue. If they ate eight pounds, how many pounds were left?",
+      "expected": "7 (pounds)",
+      "reply": "The answer is 7."
+    },
+    {
+      "prompt": "Mike has 64 action figures he wants to display. If each shelf in his room can hold 8 figures, how many shelves does he need?",
+      "expected": "8 (shelves)",
+      "reply": "The answer is 8."
+    },
+    {
+      "prompt": "At the state fair Paul bought eleven tickets. If he spent three tickets on the Ferris wheel. How many tickets did he have left?",
+      "expected": "8 (tickets)",
+      "reply": "The answer is 8."
     },
     {
       "prompt": "Mark has 13 trees in his backyard. If he plants 12 more, how many trees will he have?",
@@ -682,14 +778,74 @@
       "reply": "The answer is 12."
     },
     {
+      "prompt": "Isabel had some candy. She gave her friend twenty-seven pieces and had sixty-one left. How many pieces did she have to start with?",
+      "expected": "88 (pieces)",
+      "reply": "The answer is 88."
+    },
+    {
+      "prompt": "Randy has 78 blocks. He uses 19 blocks to build a tower. How many blocks are left?",
+      "expected": "59 (blocks)",
+      "reply": "The answer is 59."
+    },
+    {
       "prompt": "In Haley's class 11 are boys who love to play marbles. If Haley gives 9 marbles to each boy How many marbles did she have?",
       "expected": "99",
       "reply": "The answer is 99."
     },
     {
+      "prompt": "Dan has $ 7. He bought a candy bar for $ 2 and a chocolate for $ 3. How much money is left?",
+      "expected": "2",
+      "reply": "The answer is 2."
+    },
+    {
       "prompt": "To carry heavy construction materials, they employed 413 red ants and 487 black ants. How many ants did they employ in total?",
       "expected": "900 (ants)",
       "reply": "The answer is 900."
+    },
+    {
+      "prompt": "Sarah bought 8 new shirts for school. If she already had 9 shirts, how many did she own total?",
+      "expected": "17 (new shirts)",
+      "reply": "The answer is 17."
+    },
+    {
+      "prompt": "Molly swam 45 meters on Saturday. She swam 28 meters on Sunday. The pool is 25 meters long. How many meters did Molly swim in all?",
+      "expected": "73 (meters)",
+      "reply": "The answer is 73."
+    },
+    {
+      "prompt": "Luke played a trivia game and scored 154 points. If he gained the 11 points in each round How many rounds did he play?",
+      "expected": "14",
+      "reply": "The answer is 14."
+    },
+    {
+      "prompt": "Tiffany was playing a video game and had 43 lives. In a hard part of the game she lost 14 lives. If she got 27 more lives in the next level, how many lives would she have?",
+      "expected": "56 (lives)",
+      "reply": "The answer is 56."
+    },
+    {
+      "prompt": "A grocery store had 57 bottles of regular soda, 26 bottles of diet soda and 27 bottles of lite soda. How many bottles did they have total?",
+      "expected": "110",
+      "reply": "The answer is 110."
+    },
+    {
+      "prompt": "Jovana filled her bucket with 5 pounds of shells. If a friend comes to add 15 pounds of shells, and another friend comes to add 17 pounds of shells, how many pounds does she have altogether?",
+      "expected": "37 (pounds)",
+      "reply": "The answer is 37."
+    },
+    {
+      "prompt": "A store has forty-nine shirts. After selling some there were twenty-eight left. How many did they sell?",
+      "expected": "21 (shirts)",
+      "reply": "The answer is 21."
+    },
+    {
+      "prompt": "For Gwen's birthday she received 7 dollars. She spent some money and has 5 dollars left with her. How much money did she spend?",
+      "expected": "2",
+      "reply": "The answer is 2."
+    },
+    {
+      "prompt": "An industrial machine can make 6 shirts a minute. It worked for 5 minutes yesterday and for 12 minutes today. How many shirts did machine make today?",
+      "expected": "72",
+      "reply": "The answer is 72."
     }
   ]
 }
