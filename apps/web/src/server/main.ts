@@ -150,8 +150,10 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log(
     `[observer-server] booted — ${state.learned}/${state.total} words · competency ${(state.competency * 100).toFixed(1)}% · ` +
-      `restored ${state.restored} traces${state.freshTrained ? ' (fresh core trained)' : ''} · data ${DATA_DIR}` +
-      (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : '')
+      `restored ${state.restored} traces${state.freshTrained ? ' (fresh core trained)' : ''} · data ${DATA_DIR} · store ${STORE}` +
+      ` · readout ${process.env.OBSERVER_SMF_WEIGHT !== undefined && Number(process.env.OBSERVER_SMF_WEIGHT) === 0 ? 'smf-off (index-only)' : 'control (SMF term on)'}` +
+      (GATES_FILE.length > 0 ? ' · calibrated gates' : ' · hand-constant gates') +
+      (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : ' · no corpus')
   );
 
   const http = startHttpServer(server, PORT);
