@@ -79,7 +79,11 @@ export type RemoteEvent =
   | { kind: 'signal'; signal: ObserverSignal }
   | { kind: 'snapshot'; snapshot: { at: number; traces: number; deck: string; bytes: number } }
   | { kind: 'lifecycle'; at: number; event: string; detail: string }
-  | { kind: 'learning'; at: number; events: Array<{ kind: string; text: string; label?: string }> }
+  | {
+      kind: 'learning';
+      at: number;
+      events: Array<{ id?: number; at?: number; kind: string; text: string; label?: string; detail?: string | null; score?: number | null }>;
+    }
   | { kind: 'state'; status: string };
 
 export class RemoteClient {

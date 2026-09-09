@@ -4,6 +4,8 @@ import type { RemoteLearningEvent } from '../server/useRemoteObserver';
 import type { VoiceSettings } from '../speech/voiceSettings';
 import { ELEVENLABS_DEFAULT_VOICE_ID } from '../speech/voiceSettings';
 import { ChaperoneProgress } from './ChaperoneProgress';
+import { EVENT_STYLES, type LearningEventKind } from '../learning/events';
+import { colorizeLogLine } from '../learning/logColors';
 
 /**
  * The remote-mode panels: server status, its live signal feed, and the
@@ -21,6 +23,43 @@ export interface ServerPanelProps {
   /** The server's training loop stats (the ONLY trainer). */
   training: RemoteServerState['training'];
   trainingRunning: boolean;
+}
+
+/**
+ * ONE LINE OF THE TRAINING FEED (docs/TASKS.md #80).
+ *
+ * The gutter is the event's kind — a coloured dot and its label, from the
+ * palette the rest of the observer UI already uses (`learning/events.ts`
+ * EVENT_STYLES, which had been written and never wired to anything). The
+ * text is coloured part by part by what it says: emerald for something
+ * gained, rose for something wrong, amber for a decline, fuchsia for the
+ * entropy readout, and a dim grey for any count of zero — "0 wrong" is the
+ * good news and must not read like a failure. An error event tints its whole
+ * row so it cannot be missed in a fast-moving feed.
+ */
+function LearningLine({ event }: { event: RemoteLearningEvent }) {
+  const style = EVENT_STYLES[event.kind as LearningEventKind] ?? EVENT_STYLES.system;
+  const isError = event.kind === 'error';
+  const segments = colorizeLogLine(event.text);
+  return (
+    <li className={`flex items-baseline gap-2 rounded px-1 text-[11px] leading-relaxed ${isError ? 'bg-rose-950/30' : ''}`}>
+      <span className="shrink-0 tabular-nums text-slate-700">{new Date(event.at).toLocaleTimeString()}</span>
+      <span className={`mt-[0.35rem] h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} aria-hidden />
+      <span className={`w-[7.5rem] shrink-0 truncate ${style.tone}`} title={event.label ?? event.kind}>
+        {event.label ?? style.label}
+      </span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-slate-400">
+        {segments.length === 0
+          ? event.text
+          : segments.map((segment, index) => (
+              <span key={index} className={`${segment.tone ?? ''} ${segment.emphasis === true ? 'font-semibold' : ''}`}>
+                {segment.text}
+              </span>
+            ))}
+        {typeof event.detail === 'string' && event.detail.length > 0 && <span className="block pl-1 text-slate-600">{event.detail}</span>}
+      </span>
+    </li>
+  );
 }
 
 function ServerPanel({ client, status, error, learningEvents, refresh, training, trainingRunning }: ServerPanelProps) {
@@ -123,13 +162,9 @@ function ServerPanel({ client, status, error, learningEvents, refresh, training,
               : 'The training loop is stopped. Start it to see lessons, reviews, and drills here.'}
           </p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5 font-mono">
             {learningEvents.map((event, index) => (
-              <li key={`${event.at}-${index}`} className="text-xs text-slate-500">
-                <span className="text-slate-600">{new Date(event.at).toLocaleTimeString()} </span>
-                <span className="text-slate-400">{event.label ?? event.kind}</span>
-                <span className="text-slate-600"> · {event.text}</span>
-              </li>
+              <LearningLine key={`${event.at}-${index}-${event.text.length}`} event={event} />
             ))}
           </ul>
         )}

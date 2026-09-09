@@ -5,10 +5,18 @@ import { RemoteClient, type RemoteServerState } from './client';
 /** A bounded live feed of the server's classroom events (what the training
  *  loop is doing RIGHT NOW — the Training tab's heartbeat). */
 export interface RemoteLearningEvent {
+  /** WHEN THIS EVENT HAPPENED — not when its batch arrived. The batch time
+   *  used to be stamped onto every retained line on every arrival, so all 80
+   *  rows showed the same clock reading and the feed looked like it had all
+   *  happened at once. */
   at: number;
   kind: string;
   text: string;
   label?: string;
+  /** Second line, when the event carries one (a definition's example). */
+  detail?: string | null;
+  /** 0..1 when the event carries a grade. */
+  score?: number | null;
 }
 
 /**
@@ -69,9 +77,19 @@ export function useRemoteObserver(url: string): RemoteObserverState {
           return;
         }
         if (event.kind === 'learning') {
-          setLearningEvents((prev) =>
-            [...event.events, ...prev].slice(0, 80).map((item) => ({ at: event.at, kind: item.kind, text: item.text, label: item.label }))
-          );
+          // Map the ARRIVING events only, and keep each one's own timestamp
+          // (the batch time is the fallback for a server that does not send
+          // one). Re-mapping the retained array is what rewrote every row's
+          // clock on every batch.
+          const arriving: RemoteLearningEvent[] = event.events.map((item) => ({
+            at: item.at ?? event.at,
+            kind: item.kind,
+            text: item.text,
+            label: item.label,
+            detail: item.detail ?? null,
+            score: item.score ?? null
+          }));
+          setLearningEvents((prev) => [...arriving, ...prev].slice(0, 80));
           return;
         }
         if (event.kind === 'signal') {

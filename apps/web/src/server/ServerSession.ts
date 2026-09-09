@@ -177,8 +177,9 @@ export class ServerSession {
       researchTopics: options.researchTopics ?? false,
       store: options.store ?? 'json',
       corpusDir: options.corpusDir ?? '',
-      curriculumEvery: options.curriculumEvery,
-      curriculumBudget: options.curriculumBudget
+      // 0 means "unset": the measured defaults in trainingLoop.ts stand.
+      curriculumEvery: options.curriculumEvery ?? 0,
+      curriculumBudget: options.curriculumBudget ?? 0
     };
     this.store =
       this.options.store === 'sqlite'
@@ -268,8 +269,8 @@ export class ServerSession {
         // `--research-topics` was inert until training was toggled via the API.
         researchTopics: this.options.researchTopics ?? false,
         corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
-        curriculumEvery: this.options.curriculumEvery,
-        curriculumBudget: this.options.curriculumBudget,
+        curriculumEvery: this.options.curriculumEvery > 0 ? this.options.curriculumEvery : undefined,
+        curriculumBudget: this.options.curriculumBudget > 0 ? this.options.curriculumBudget : undefined,
         onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
         onError: (message) =>
           this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
@@ -322,8 +323,8 @@ export class ServerSession {
           cadenceMs: this.options.trainCadenceMs ?? 400,
           researchTopics: this.options.researchTopics ?? false,
           corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
-          curriculumEvery: this.options.curriculumEvery,
-          curriculumBudget: this.options.curriculumBudget,
+          curriculumEvery: this.options.curriculumEvery > 0 ? this.options.curriculumEvery : undefined,
+          curriculumBudget: this.options.curriculumBudget > 0 ? this.options.curriculumBudget : undefined,
           onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
           onError: (message) =>
             this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
