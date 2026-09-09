@@ -14,3 +14,6 @@ apps/web/public/bootstrap.json.bak-*
 
 # Server data directory (the persisted observer — never versioned)
 apps/web/data/
+
+# Resumable bench checkpoints (heldOutRecoveryBenchmark) — a bootstrap record, never versioned
+bench/curriculum/.recovery-state/

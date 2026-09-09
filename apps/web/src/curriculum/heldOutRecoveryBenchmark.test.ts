@@ -22,15 +22,23 @@
  *
  *   cd apps/web && npx jest -c jest.bench.config.cjs --testPathPatterns heldOutRecovery
  *   RECOVERY_STEPS=10 RECOVERY_BUDGET=1000 RECOVERY_PROBES=300 RECOVERY_TAUGHT=2000 …
+ *
+ * RESUMABLE: with RECOVERY_STEPS_PER_RUN=N the bench checkpoints after every
+ * step (the observer's bootstrap record + the step series, under
+ * bench/curriculum/.recovery-state/, gitignored) and stops after N steps; the
+ * next run with the same config picks up where it left off, and the final
+ * artifact is written when RECOVERY_STEPS is reached or the corpus is
+ * exhausted. RECOVERY_FRESH=1 discards a checkpoint.
  */
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mulberry32 } from '@sschepis/sentient-core';
 import { ObserverSession } from '../observer/engine';
 import { OBSERVER_OPTIONS } from '../observer/options';
 import { TeacherAgent } from '../teacher/TeacherAgent';
 import { ACTIVE_DECK } from '../teacher/decks';
+import type { BootstrapRecord } from '../teacher/bootstrap';
 import { CONCEPTNET_RELATIONS, parseConceptNetJsonl, type ConceptNetRow } from './conceptnet';
 import { CurriculumFeeder, discoverSources } from './registry';
 import { readYesNo, yesNoQuestion, type YesNoReading } from './questions';
@@ -42,6 +50,31 @@ const STEPS = Number(process.env.RECOVERY_STEPS ?? '10');
 const BUDGET = Number(process.env.RECOVERY_BUDGET ?? '1000');
 const PROBES = Number(process.env.RECOVERY_PROBES ?? '300');
 const TAUGHT = Number(process.env.RECOVERY_TAUGHT ?? '2000');
+const STEPS_PER_RUN = Number(process.env.RECOVERY_STEPS_PER_RUN ?? '0'); // 0 = all in one run
+const FRESH = process.env.RECOVERY_FRESH === '1';
+const STATE_DIR = resolve(process.cwd(), '..', '..', 'bench', 'curriculum', '.recovery-state');
+const STATE_RECORD = resolve(STATE_DIR, 'record.json');
+const STATE_SERIES = resolve(STATE_DIR, 'series.json');
+
+interface Checkpoint {
+  config: { steps: number; budget: number; probes: number; taught: number };
+  probes: Probe[];
+  series: StepRecord[];
+  /** Set when the artifact was written: the checkpoint is spent. */
+  done?: boolean;
+}
+
+/** Remove the checkpoint when the filesystem lets us; otherwise mark it spent. */
+function discardCheckpoint(): void {
+  try {
+    rmSync(STATE_DIR, { recursive: true, force: true });
+  } catch {
+    if (existsSync(STATE_SERIES)) {
+      const spent = JSON.parse(readFileSync(STATE_SERIES, 'utf8')) as Checkpoint;
+      writeFileSync(STATE_SERIES, JSON.stringify({ ...spent, done: true }));
+    }
+  }
+}
 
 interface Probe {
   row: ConceptNetRow;
@@ -113,9 +146,34 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     const session = new ObserverSession(OBSERVER_OPTIONS, 100);
     await session.initialize();
     const teacher = new TeacherAgent(session, ACTIVE_DECK, null, 500, 4, 7);
-    for (const entry of ACTIVE_DECK.slice(0, TAUGHT)) teacher.teach(entry.word);
+    // RESUME: a checkpoint with the same config restores the observer (its
+    // ingested edges, grown words and feeder cursor ride the record) and the
+    // series so far; otherwise start fresh.
+    if (FRESH && existsSync(STATE_DIR)) discardCheckpoint();
+    let checkpoint: Checkpoint | null = null;
+    if (existsSync(STATE_RECORD) && existsSync(STATE_SERIES)) {
+      const saved = JSON.parse(readFileSync(STATE_SERIES, 'utf8')) as Checkpoint;
+      if (saved.done === true || FRESH) {
+        // spent (or told to start over): fall through to a fresh start
+      } else if (saved.config.steps === STEPS && saved.config.budget === BUDGET && saved.config.probes === PROBES && saved.config.taught === TAUGHT) {
+        const restored = teacher.importBootstrap(JSON.parse(readFileSync(STATE_RECORD, 'utf8')) as BootstrapRecord);
+        checkpoint = saved;
+        console.log(`resumed from checkpoint: ${saved.series.length - 1} step(s) done, ${restored.restored} traces restored`);
+      } else {
+        console.log('checkpoint config differs — starting fresh');
+      }
+    }
+    if (checkpoint === null) {
+      for (const entry of ACTIVE_DECK.slice(0, TAUGHT)) teacher.teach(entry.word);
+    }
     const feeder = new CurriculumFeeder(teacher, sources);
     const source = sources[0];
+    const save = (series: StepRecord[], probes: Probe[]): void => {
+      mkdirSync(STATE_DIR, { recursive: true });
+      writeFileSync(STATE_RECORD, JSON.stringify(teacher.exportBootstrap()));
+      const state: Checkpoint = { config: { steps: STEPS, budget: BUDGET, probes: PROBES, taught: TAUGHT }, probes, series };
+      writeFileSync(STATE_SERIES, JSON.stringify(state));
+    };
 
     // The fixed concept set: the deck's single words (never the grown ones,
     // so vocabulary growth cannot move the mean by adding ignorance).
@@ -140,7 +198,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       const j = Math.floor(rng() * (i + 1));
       [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
     }
-    const probes = candidates.slice(0, PROBES);
+    const probes = checkpoint !== null ? checkpoint.probes : candidates.slice(0, PROBES);
     console.log(`held-out rows: ${heldOut.length} · askable: ${candidates.length} · probing ${probes.length} · feeding ${STEPS} × ${BUDGET} rows of ${feeder.remaining(source)}`);
 
     const store = teacher.soundnessStore();
@@ -193,18 +251,41 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       };
     };
 
-    const series: StepRecord[] = [];
-    let record = measure(0, 0, 0, 0, null);
-    series.push(record);
-    console.log(`  step 0: entropy mean ${record.entropyMean.toFixed(3)} · recovery ${(record.recoveryRate * 100).toFixed(1)}% (${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked) · ${record.ms} ms`);
-    for (let step = 1; step <= STEPS; step += 1) {
+    const series: StepRecord[] = checkpoint !== null ? checkpoint.series : [];
+    let record: StepRecord;
+    if (series.length === 0) {
+      record = measure(0, 0, 0, 0, null);
+      series.push(record);
+      console.log(`  step 0: entropy mean ${record.entropyMean.toFixed(3)} · recovery ${(record.recoveryRate * 100).toFixed(1)}% (${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked) · ${record.ms} ms`);
+      if (STEPS_PER_RUN > 0) save(series, probes);
+    } else {
+      record = series[series.length - 1];
+    }
+    let exhausted = false;
+    let ranThisRun = 0;
+    for (let step = series.length; step <= STEPS; step += 1) {
+      if (STEPS_PER_RUN > 0 && ranThisRun >= STEPS_PER_RUN) {
+        console.log(`  checkpointed after step ${step - 1} of ${STEPS}; run again to continue`);
+        session.dispose();
+        return;
+      }
       const fed = feeder.feed(source, BUDGET);
       record = measure(step, fed.rows, fed.accepted, fed.grown, record);
       series.push(record);
+      ranThisRun += 1;
       console.log(
         `  step ${step}: +${fed.accepted} edges (+${fed.grown} words) · entropy mean ${record.entropyMean.toFixed(3)} (Δ ${record.entropyDelta >= 0 ? '+' : ''}${record.entropyDelta.toFixed(4)}) · recovery ${(record.recoveryRate * 100).toFixed(1)}% (Δ ${record.recoveryDelta >= 0 ? '+' : ''}${(record.recoveryDelta * 100).toFixed(1)}) · ${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked · ${record.ms} ms`
       );
-      if (fed.remaining === 0) break;
+      if (STEPS_PER_RUN > 0) save(series, probes);
+      if (fed.remaining === 0) {
+        exhausted = true;
+        break;
+      }
+    }
+    if (STEPS_PER_RUN > 0 && !exhausted && series.length - 1 < STEPS) {
+      console.log(`  checkpointed after step ${series.length - 1} of ${STEPS}; run again to continue`);
+      session.dispose();
+      return;
     }
 
     // THE PREDICTION. A drop in entropy is a negative Δ; the principle says
@@ -231,7 +312,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     };
     const dir = resolve(process.cwd(), '..', '..', 'bench', 'curriculum');
     mkdirSync(dir, { recursive: true });
-    const out = resolve(dir, `held-out-recovery-${new Date().toISOString().slice(0, 10)}.json`);
+    const out = resolve(dir, `held-out-recovery-${new Date().toISOString().slice(0, 10)}-s${series.length - 1}x${BUDGET}-p${probes.length}.json`);
     writeFileSync(out, `${JSON.stringify(summary, null, 2)}\n`);
     console.log(
       `\n=== held-out recovery: ${(first.recoveryRate * 100).toFixed(1)}% → ${(last.recoveryRate * 100).toFixed(1)}% over ${steps.length} steps · entropy mean ${first.entropyMean.toFixed(3)} → ${last.entropyMean.toFixed(3)}\n` +
@@ -241,6 +322,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
         `    → ${out}`
     );
     expect(existsSync(out)).toBe(true);
+    if (existsSync(STATE_DIR)) discardCheckpoint();
     session.dispose();
   }, 60 * 60 * 1000);
 });
