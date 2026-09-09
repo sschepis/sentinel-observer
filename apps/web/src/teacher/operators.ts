@@ -146,6 +146,10 @@ const LEAD_DATE = /^(?:what day is it|what is todays date|what date is it|what d
 const LEAD_CAPABILITY = /^(?:can you|are you able to)\s+(.+)$/i;
 const LEAD_ATTRIBUTE = /^(?:what|whats)\s+(color|size|shape)\s+(?:is|are)\s+(?:the\s+|a\s+|an\s+)?(.+)$/i;
 const LEAD_WHERE = /^where\s+(?:is|are)\s+(?:the\s+|a\s+|an\s+)?(.+)$/i;
+/** The closed located-in form: "is a monkey in a jungle", "are fish found in water",
+ *  "does a cow live on a farm". Answered from located-in edges (direct or inherited
+ *  through is-a), never from the definition clause alone. */
+const LEAD_IS_IN = /^(?:(?:is|are)\s+((?:(?:the|a|an)\s+)?)([a-z]+)\s+(?:found\s+|located\s+|kept\s+)?(?:in|on|at|inside)|does\s+((?:(?:the|a|an)\s+)?)([a-z]+)\s+live\s+(?:in|on|at))\s+(?:(?:the|a|an)\s+)?([a-z]+)\??$/i;
 
 export const COLOR_WORDS = ['red', 'yellow', 'green', 'blue', 'white', 'black', 'orange', 'purple', 'pink', 'brown', 'gray', 'grey', 'golden', 'silver'];
 const SIZE_WORDS = ['large', 'small', 'big', 'little', 'huge', 'tiny', 'enormous', 'short', 'long', 'tall', 'wide', 'narrow'];
@@ -377,6 +381,7 @@ export interface QuestionForm {
     | 'causes'
     | 'opposite-of'
     | 'requires'
+    | 'located-in'
     // H4: the open factual forms — the evasion gate must recognize them too.
     | 'causes-open'
     | 'requires-open'
@@ -410,6 +415,8 @@ export function questionFormOf(text: string): QuestionForm | null {
   if (doesRequire !== null) return { kind: 'requires', subject: doesRequire[2], object: doesRequire[3] };
   const capable = cleaned.match(LEAD_CAPABLE);
   if (capable !== null) return { kind: 'capable-of', subject: capable[2], object: capable[3] };
+  const isIn = cleaned.match(LEAD_IS_IN);
+  if (isIn !== null) return { kind: 'located-in', subject: isIn[2] ?? isIn[4], object: isIn[5] };
   const property = cleaned.match(LEAD_PROPERTY);
   if (property !== null) return { kind: 'has-property', subject: property[2], object: property[3] };
   const opposite = cleaned.match(LEAD_OPPOSITE);
@@ -867,6 +874,43 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
       };
     }
   }
+  const isInLead = text.match(LEAD_IS_IN);
+  if (isInLead && ctx.relations !== undefined) {
+    const subject = isInLead[2] ?? isInLead[4];
+    const place = isInLead[5];
+    const relations = ctx.relations();
+    const negated = negationAnswer(ctx, subject, 'located-in', place, `${subject} is not in ${place}`);
+    if (negated !== null) {
+      return { kind: 'where', object: subject, place, answer: negated };
+    }
+    if (relations.length > 0) {
+      const direct = relations.some((r) => r.subject === subject && r.predicate === 'located-in' && r.object === place);
+      const via = direct ? null : inheritsEdge(relations, subject, 'located-in', place, denied);
+      if (direct || via !== null) {
+        const strength = ctx.edgeStrength?.(via?.via ?? subject, 'located-in', place) ?? 1;
+        return {
+          kind: 'where',
+          object: subject,
+          place,
+          answer: via !== null
+            ? `${inheritedPrefix(ctx, subject, via.via, 'located-in', place)} — ${subject} is ${/^[aeiou]/.test(via.via) ? 'an' : 'a'} ${via.via}, and ${via.via} is in ${place}.`
+            : `${yesPrefix(strength)}, ${subject} is in ${place}.`
+        };
+      }
+    }
+    const graded = holographicClosed(ctx, subject, 'located-in', place);
+    if (graded !== null) {
+      return {
+        kind: 'where',
+        object: subject,
+        place,
+        score: graded.score,
+        answer: graded.via !== null
+          ? `${hedgePhrase(graded.score)} — ${subject} is ${/^[aeiou]/.test(graded.via) ? 'an' : 'a'} ${graded.via}, and ${graded.via} is in ${place}.`
+          : `${hedgePhrase(graded.score)} — ${subject} is in ${place}.`
+      };
+    }
+  }
   const hasPropertyLead = text.match(LEAD_PROPERTY);
   if (hasPropertyLead && ctx.relations !== undefined) {
     const relations = ctx.relations();
@@ -1148,6 +1192,23 @@ export function applyOperator(utterance: string, ctx: OperatorContext): Operator
           place: location.place,
           answer: `${object.charAt(0).toUpperCase() + object.slice(1)} is ${location.preposition} ${location.article} ${location.place}.`
         };
+      }
+      // The relation graph: a located-in edge read, ingested or inherited
+      // through is-a — the definition clause above is only the taught one.
+      if (ctx.relations !== undefined) {
+        const relations = ctx.relations();
+        const places = edgeObjects(relations, object, 'located-in', denied);
+        if (places.length > 0) {
+          const place = places[0];
+          const holder = relations.some((r) => r.subject === object && r.predicate === 'located-in' && r.object === place) ? object : (inheritsEdge(relations, object, 'located-in', place, denied)?.via ?? object);
+          const strength = ctx.edgeStrength?.(holder, 'located-in', place) ?? 1;
+          return {
+            kind: 'where',
+            object,
+            place,
+            answer: strength >= 1 ? `${object.charAt(0).toUpperCase() + object.slice(1)} is in ${place}.` : `Probably ${object} is in ${place}.`
+          };
+        }
       }
       // P1 graded fallback: the loose bindings may hold a located-in edge the
       // precision graph (and the definition's own clause) does not.

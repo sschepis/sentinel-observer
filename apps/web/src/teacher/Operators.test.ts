@@ -132,6 +132,38 @@ describe('operators (deterministic answers from memory)', () => {
     expect(applyOperator('is chromosome made of dna', ctx)?.kind).toBe('made-of');
   });
 
+  it('answers the closed located-in form from edges — direct, inherited, denied — and "where is X" from the graph', () => {
+    const negations = new Map([['penguin located-in desert', true]]);
+    const ctx: OperatorContext = {
+      isTaught: () => true,
+      definitionOf: () => 'a bird',
+      wordCount: () => 4,
+      phraseCount: () => 0,
+      negationOf: (s, p, o) => (negations.has(`${s} ${p} ${o}`) ? { subject: s, predicate: p as 'is-a', object: o, evidence: 'test', origin: 'taught' } : null),
+      relations: () => [
+        { subject: 'penguin', predicate: 'is-a', object: 'bird', source: 'test', origin: 'authored' },
+        { subject: 'bird', predicate: 'located-in', object: 'nest', source: 'test', origin: 'authored' },
+        { subject: 'monkey', predicate: 'located-in', object: 'jungle', source: 'test', origin: 'authored' }
+      ]
+    };
+    const direct = applyOperator('is a monkey in a jungle', ctx);
+    expect(direct?.kind).toBe('where');
+    expect(direct?.answer).toMatch(/^Yes, monkey is in jungle/);
+    const lives = applyOperator('does a monkey live in the jungle', ctx);
+    expect(lives?.kind).toBe('where');
+    const inherited = applyOperator('is a penguin in a nest', ctx);
+    expect(inherited?.kind).toBe('where');
+    expect(inherited?.answer).toMatch(/penguin is a bird, and bird is in nest/);
+    const denied = applyOperator('is a penguin in a desert', ctx);
+    expect(denied?.answer).toMatch(/^No, penguin is not in desert/);
+    // No edge, no denial: silent — the ask path owns it.
+    expect(applyOperator('is a monkey in a desert', ctx)).toBeNull();
+    // The open form reads the graph too, through inheritance.
+    const where = applyOperator('where is a penguin', ctx);
+    expect(where?.kind).toBe('where');
+    expect(where?.answer).toBe('Penguin is in nest.');
+  });
+
   it('answers the clock and the date deterministically', () => {
     const ctx: OperatorContext = {
       isTaught: () => true,

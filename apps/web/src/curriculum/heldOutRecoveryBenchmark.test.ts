@@ -56,8 +56,11 @@ const STATE_DIR = resolve(process.cwd(), '..', '..', 'bench', 'curriculum', '.re
 const STATE_RECORD = resolve(STATE_DIR, 'record.json');
 const STATE_SERIES = resolve(STATE_DIR, 'series.json');
 
+/** Bump when StepRecord or the probe selection changes — an older checkpoint then starts fresh. */
+const CHECKPOINT_VERSION = 2;
+
 interface Checkpoint {
-  config: { steps: number; budget: number; probes: number; taught: number };
+  config: { steps: number; budget: number; probes: number; taught: number; version?: number };
   probes: Probe[];
   seen: Probe[];
   series: StepRecord[];
@@ -92,6 +95,11 @@ interface StepRecord {
   entropyMean: number;
   entropyWeighted: number;
   entropyDelta: number;
+  /** SLOT-MATCHED: the mean-per-concept bits of the slots the probes ask
+   *  about, weighted by the probes' predicate mix — so a drop in opposite-of
+   *  ignorance is not credited against is-a recovery. */
+  entropyProbeSlots: number;
+  entropyProbeSlotsDelta: number;
   recovered: number;
   recoveredFlat: number;
   recoveredHedged: number;
@@ -162,7 +170,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       const saved = JSON.parse(readFileSync(STATE_SERIES, 'utf8')) as Checkpoint;
       if (saved.done === true || FRESH) {
         // spent (or told to start over): fall through to a fresh start
-      } else if (saved.config.steps === STEPS && saved.config.budget === BUDGET && saved.config.probes === PROBES && saved.config.taught === TAUGHT) {
+      } else if (saved.config.version === CHECKPOINT_VERSION && saved.config.steps === STEPS && saved.config.budget === BUDGET && saved.config.probes === PROBES && saved.config.taught === TAUGHT) {
         const restored = teacher.importBootstrap(JSON.parse(readFileSync(STATE_RECORD, 'utf8')) as BootstrapRecord);
         checkpoint = saved;
         console.log(`resumed from checkpoint: ${saved.series.length - 1} step(s) done, ${restored.restored} traces restored`);
@@ -178,7 +186,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     const save = (series: StepRecord[], probes: Probe[], seenProbes: Probe[]): void => {
       mkdirSync(STATE_DIR, { recursive: true });
       writeFileSync(STATE_RECORD, JSON.stringify(teacher.exportBootstrap()));
-      const state: Checkpoint = { config: { steps: STEPS, budget: BUDGET, probes: PROBES, taught: TAUGHT }, probes, seen: seenProbes, series };
+      const state: Checkpoint = { config: { steps: STEPS, budget: BUDGET, probes: PROBES, taught: TAUGHT, version: CHECKPOINT_VERSION }, probes, seen: seenProbes, series };
       writeFileSync(STATE_SERIES, JSON.stringify(state));
     };
 
@@ -241,11 +249,17 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     const seen = checkpoint !== null ? checkpoint.seen : seenCandidates.slice(0, 50);
     console.log(`held-out rows: ${heldOut.length} · askable with both ends taught: ${candidates.length} · probing ${probes.length} (+ ${seen.length} seen-claim controls) · feeding ${STEPS} × ${BUDGET} rows of ${feeder.remaining(source)}`);
 
+    // The probes' predicate mix, for the slot-matched entropy reading.
+    const probeMix = new Map<string, number>();
+    for (const probe of probes) probeMix.set(probe.predicate, (probeMix.get(probe.predicate) ?? 0) + 1 / Math.max(1, probes.length));
     const store = teacher.soundnessStore();
     const measure = (step: number, rows: number, edgesAdded: number, grown: number, previous: StepRecord | null): StepRecord => {
       const started = Date.now();
       const entropy = teacher.networkEntropy({ concepts: deckWords, topN: 0 });
       console.log(`    entropy read in ${entropy.ms} ms`);
+      // Slot-matched reading: Σ_p share(p) × bySlot[p] / concepts.
+      let probeSlots = 0;
+      for (const [predicate, share] of probeMix) probeSlots += share * ((entropy.bySlot[predicate] ?? 0) / Math.max(1, entropy.concepts));
       const byRelation: Record<string, { asked: number; recovered: number }> = {};
       const byPath: Record<string, number> = {};
       let recoveredFlat = 0;
@@ -286,6 +300,8 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
         entropyMean: entropy.mean,
         entropyWeighted: entropy.weightedTotal,
         entropyDelta: previous === null ? 0 : Math.round((entropy.mean - previous.entropyMean) * 1e6) / 1e6,
+        entropyProbeSlots: Math.round(probeSlots * 1e6) / 1e6,
+        entropyProbeSlotsDelta: previous === null ? 0 : Math.round((probeSlots - previous.entropyProbeSlots) * 1e6) / 1e6,
         recovered,
         recoveredFlat,
         recoveredHedged,
@@ -326,7 +342,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       series.push(record);
       ranThisRun += 1;
       console.log(
-        `  step ${step}: +${fed.accepted} edges (+${fed.grown} words) · entropy mean ${record.entropyMean.toFixed(3)} (Δ ${record.entropyDelta >= 0 ? '+' : ''}${record.entropyDelta.toFixed(4)}) · recovery ${(record.recoveryRate * 100).toFixed(1)}% (Δ ${record.recoveryDelta >= 0 ? '+' : ''}${(record.recoveryDelta * 100).toFixed(1)}) · ${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked · seen-control ${(record.seenRate * 100).toFixed(0)}% · ${record.ms} ms`
+        `  step ${step}: +${fed.accepted} edges (+${fed.grown} words) · entropy mean ${record.entropyMean.toFixed(3)} (Δ ${record.entropyDelta >= 0 ? '+' : ''}${record.entropyDelta.toFixed(4)}; probe slots Δ ${record.entropyProbeSlotsDelta >= 0 ? '+' : ''}${record.entropyProbeSlotsDelta.toFixed(4)}) · recovery ${(record.recoveryRate * 100).toFixed(1)}% (Δ ${record.recoveryDelta >= 0 ? '+' : ''}${(record.recoveryDelta * 100).toFixed(1)}) · ${record.recoveredFlat} flat, ${record.recoveredHedged} hedged, ${record.wrong} wrong, ${record.abstained} asked · seen-control ${(record.seenRate * 100).toFixed(0)}% · ${record.ms} ms`
       );
       if (STEPS_PER_RUN > 0) save(series, probes, seen);
       if (fed.remaining === 0) {
@@ -345,6 +361,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
     // rho(Δentropy, Δrecovery) is NEGATIVE. The null predictor is edges added.
     const steps = series.slice(1);
     const rhoEntropy = spearman(steps.map((s) => s.entropyDelta), steps.map((s) => s.recoveryDelta));
+    const rhoSlotMatched = spearman(steps.map((s) => s.entropyProbeSlotsDelta), steps.map((s) => s.recoveryDelta));
     const rhoEdges = spearman(steps.map((s) => s.edgesAdded), steps.map((s) => s.recoveryDelta));
     const first = series[0];
     const last = series[series.length - 1];
@@ -357,6 +374,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       prediction: {
         statement: 'steps that lower the network entropy most show the largest held-out recovery gains: expect rho(Δentropy, Δrecovery) < 0',
         rhoEntropyDelta: rhoEntropy,
+        rhoSlotMatchedEntropyDelta: rhoSlotMatched,
         rhoEdgesAddedNull: rhoEdges,
         steps: steps.length
       },
@@ -370,7 +388,7 @@ describe('held-out recovery + the prediction (src/curriculum)', () => {
       `\n=== held-out recovery: ${(first.recoveryRate * 100).toFixed(1)}% → ${(last.recoveryRate * 100).toFixed(1)}% over ${steps.length} steps · entropy mean ${first.entropyMean.toFixed(3)} → ${last.entropyMean.toFixed(3)}\n` +
         `    by path after: ${Object.entries(last.byPath).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}\n` +
         `    by relation after: ${Object.entries(last.byRelation).map(([k, v]) => `${k} ${v.recovered}/${v.asked}`).join(', ')}\n` +
-        `    THE PREDICTION: rho(Δentropy, Δrecovery) = ${rhoEntropy === null ? 'n/a' : rhoEntropy.toFixed(3)} (expect < 0) · null predictor rho(edges added, Δrecovery) = ${rhoEdges === null ? 'n/a' : rhoEdges.toFixed(3)}\n` +
+        `    THE PREDICTION: rho(Δentropy, Δrecovery) = ${rhoEntropy === null ? 'n/a' : rhoEntropy.toFixed(3)} · slot-matched rho = ${rhoSlotMatched === null ? 'n/a' : rhoSlotMatched.toFixed(3)} (expect < 0) · null predictor rho(edges added, Δrecovery) = ${rhoEdges === null ? 'n/a' : rhoEdges.toFixed(3)}\n` +
         `    → ${out}`
     );
     expect(existsSync(out)).toBe(true);
