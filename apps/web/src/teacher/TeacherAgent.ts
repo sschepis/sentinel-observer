@@ -1046,7 +1046,18 @@ export class TeacherAgent extends TeacherAgentComposed {
     // no memory, operator, or relation path supports it — so composing over
     // it would be confident nonsense. Those route to ASK.
     const questionForm = questionFormOf(resolved);
-    const groundedQuestion = questionForm !== null || meaningCue !== null || underivableComputation;
+    // A COMPUTATION REQUEST IS A GROUNDED QUESTION, whether or not any
+    // parser could read it. A word problem states quantities and asks how
+    // many or how much; the only honest replies are the derivation and the
+    // ask. Composing word-play at it — even inside the ungrounded frame
+    // ("these are only words I put together: 'Melissa scored 120 points…'")
+    // — answers a question of arithmetic with a sentence about words, and
+    // it echoes the problem's own digits back, which any grader reading for
+    // a number will take for an answer. Found by the word-problems bench
+    // once the dialogue corpus was ingested and the creative layer unlocked
+    // (docs/TASKS.md #79).
+    const asksToCompute = /\bhow (?:many|much|far|long|old|heavy|tall)\b/i.test(resolved) && /\d/.test(resolved);
+    const groundedQuestion = questionForm !== null || meaningCue !== null || underivableComputation || asksToCompute;
     // Creative also needs something KNOWN to seed from — a known content
     // word, or a recall whose CUE is the utterance itself (phatic phrases
     // like "how are you" carry no content words yet are taught exchanges

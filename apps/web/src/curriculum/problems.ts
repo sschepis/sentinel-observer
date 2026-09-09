@@ -74,15 +74,38 @@ export function problemPrompt(row: ProblemRow): string {
  * credits `answer`; a wrong one records the grade against exactly the rules
  * it derived through and weakens them; an ask/decline is an abstention and
  * the prompt becomes a gap (the observer knows it could not do this one).
+ *
+ * WHAT COUNTS AS AN ANSWER. Three shapes are abstentions, not wrong answers,
+ * and conflating them cost this bench its meaning once already: an ask or a
+ * decline; an UNGROUNDED composition, which says so in words ("I have
+ * nothing grounded to say about that yet — these are only words I put
+ * together: …") and whose text is word-play that happens to echo the
+ * problem's own digits; and any reply that names no number at all. Grading
+ * those as wrong turned an honest observer into a 23%-accurate one on
+ * paper — 10 of 24 "wrong" answers had offered no number, and the rest were
+ * declines the grader read digits out of.
  */
 export function checkProblem(teacher: TeacherAgent, row: ProblemRow): ProblemCheck {
   const prompt = problemPrompt(row);
   const expected = numberIn(row.answer);
   const answer = teacher.chatAnswer(prompt);
-  if (answer.mode === 'decline' || answer.mode === 'ask') {
-    return { prompt, expected, got: null, response: answer.mode === 'ask' ? answer.response : '', mode: answer.mode, verdict: 'abstained' };
+  const ungrounded = answer.mode === 'creative' && answer.grounded === false;
+  if (answer.mode === 'decline' || answer.mode === 'ask' || ungrounded) {
+    return {
+      prompt,
+      expected,
+      got: null,
+      response: answer.mode === 'decline' ? '' : answer.response,
+      mode: answer.mode,
+      layer: ungrounded ? 'creative:ungrounded' : answer.mode,
+      verdict: 'abstained'
+    };
   }
   const got = numberIn(answer.response);
+  if (got === null) {
+    // It said something, and none of it was a number: it did not answer.
+    return { prompt, expected, got: null, response: answer.response, mode: answer.mode, layer: `${answer.mode}:no-number`, verdict: 'abstained' };
+  }
   const correct = expected !== null && got !== null && Math.abs(got - expected) < 1e-6;
   const provenance = answer.provenance;
   teacher.recordAnswerGrade(prompt, answer.mode, correct ? 'correct' : 'wrong', provenance);
