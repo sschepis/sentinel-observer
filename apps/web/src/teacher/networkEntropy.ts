@@ -10,25 +10,39 @@
  *
  * For every concept the observer knows (deck words and grown words) and
  * every question the operator layer can form about it — one SLOT per
- * predicate in ENTROPY_SLOTS, plus the definition — the slot is in one of
- * six states, read exactly as the answer layer would read it:
+ * predicate in ENTROPY_SLOTS, plus the definition — the measure asks: how
+ * much could the observer DERIVE about this slot through the graph? Each
+ * derivable object counts with the confidence the answer layer would speak
+ * it at:
  *
- *   certain        a corroborated, unweakened edge (spoken flat)     0.95  0.29 bits
- *   single-source  one source class (spoken "I think")               0.75  0.81
- *   inherited      no own edge; an is-a ancestor has one (via …)     0.70  0.88
- *   weakened       grade-weakened (spoken "Probably")                0.65  0.93
- *   conflicted     asserted and denied (the contradiction ledger)    0.50  1.00
- *   unknown        nothing — the observer would have to ask          0.50  1.00
+ *   certain        a corroborated, unweakened own edge (spoken flat)   0.95
+ *   single-source  one source class (spoken "I think")                 0.75
+ *   inherited      held by an is-a ancestor, or an is-a ancestor two   0.70
+ *                  or more hops up (spoken "via …")
+ *   weakened       grade-weakened (spoken "Probably")                  0.65
  *
- * The number is the probability the observer's answer would be right; the
- * slot's entropy is the binary entropy of that probability, in bits. So a
- * slot the observer knows nothing about costs one bit, a corroborated edge
- * costs 0.29, and a contradiction costs as much as ignorance — disagreement
- * IS uncertainty. A concept's entropy is the sum of its slots; the network's
- * is the sum over concepts. Each concept is also weighted by how often the
- * world asks about it (1 + its gap mentions), because a bit of ignorance
- * about a word nobody asks about matters less than one about a word asked
- * every day — the weighted total is what self-direction should minimize.
+ * and the slot's entropy is 1 / (1 + Σ confidence over its derivable
+ * objects), in bits: a slot the observer can derive nothing about costs one
+ * bit; one corroborated edge brings it to 0.51; every further object the
+ * graph lets it reach — through its own edges or through the chains above
+ * it — lowers it further. A slot that is asserted AND denied (the
+ * contradiction ledger) costs a full bit: disagreement IS uncertainty.
+ *
+ * WHY THE CLOSURE AND NOT THE SLOT (the 2026-09-09 result, docs/
+ * SYNTHETIC_MIND.md §6): the first version scored each slot by its best
+ * single derivation, and the prediction that steps lowering it most would
+ * recover the most unseen claims came out with the wrong sign — a second
+ * is-a edge into a concept that already had one moved the measure by
+ * nothing, while recovery grew with exactly that chain density. The
+ * principle says coupling matters as mutual observational capability: what
+ * a concept can observe THROUGH its neighbours. So the measure is over the
+ * inferential closure — what is derivable, not what is stored.
+ *
+ * A concept's entropy is the sum of its slots; the network's is the sum
+ * over concepts. Each concept is also weighted by how often the world asks
+ * about it (1 + its gap mentions), because a bit of ignorance about a word
+ * nobody asks about matters less than one about a word asked every day —
+ * the weighted total is what self-direction should minimize.
  *
  * Two totals are reported because vocabulary growth adds concepts: `total`
  * rises when the observer learns that a zebu exists and knows one thing
@@ -68,15 +82,21 @@ export const SLOT_CONFIDENCE: Readonly<Record<SlotState, number>> = {
   unknown: 0.5
 };
 
-/** Binary entropy, bits. */
+/** Binary entropy, bits (kept for the benches that compare against it). */
 export function binaryEntropyBits(p: number): number {
   const q = Math.min(1 - 1e-9, Math.max(1e-9, p));
   return shannonEntropyBits([q, 1 - q]);
 }
 
-/** Bits per slot state (derived, fixed). */
+/** The slot's bits given the summed confidence of its derivable objects. */
+export function closureBits(reach: number): number {
+  return 1 / (1 + Math.max(0, reach));
+}
+
+/** Bits of a slot with exactly ONE derivable object in the given state
+ *  (conflicted and unknown: a full bit). */
 export const SLOT_BITS: Readonly<Record<SlotState, number>> = Object.fromEntries(
-  (Object.keys(SLOT_CONFIDENCE) as SlotState[]).map((state) => [state, binaryEntropyBits(SLOT_CONFIDENCE[state])])
+  (Object.keys(SLOT_CONFIDENCE) as SlotState[]).map((state) => [state, state === 'conflicted' || state === 'unknown' ? 1 : closureBits(SLOT_CONFIDENCE[state])])
 ) as Record<SlotState, number>;
 
 const IS_A_MAX_DEPTH = 4;
@@ -87,8 +107,10 @@ export interface ConceptEntropy {
   bits: number;
   /** 1 + gap mentions — how often the world asks about this word. */
   weight: number;
-  /** Slot states, keyed by predicate (and 'definition'). */
+  /** Slot states (the best derivation), keyed by predicate (and 'definition'). */
   slots: Record<string, SlotState>;
+  /** Derivable objects per slot — the closure the bits are computed from. */
+  reach: Record<string, number>;
 }
 
 export interface NetworkEntropyReport {
@@ -123,7 +145,7 @@ export interface NetworkEntropyInput {
   topN?: number;
 }
 
-/** Unweighted bits of a set of slot states. */
+/** Bits of a set of slot states when each slot holds at most one derivable object. */
 export function conceptBits(slots: Readonly<Record<string, SlotState>>): number {
   let bits = 0;
   for (const state of Object.values(slots)) bits += SLOT_BITS[state];
@@ -223,6 +245,8 @@ function measure(input: NetworkEntropyInput): { report: NetworkEntropyReport; pe
     const word = entry.word.toLowerCase();
     if (input.concepts !== undefined && !input.concepts.has(word)) continue;
     const slots: Record<string, SlotState> = {};
+    const reach: Record<string, number> = {};
+    let bits = 0;
     const ancestors = ancestorsOf(word);
     for (const predicate of ENTROPY_SLOTS) {
       const slotKey = `${word}\u0000${predicate}`;
@@ -241,8 +265,23 @@ function measure(input: NetworkEntropyInput): { report: NetworkEntropyReport; pe
           }
         }
       }
+      // THE CLOSURE: every distinct object derivable for this slot, at the
+      // confidence it would be spoken with — own edges first (the strongest
+      // derivation of an object wins), then what the is-a ancestors hold. For
+      // is-a itself the ancestors ARE the derivable objects: every ancestor
+      // two or more hops up is an inherited is-a claim.
+      const reached = new Map<string, number>();
       if (!conflicted) {
+        for (const e of own) {
+          const hedge = hedgeFor(classesOf(e), e.strength ?? 1);
+          const conf = hedge === '' ? SLOT_CONFIDENCE.certain : hedge === 'I think' ? SLOT_CONFIDENCE['single-source'] : SLOT_CONFIDENCE.weakened;
+          if ((reached.get(e.object) ?? 0) < conf) reached.set(e.object, conf);
+        }
         for (const ancestor of ancestors) {
+          if (predicate === 'is-a' && !reached.has(ancestor) && !denied.has(key3(word, 'is-a', ancestor))) {
+            reached.set(ancestor, SLOT_CONFIDENCE.inherited);
+            inherited = true;
+          }
           const up = bySubjectPredicate.get(`${ancestor}\u0000${predicate}`);
           if (up === undefined || up.length === 0) continue;
           for (const e of up) {
@@ -252,27 +291,33 @@ function measure(input: NetworkEntropyInput): { report: NetworkEntropyReport; pe
               // through that object.
               continue;
             }
+            if (denied.has(key3(ancestor, predicate, e.object))) continue;
             inherited = true;
-            break;
+            if (!reached.has(e.object)) reached.set(e.object, SLOT_CONFIDENCE.inherited);
           }
-          if (inherited) break;
         }
       }
       const state = slotState(own, conflicted, inherited);
       slots[predicate] = state;
       byState[state] += 1;
-      bySlot[predicate] += SLOT_BITS[state];
+      let sum = 0;
+      for (const conf of reached.values()) sum += conf;
+      reach[predicate] = reached.size;
+      const slotBits = conflicted ? 1 : closureBits(sum);
+      bits += slotBits;
+      bySlot[predicate] += slotBits;
     }
     const definitionState: SlotState = entry.definition.trim().length > 0 ? 'certain' : 'unknown';
     slots.definition = definitionState;
     byState[definitionState] += 1;
+    reach.definition = definitionState === 'certain' ? 1 : 0;
+    bits += SLOT_BITS[definitionState];
     bySlot.definition += SLOT_BITS[definitionState];
 
-    const bits = conceptBits(slots);
     const weight = 1 + (mentions.get(word) ?? 0);
     total += bits;
     weightedTotal += weight * bits;
-    perConcept.push({ word, bits, weight, slots });
+    perConcept.push({ word, bits, weight, slots, reach });
   }
 
   const top = perConcept

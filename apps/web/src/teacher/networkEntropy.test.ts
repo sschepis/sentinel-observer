@@ -13,7 +13,7 @@ import { PRIME_SPACE, deckVocabulary } from './primeSignature';
 import { CONVERSATION_CUE_TOKENS } from './conversation';
 import type { DeckWord } from './deck';
 import type { Relation, Negation } from './relations';
-import { ENTROPY_SLOTS, SLOT_BITS, binaryEntropyBits, conceptEntropies, describeEntropy, networkEntropy, slotState } from './networkEntropy';
+import { ENTROPY_SLOTS, SLOT_BITS, closureBits, conceptEntropies, describeEntropy, networkEntropy, slotState } from './networkEntropy';
 
 const DECK: readonly DeckWord[] = [
   { word: 'dog', definition: 'a common animal with four legs that people keep as a pet', example: 'The dog barks.' },
@@ -39,10 +39,14 @@ const edge = (subject: string, predicate: Relation['predicate'], object: string,
 });
 
 describe('slot bits', () => {
-  it('ignorance costs a bit, a corroborated edge costs 0.29, and the ladder is monotone', () => {
+  it('ignorance costs a bit, one corroborated edge costs 0.51, and the ladder is monotone', () => {
     expect(SLOT_BITS.unknown).toBeCloseTo(1, 6);
     expect(SLOT_BITS.conflicted).toBeCloseTo(1, 6);
-    expect(SLOT_BITS.certain).toBeCloseTo(binaryEntropyBits(0.95), 9);
+    expect(SLOT_BITS.certain).toBeCloseTo(closureBits(0.95), 9);
+    expect(closureBits(0)).toBe(1);
+    // THE CLOSURE PROPERTY (the 2026-09-09 correction): a second derivable
+    // object lowers the slot again — reach, not the best single derivation.
+    expect(closureBits(0.95 + 0.7)).toBeLessThan(closureBits(0.95));
     expect(SLOT_BITS.certain).toBeLessThan(SLOT_BITS['single-source']);
     expect(SLOT_BITS['single-source']).toBeLessThan(SLOT_BITS.inherited);
     expect(SLOT_BITS.inherited).toBeLessThan(SLOT_BITS.weakened);
@@ -85,6 +89,21 @@ describe('networkEntropy (pure)', () => {
     const conflicted = networkEntropy({ words, relations: [edge('dog', 'is-a', 'mammal', { sourceClasses: ['curriculum', 'conceptnet'] })], negations: [denial] });
     expect(conflicted.byState.conflicted).toBe(1);
     expect(conflicted.total).toBeCloseTo(none.total, 6); // disagreement costs exactly what ignorance costs
+  });
+
+  it('the closure counts: a second is-a edge lowers the slot again, and a grandparent is a derivable is-a object', () => {
+    const one = networkEntropy({ words, relations: [edge('dog', 'is-a', 'mammal')], negations: [] });
+    const two = networkEntropy({ words, relations: [edge('dog', 'is-a', 'mammal'), edge('dog', 'is-a', 'pet')], negations: [] });
+    expect(two.total).toBeLessThan(one.total);
+    // dog is-a mammal, mammal is-a animal: "animal" is derivable for dog's
+    // is-a slot through the chain — the chain density recovery grows with.
+    const chain = networkEntropy({ words, relations: [edge('dog', 'is-a', 'mammal'), edge('mammal', 'is-a', 'animal')], negations: [] });
+    const dog = conceptEntropies({ words, relations: [edge('dog', 'is-a', 'mammal'), edge('mammal', 'is-a', 'animal')], negations: [] }).find((c) => c.word === 'dog')!;
+    expect(dog.reach['is-a']).toBe(2);
+    expect(chain.total).toBeLessThan(one.total);
+    // Compared with the single edge alone, the chain lowers dog's is-a slot.
+    const dogOne = conceptEntropies({ words, relations: [edge('dog', 'is-a', 'mammal')], negations: [] }).find((c) => c.word === 'dog')!;
+    expect(dog.bits).toBeLessThan(dogOne.bits);
   });
 
   it('an is-a channel lets a concept inherit what its ancestor knows — and a subject-level exception is not a conflict', () => {
