@@ -49,6 +49,10 @@ export interface RemoteServerState {
   chaperoneConfigured: boolean;
   trainingRunning: boolean;
   definitions: { running: boolean; progress: unknown; result: string | null } | null;
+  /** Absent from servers older than build 2026-09-09.2. */
+  field?: { coherence: number; entropy: number; orderParameter: number; traces: number; ticking: boolean } | null;
+  drives?: { coherence: number; curiosity: number; novelty: number; conservation: number; selfConsistency: number } | null;
+  knowledge?: { concepts: number; total: number; mean: number; certain: number; conflicted: number; unknown: number } | null;
 }
 
 export interface RemoteWordEntry {

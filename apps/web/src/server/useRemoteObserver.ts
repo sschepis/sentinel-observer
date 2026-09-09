@@ -95,6 +95,17 @@ export function useRemoteObserver(url: string): RemoteObserverState {
     void refresh();
   }, [client, refresh]);
 
+  // The state line (vocabulary, drives, knowledge entropy) must not depend on
+  // a server event arriving: poll it every few seconds while connected. It is
+  // one small GET; the server answers from cached readings.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const id = setInterval(() => {
+      void refresh();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [status, refresh]);
+
   const disconnect = useCallback(() => {
     unsubscribeRef.current?.();
     unsubscribeRef.current = null;

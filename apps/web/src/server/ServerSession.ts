@@ -1,6 +1,6 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-09.1';
+export const SERVER_BUILD = '2026-09-09.2';
 
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
@@ -14,6 +14,7 @@ import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-c
 import { ObserverSession } from '../observer/engine';
 import { OBSERVER_OPTIONS } from '../observer/options';
 import { TeacherAgent } from '../teacher/TeacherAgent';
+import type { DriveSignals } from '../teacher/drives';
 import { ACTIVE_DECK } from '../teacher/decks';
 import { ALL_CONVERSATION_PAIRS } from '../teacher/conversation';
 import { FilePersistenceStore } from './FilePersistenceStore';
@@ -123,6 +124,15 @@ export interface ServerState {
   chaperoneConfigured: boolean;
   /** The definitions backfill run (server-side; the browser's is gone). */
   definitions: { running: boolean; progress: ChaperoneProgressState | null; result: string | null } | null;
+  /** The oscillator field's live numbers (the substrate), read without
+   *  perturbing it; `ticking` says whether the field is being advanced at
+   *  all — when it is not, the numbers are the last settled state. */
+  field: { coherence: number; entropy: number; orderParameter: number; traces: number; ticking: boolean } | null;
+  /** The drive vector, non-perturbing snapshot (teacher/drives.ts). */
+  drives: DriveSignals | null;
+  /** Task 39: the network entropy — how unsure the observer would be if
+   *  asked about each concept it knows (bits; the closure measure). */
+  knowledge: { concepts: number; total: number; mean: number; certain: number; conflicted: number; unknown: number } | null;
 }
 
 export class ServerSession {
@@ -690,7 +700,46 @@ export class ServerSession {
       definitions:
         this.definitionsRunner !== null
           ? { running: this.definitionsRunner.running, progress: this.definitionsRunner.progress(), result: this.definitionsRunner.result() }
-          : null
+          : null,
+      field: this.fieldState(),
+      drives: teacher !== null ? teacher.driveSignalsStatic() : null,
+      knowledge: this.knowledgeState(teacher)
     };
+  }
+
+  /** The substrate's live numbers — a read of the settled state, never a tick. */
+  private fieldState(): ServerState['field'] {
+    if (this.session === null) return null;
+    try {
+      const state = this.session.observer.getState();
+      return {
+        coherence: state.coherence,
+        entropy: state.entropy,
+        orderParameter: state.orderParameter,
+        traces: state.memoryTraceCount,
+        ticking: this.running
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The network entropy for the state line: the training loop's latest
+   *  reading when it has one, else the 30-second cache (never per poll). */
+  private knowledgeState(teacher: TeacherAgent | null): ServerState['knowledge'] {
+    if (teacher === null) return null;
+    try {
+      const report = this.trainingLoop?.statistics().entropy ?? this.cachedEntropy(teacher);
+      return {
+        concepts: report.concepts,
+        total: report.total,
+        mean: report.mean,
+        certain: report.byState.certain,
+        conflicted: report.byState.conflicted,
+        unknown: report.byState.unknown
+      };
+    } catch {
+      return null;
+    }
   }
 }

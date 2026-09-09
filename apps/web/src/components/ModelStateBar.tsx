@@ -1,84 +1,80 @@
-import { useEffect, useState } from 'react';
-import type { TeacherAgent } from '../teacher/TeacherAgent';
+import type { SemanticObserverState } from '@sschepis/sentient-core';
 import type { ObserverStatus } from '../observer/engine';
-import type { DriveState } from '../teacher/drives';
+import type { RemoteServerState } from '../server/client';
 
-const EMPTY_DRIVES: DriveState = {
-  coherence: 0,
-  curiosity: 0,
-  novelty: 0,
-  conservation: 0,
-  selfConsistency: 0
-};
-
+/**
+ * THE MODEL-STATE STRIP above every view: one dense row of what the observer
+ * on the server is right now. Every number here comes from the server —
+ * the browser holds no observer — and every number is labelled for what it
+ * actually is, with the tooltip saying where it comes from:
+ *
+ *   field      the oscillator substrate's live coherence / entropy / order
+ *              (from the tick stream, or the last settled state when the
+ *              field is asleep) and how many memory traces it holds;
+ *   knowledge  the network entropy (docs/SYNTHETIC_MIND.md task 39): how
+ *              unsure the observer would be if asked about each concept it
+ *              knows, in bits per concept — the number that should fall as
+ *              it learns;
+ *   vocabulary words with a memory trace / every word it knows (deck + grown);
+ *   exchanges  the share of taught conversation exchanges it recalls (the
+ *              competency the creative layer unlocks on);
+ *   drives     the drive vector, non-perturbing snapshot.
+ *
+ * A value the server has not sent is shown as "—", never as 0.000.
+ */
 export interface ModelStateBarProps {
-  teacher: TeacherAgent | null;
   status: ObserverStatus;
-  /** Words with a memory trace / total deck size. */
-  learnedWords: number;
-  totalWords: number;
-  competency: number;
-  creativeUnlocked: boolean;
+  /** The server's state line (null while offline). */
+  server: RemoteServerState | null;
+  /** The live field metrics from the tick stream (null until one arrives). */
+  metrics: SemanticObserverState | null;
   /** True while the autonomous classroom is running. */
   learning: boolean;
-  /** Recomputes the summary when the teacher mutates outside React. */
-  revision?: number;
 }
 
-function Stat({ label, value, tone = 'text-slate-100' }: { label: string; value: string; tone?: string }) {
+function Stat({ label, value, tone = 'text-slate-100', title }: { label: string; value: string; tone?: string; title?: string }) {
   return (
-    <div className="flex flex-col justify-center px-3.5 py-1.5">
+    <div className="flex flex-col justify-center px-3.5 py-1.5" title={title}>
       <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">{label}</span>
       <span className={`font-mono text-sm leading-tight ${tone}`}>{value}</span>
     </div>
   );
 }
 
-function Meter({ label, value, tone }: { label: string; value: number; tone: string }) {
+function Meter({ label, value, tone }: { label: string; value: number | null; tone: string }) {
   return (
-    <div className="flex items-center gap-1.5" title={`${label} ${value.toFixed(2)}`}>
+    <div className="flex items-center gap-1.5" title={`${label} ${value === null ? '—' : value.toFixed(2)}`}>
       <span className="text-[10px] uppercase tracking-wide text-slate-500">{label.slice(0, 4)}</span>
       <span className="h-1 w-10 overflow-hidden rounded-full bg-slate-800">
         <span
-          className={`block h-full rounded-full ${tone} transition-[width] duration-500`}
-          style={{ width: `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%` }}
+          className={`block h-full rounded-full ${value === null ? 'bg-slate-700' : tone} transition-[width] duration-500`}
+          style={{ width: value === null ? '0%' : `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%` }}
         />
       </span>
     </div>
   );
 }
 
-/**
- * The model-state strip that sits above every view: one dense row of the
- * observer's live physics, its curriculum progress and its drive vector.
- *
- * It polls the teacher with READ-ONLY reads, so displaying the model can
- * never perturb the model.
- */
-export function ModelStateBar({
-  teacher,
-  status,
-  learnedWords,
-  totalWords,
-  competency,
-  creativeUnlocked,
-  learning,
-  revision = 0
-}: ModelStateBarProps) {
-  const [drives, setDrives] = useState<DriveState>(EMPTY_DRIVES);
-  const [pulse, setPulse] = useState(0);
+const fixed = (value: number | null | undefined, digits: number): string => (value === null || value === undefined || !Number.isFinite(value) ? '—' : value.toFixed(digits));
 
-  useEffect(() => {
-    if (teacher === null) return;
-    const id = setInterval(() => {
-      setDrives(teacher.driveSignalsStatic());
-      setPulse((n) => n + 1);
-    }, 2000);
-    return () => clearInterval(id);
-  }, [teacher]);
-
-  const state = teacher?.observerState() ?? null;
-  const progress = totalWords > 0 ? learnedWords / totalWords : 0;
+export function ModelStateBar({ status, server, metrics, learning }: ModelStateBarProps) {
+  // The field: the tick stream is freshest; the state line's settled reading
+  // is the fallback (and the only source while the field is asleep).
+  const field = server?.field ?? null;
+  const ticking = field?.ticking ?? server?.running ?? false;
+  // A stale tick-stream reading must not outlive the field's sleep.
+  const live = ticking ? metrics : null;
+  const coherence = live?.coherence ?? field?.coherence ?? null;
+  const entropy = live?.entropy ?? field?.entropy ?? null;
+  const order = live?.orderParameter ?? field?.orderParameter ?? null;
+  const traces = live?.memoryTraceCount ?? field?.traces ?? server?.tracesInModel ?? null;
+  const knowledge = server?.knowledge ?? null;
+  const drives = server?.drives ?? null;
+  const learned = server?.learned ?? null;
+  const total = server?.total ?? null;
+  const progress = learned !== null && total !== null && total > 0 ? learned / total : 0;
+  const competency = server?.competency ?? null;
+  const creativeUnlocked = server?.creativeUnlocked ?? null;
 
   const statusTone =
     status === 'ready'
@@ -90,63 +86,77 @@ export function ModelStateBar({
           : status === 'loading'
             ? 'bg-sky-400'
             : 'bg-slate-600';
+  const statusText = server === null ? 'offline' : status === 'idle' || !ticking ? 'asleep' : learning ? 'learning' : status === 'degraded' ? 'degraded' : 'awake';
 
   return (
-    <header
-      data-pulse={pulse}
-      data-revision={revision}
-      className="flex shrink-0 flex-wrap items-stretch gap-x-1 gap-y-1 border-b border-slate-800/80 bg-slate-950/60 px-4 py-1.5 backdrop-blur"
-    >
-      <div className="flex items-center gap-2 px-2">
+    <header className="flex shrink-0 flex-wrap items-stretch gap-x-1 gap-y-1 border-b border-slate-800/80 bg-slate-950/60 px-4 py-1.5 backdrop-blur">
+      <div className="flex items-center gap-2 px-2" title={server === null ? 'no observer server reachable' : `server build ${server.build} · ${server.tickCount.toLocaleString()} ticks`}>
         <span className="relative flex h-2 w-2">
-          {learning && (
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${statusTone} opacity-70`} />
-          )}
-          <span className={`relative inline-flex h-2 w-2 rounded-full ${statusTone}`} />
+          {learning && server !== null && <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${statusTone} opacity-70`} />}
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${server === null ? 'bg-slate-600' : statusTone}`} />
         </span>
-        <span className="text-xs font-medium text-slate-300">
-          {status === 'idle' ? 'asleep' : learning ? 'learning' : status === 'degraded' ? 'degraded' : 'awake'}
-        </span>
+        <span className="text-xs font-medium text-slate-300">{statusText}</span>
       </div>
 
       <div className="w-px self-stretch bg-slate-800/80" />
 
-      <Stat label="coherence" value={(state?.coherence ?? 0).toFixed(3)} tone="text-emerald-300" />
-      <Stat label="entropy" value={(state?.entropy ?? 0).toFixed(3)} tone="text-amber-300" />
-      <Stat label="order" value={(state?.orderParameter ?? 0).toFixed(3)} tone="text-sky-300" />
-      <Stat label="traces" value={String(state?.memoryTraceCount ?? 0)} tone="text-slate-200" />
-
-      <div className="w-px self-stretch bg-slate-800/80" />
-
-      <div className="flex min-w-40 flex-col justify-center px-3.5 py-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">vocabulary</span>
-        <div className="flex items-center gap-2">
-          <span className="h-1 w-20 overflow-hidden rounded-full bg-slate-800">
-            <span
-              className="block h-full rounded-full bg-emerald-400 transition-[width] duration-500"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
-          </span>
-          <span className="font-mono text-xs text-slate-300">
-            {learnedWords.toLocaleString()}/{totalWords.toLocaleString()}
-          </span>
-        </div>
-      </div>
-
-      <Stat label="recall" value={`${Math.round(competency * 100)}%`} tone="text-slate-200" />
       <Stat
-        label="creative"
-        value={creativeUnlocked ? 'unlocked' : 'locked'}
-        tone={creativeUnlocked ? 'text-emerald-300' : 'text-slate-500'}
+        label="field coherence"
+        value={fixed(coherence, 3)}
+        tone="text-emerald-300"
+        title={`the oscillator field's phase coherence${ticking ? ' (live)' : ' (last settled state — the field is asleep)'}`}
+      />
+      <Stat label="field entropy" value={fixed(entropy, 3)} tone="text-amber-300" title="entropy of the oscillator amplitude distribution (the substrate, not the knowledge)" />
+      <Stat label="order" value={fixed(order, 3)} tone="text-sky-300" title="Kuramoto order parameter of the field" />
+      <Stat label="traces" value={traces === null ? '—' : traces.toLocaleString()} tone="text-slate-200" title="memory traces in the bank" />
+
+      <div className="w-px self-stretch bg-slate-800/80" />
+
+      <Stat
+        label="knowledge entropy"
+        value={knowledge === null ? '—' : `${knowledge.mean.toFixed(2)} bits`}
+        tone="text-fuchsia-300"
+        title={
+          knowledge === null
+            ? 'not yet measured'
+            : `per concept, over ${knowledge.concepts.toLocaleString()} concepts (total ${knowledge.total.toLocaleString()} bits) · ${knowledge.certain.toLocaleString()} slots certain · ${knowledge.conflicted.toLocaleString()} conflicted · ${knowledge.unknown.toLocaleString()} unknown — how unsure it would be if asked; falls as it learns`
+        }
       />
 
       <div className="w-px self-stretch bg-slate-800/80" />
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-1.5">
-        <Meter label="curiosity" value={drives.curiosity} tone="bg-fuchsia-400" />
-        <Meter label="novelty" value={drives.novelty} tone="bg-violet-400" />
-        <Meter label="conservation" value={drives.conservation} tone="bg-amber-400" />
-        <Meter label="coherence" value={drives.coherence} tone="bg-emerald-400" />
+      <div className="flex min-w-40 flex-col justify-center px-3.5 py-1.5" title="words with a memory trace / every word the observer knows (deck + grown)">
+        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">vocabulary</span>
+        <div className="flex items-center gap-2">
+          <span className="h-1 w-20 overflow-hidden rounded-full bg-slate-800">
+            <span className="block h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${Math.round(progress * 100)}%` }} />
+          </span>
+          <span className="font-mono text-xs text-slate-300">
+            {learned === null || total === null ? '—' : `${learned.toLocaleString()}/${total.toLocaleString()}`}
+          </span>
+        </div>
+      </div>
+
+      <Stat
+        label="exchanges recalled"
+        value={competency === null ? '—' : `${Math.round(competency * 100)}%`}
+        tone="text-slate-200"
+        title="share of taught conversation exchanges the observer recalls (the competency the creative layer unlocks on)"
+      />
+      <Stat
+        label="creative"
+        value={creativeUnlocked === null ? '—' : creativeUnlocked ? 'unlocked' : 'locked'}
+        tone={creativeUnlocked === true ? 'text-emerald-300' : 'text-slate-500'}
+        title="whether the composition layer may speak"
+      />
+
+      <div className="w-px self-stretch bg-slate-800/80" />
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-1.5" title="the drive vector (non-perturbing snapshot)">
+        <Meter label="curiosity" value={drives?.curiosity ?? null} tone="bg-fuchsia-400" />
+        <Meter label="novelty" value={drives?.novelty ?? null} tone="bg-violet-400" />
+        <Meter label="conservation" value={drives?.conservation ?? null} tone="bg-amber-400" />
+        <Meter label="coherence" value={drives?.coherence ?? null} tone="bg-emerald-400" />
       </div>
     </header>
   );
