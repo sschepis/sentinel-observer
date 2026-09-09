@@ -46,8 +46,16 @@ export interface ProblemCheck {
 
 /** The first number in a text, or null ("The answer is 6." → 6; "6.0" → 6). */
 export function numberIn(text: string): number | null {
-  const match = /-?\d+(?:\.\d+)?/.exec(text.replace(/,/g, ''));
+  const cleaned = text.replace(/,/g, '');
+  const match = /-?\d+(?:\.\d+)?/.exec(cleaned);
   if (match === null) return null;
+  // A FRACTION IS A NUMBER. The rationals deck says "5/6" when the value
+  // has no exact decimal (TASKS #67), and reading only the 5 would grade an
+  // exact answer wrong — the worst possible mistake for a grader to make.
+  const ratio = /(-?\d+)\s*\/\s*(\d+)/.exec(cleaned);
+  if (ratio !== null && ratio.index === match.index && Number(ratio[2]) !== 0) {
+    return Number(ratio[1]) / Number(ratio[2]);
+  }
   const value = Number(match[0]);
   return Number.isFinite(value) ? value : null;
 }

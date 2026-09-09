@@ -34,7 +34,10 @@ const edge = (subject: string, predicate: Relation['predicate'], object: string,
   predicate,
   object,
   source: 'test',
-  origin: 'curriculum',
+  // 'curriculum' is a SOURCE CLASS, not an origin; an edge that came in
+  // through the curriculum has origin 'conceptnet'. Each case below still
+  // sets `sourceClasses` explicitly, which is what the entropy reads.
+  origin: 'conceptnet',
   ...extra
 });
 

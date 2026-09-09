@@ -569,7 +569,11 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
         const t2 = Date.now();
         this.buildRelationsCache(extracted, authored);
         if (process.env.OBSERVER_PROFILE_REBUILD === '1') {
-          console.log(`[rebuild] extract ${t1 - t0} ms · authored pool ${t2 - t1} ms · build ${Date.now() - t2} ms · ${this.relationsCache?.length ?? 0} edges`);
+          // The cache is narrowed to null inside this branch, so the count
+          // has to be read through a widened local — the build above is what
+          // fills it.
+          const built: readonly unknown[] = this.relationsCache ?? [];
+          console.log(`[rebuild] extract ${t1 - t0} ms · authored pool ${t2 - t1} ms · build ${Date.now() - t2} ms · ${built.length} edges`);
         }
       }
     }

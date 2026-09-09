@@ -43,6 +43,7 @@ import { RuleStore } from '../rules/types';
 import { PEANO_RULES } from '../rules/peano';
 import { DIGITS_RULES } from '../rules/digits';
 import { INT_RULES } from '../rules/int';
+import { RAT_RULES } from '../rules/rat';
 import { LOGIC_RULES } from '../rules/logic';
 import { ALG_RULES } from '../rules/alg';
 import { CompositionRuleStore } from '../rules/compositionSeeds';
@@ -389,7 +390,7 @@ export class TeacherAgentCore {
    * the drill loop and restored from the bootstrap record. Rules are
    * gradeable, corroborated, denied, and stopped — never deleted.
    */
-  protected readonly ruleStore = new RuleStore([...PEANO_RULES, ...DIGITS_RULES, ...INT_RULES, ...LOGIC_RULES, ...ALG_RULES]);
+  protected readonly ruleStore = new RuleStore([...PEANO_RULES, ...DIGITS_RULES, ...INT_RULES, ...RAT_RULES, ...LOGIC_RULES, ...ALG_RULES]);
   /** Composition rules as a learnable seed set (R4b): the fixed table stays
    *  the evergreen floor; the world's accepted chains admit new sequences. */
   protected readonly compositionRules = new CompositionRuleStore();

@@ -16,6 +16,7 @@
 import { matchArgs, type DSLValue } from '../technical/dsl';
 import { natFromDecimal, natToDecimal } from './peano';
 import { parseStory, type StoryWorld } from './story';
+import { ratToDecimal } from './rat';
 import { digitsFromDecimal, digitsToDecimal } from './digits';
 import { intToDecimal } from './int';
 import { parseLogicDrill } from './logic';
@@ -40,6 +41,9 @@ const FAMILY_FUEL: Record<string, number> = {
   // ~11k for sqrt(400)).
   'square-root': 60_000
 };
+
+/** The budget for a story that came out fractional (TASKS #67). */
+const STORY_RAT_FUEL = 200_000;
 
 const nat = (n: number): Term => natFromDecimal(n);
 const gcdTerm = (a: Term, b: Term): Term => tSym('nat.gcd', [a, b]);
@@ -230,7 +234,16 @@ export function parseRewritePrompt(prompt: string, world?: StoryWorld): ParsedRe
   // two-number parser below; both decline far more often than they answer.
   const story = parseStory(text, world);
   if (story !== null) {
-    return { drill: `story-${story.shape.replace(/[^a-z]+/g, '-')}`, term: story.term, fuel: RULE_DEFAULT_FUEL };
+    // A RATIONAL COSTS MORE THAN A WHOLE NUMBER. `rat.*` normalises by gcd
+    // after every step, and the gcd is Euclid over unary numerals: exact
+    // and cheap in rules, expensive in steps (measured: 0.1 + 0.2 is 654,
+    // and a story's numerators run into the thousands). The budget is
+    // coverage, not honesty — an exhausted one is still an ASK.
+    return {
+      drill: `story-${story.shape.replace(/[^a-z]+/g, '-')}`,
+      term: story.term,
+      fuel: story.deck === 'rat' ? STORY_RAT_FUEL : RULE_DEFAULT_FUEL
+    };
   }
   // R9 stretch: a story no template anchors is still a story — the general
   // parser classifies it by its OPERATION CUES (each/every/per → mul;
@@ -430,6 +443,12 @@ export function decodeNormalForm(term: Term): string | null {
     // became an ASK (TASKS #69).
     const digits = digitsToDecimal(term);
     if (digits !== null) return String(digits);
+    // The RAT deck's normal form is a normalised pair: it speaks as a whole
+    // number, as an exact decimal where one exists, and otherwise as the
+    // fraction itself — never as a rounded decimal the observer did not
+    // derive (TASKS #67).
+    const ratio = ratToDecimal(term);
+    if (ratio !== null) return ratio;
   }
   return null;
 }

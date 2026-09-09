@@ -55,6 +55,20 @@
  */
 import { digitsFromDecimal } from './digits';
 import { natFromDecimal } from './peano';
+import {
+  ratAdd,
+  ratDiv,
+  ratIsNegative,
+  ratIsWhole,
+  ratMul,
+  ratSub,
+  ratTerm,
+  ratToNumber,
+  rational,
+  rationalFromDecimal,
+  sayRational,
+  type Rational
+} from './rat';
 import { tSym, type Term } from './terms';
 
 /**
@@ -110,6 +124,8 @@ export const TAG_SLOTS: readonly ('mod' | 'tail' | 'pre' | 'time')[] = ['mod', '
 
 export interface StoryQuantity {
   value: number;
+  /** The same quantity exactly: "2.5 liters" is 5/2, never a float. */
+  exact: Rational;
   /** Singular noun the quantity counts (null when it stands alone: "2 more"). */
   noun: string | null;
   /** Words between the number and its noun ("red" in "5 red peaches"). */
@@ -152,10 +168,15 @@ export interface StoryQuestion {
 
 export interface StoryReading {
   term: Term;
+  /** The answer as the observer would say it: a whole number, an exact
+   *  decimal where one exists, or the fraction itself (TASKS #67). */
+  spoken: string;
+  /** The exact value, so a decimal answer never drifts through a float. */
+  exact: Rational;
   /** Kinds the store had to cover for this reading to be sound (#65). */
   coveredKinds?: readonly string[];
   /** Which rule deck the term is written in. */
-  deck: 'digits' | 'peano';
+  deck: 'digits' | 'peano' | 'rat';
   value: number;
   /** The derivation shape, for the bench and the trace. */
   shape: string;
@@ -237,7 +258,7 @@ const STATED_COMPARISON = /\b(more|fewer|less|longer|shorter|taller|heavier|youn
 
 /** Arithmetic outside the engine's story shapes, wherever it appears. */
 const UNREADABLE =
-  /\btwice\b|\bthrice\b|\bhalf\b|\bdoubles?\b|\bdoubled\b|\btriples?\b|\btripled\b|\bhalves\b|\bhalved\b|\bthird of\b|\bquarter\b|\bratio\b|\b\d+\s*:\s*\d+|\d\.\d|\d\s*\/\s*\d|\b\d+\s*%|\bpercent\b|\baverage\b|\bmean\b|\bpattern\b|\bcontinues\b|\bago\b|\b(?:a\.m\.|p\.m\.)|\bdozen\b|\bpairs? of\b|\bequal(?:ly)?\b|\bsame (?:amount|number|as)\b|\bevery \d|\beach \d|\bfor every\b|\bper \d|\bas many\b|\bas much\b|\bas old\b|\btimes as\b|\btimes\b|\bcombined with\b|\bsplit\b|\bdivide|\bshared? equally\b|\bgroups of\b|\bin groups\b/;
+  /\btwice\b|\bthrice\b|\bhalf\b|\bdoubles?\b|\bdoubled\b|\btriples?\b|\btripled\b|\bhalves\b|\bhalved\b|\bthird of\b|\bquarter\b|\bratio\b|\b\d+\s*:\s*\d+|\d\s*\/\s*\d|\b\d+\s*%|\bpercent\b|\baverage\b|\bmean\b|\bpattern\b|\bcontinues\b|\bago\b|\b(?:a\.m\.|p\.m\.)|\bdozen\b|\bpairs? of\b|\bequal(?:ly)?\b|\bsame (?:amount|number|as)\b|\bevery \d|\beach \d|\bfor every\b|\bper \d|\bas many\b|\bas much\b|\bas old\b|\btimes as\b|\btimes\b|\bcombined with\b|\bsplit\b|\bdivide|\b(?:initial|original|regular|list|full|retail|sale) price\b|\bshared? equally\b|\bgroups of\b|\bin groups\b/;
 
 const QUESTION_STEM = /\bhow (?:many|much|far|long|old|heavy|tall)\b/;
 
@@ -256,6 +277,25 @@ const NAME_STOP = new Set([
 ]);
 
 const MONEY_NOUNS = new Set(['dollar', 'cent', 'buck', 'penny', 'euro', 'money']);
+
+/**
+ * NOUNS A QUOTIENT MAY BE FRACTIONAL IN (TASKS #67). Now that division is
+ * exact in the rationals, the guard that used to refuse every inexact
+ * division has to be replaced by a guard about MEANING: half a dollar is
+ * fifty cents and half an hour is thirty minutes, but half a bus is not a
+ * bus and half a child is not a child. So money and continuous measures
+ * divide freely, and everything countable still has to come out even — a
+ * story that asks how many buses and gets 4.5 was read wrong.
+ */
+const DIVISIBLE_NOUNS = new Set([
+  ...MONEY_NOUNS,
+  'pound', 'kilogram', 'kilo', 'gram', 'ounce', 'ton', 'tonne',
+  'liter', 'litre', 'milliliter', 'millilitre', 'gallon', 'quart', 'pint', 'cup',
+  'mile', 'kilometer', 'kilometre', 'meter', 'metre', 'centimeter', 'centimetre', 'millimeter', 'millimetre',
+  'inch', 'foot', 'yard',
+  'hour', 'minute', 'second',
+  'acre', 'degree'
+]);
 
 const IRREGULAR: Record<string, string> = {
   shelves: 'shelf', leaves: 'leaf', wolves: 'wolf', knives: 'knife', lives: 'life', halves: 'half', loaves: 'loaf',
@@ -410,6 +450,7 @@ function tailWords(lower: string, after: number): string[] {
 
 interface Mention {
   value: number;
+  exact: Rational;
   noun: string | null;
   premodifiers: string[];
   index: number;
@@ -461,7 +502,12 @@ function mentionsOf(clause: Clause, names: ReadonlySet<string>): Mention[] | nul
   const mentions: Mention[] = [];
   let previousEnd = 0;
   for (const hit of clause.lower.matchAll(/\d+(?:\.\d+)?/g)) {
-    if (hit[0].includes('.')) return null;
+    // A DECIMAL IS A QUANTITY (TASKS #67). It used to end the reading: no
+    // deck could hold 2.5, so the honest move was to decline the story. The
+    // rationals deck holds it exactly, so the only thing left to refuse is
+    // a numeral this reader cannot turn into one.
+    const exact = rationalFromDecimal(hit[0]);
+    if (exact === null) return null;
     const index = hit.index ?? 0;
     const end = index + hit[0].length;
     const words = tailWords(clause.lower, end);
@@ -504,7 +550,7 @@ function mentionsOf(clause: Clause, names: ReadonlySet<string>): Mention[] | nul
       residualClass: /\b(other|others|remaining|rest)\b/.test(clause.lower)
     };
     previousEnd = end;
-    mentions.push({ value: Number(hit[0]), noun, premodifiers: run.slice(0, -1), index, end, slots });
+    mentions.push({ value: ratToNumber(exact), exact, noun, premodifiers: run.slice(0, -1), index, end, slots });
   }
   return mentions;
 }
@@ -613,6 +659,7 @@ function readBody(body: string): { quantities: StoryQuantity[]; unknowns: number
         // reading it as a quantity of the story's kind would double-count.
         quantities.push({
           value: mention.value,
+          exact: mention.exact,
           noun: partitive[1] === undefined ? null : singular(partitive[1]),
           premodifiers: [],
           groupNoun: null,
@@ -638,6 +685,7 @@ function readBody(body: string): { quantities: StoryQuantity[]; unknowns: number
       else if (loss) role = 'loss';
       quantities.push({
         value: mention.value,
+        exact: mention.exact,
         noun: mention.noun,
         premodifiers: mention.premodifiers,
         groupNoun: thisGroupNoun,
@@ -775,26 +823,62 @@ function readQuestion(
  * (measured: exact quotients of corpus size stay well inside the budget).
  */
 type Op =
-  | { k: 'lit'; v: number }
+  | { k: 'lit'; v: Rational }
   | { k: 'add' | 'sub' | 'mul' | 'div'; a: Op; b: Op };
 
 interface Amount {
   op: Op;
-  value: number;
+  value: Rational;
 }
 
-const amount = (value: number): Amount => ({ op: { k: 'lit', v: value }, value });
-const addA = (a: Amount, b: Amount): Amount => ({ op: { k: 'add', a: a.op, b: b.op }, value: a.value + b.value });
-const subA = (a: Amount, b: Amount): Amount | null => (a.value < b.value ? null : { op: { k: 'sub', a: a.op, b: b.op }, value: a.value - b.value });
-const mulA = (a: Amount, b: Amount): Amount => ({ op: { k: 'mul', a: a.op, b: b.op }, value: a.value * b.value });
-const divA = (a: Amount, b: Amount): Amount | null =>
-  b.value === 0 || a.value % b.value !== 0 ? null : { op: { k: 'div', a: a.op, b: b.op }, value: a.value / b.value };
-const absDiff = (a: Amount, b: Amount): Amount => (a.value >= b.value ? (subA(a, b) as Amount) : (subA(b, a) as Amount));
+const amount = (value: Rational | number): Amount => {
+  const exact = typeof value === 'number' ? rational(value) : value;
+  return { op: { k: 'lit', v: exact }, value: exact };
+};
+const addA = (a: Amount, b: Amount): Amount => ({ op: { k: 'add', a: a.op, b: b.op }, value: ratAdd(a.value, b.value) });
+/** Subtraction stays partial: the decks have no negatives, and a story
+ *  whose arithmetic goes below zero was read wrong. */
+const subA = (a: Amount, b: Amount): Amount | null => {
+  const value = ratSub(a.value, b.value);
+  return ratIsNegative(value) ? null : { op: { k: 'sub', a: a.op, b: b.op }, value };
+};
+const mulA = (a: Amount, b: Amount): Amount => ({ op: { k: 'mul', a: a.op, b: b.op }, value: ratMul(a.value, b.value) });
+/** Division is exact in the rationals, so what it refuses is only division
+ *  by zero. Where the ANSWER must be a whole thing — buses, bags, teams —
+ *  the shape asks for `divWhole` instead. */
+const divA = (a: Amount, b: Amount): Amount | null => {
+  const value = ratDiv(a.value, b.value);
+  return value === null ? null : { op: { k: 'div', a: a.op, b: b.op }, value };
+};
+const divWhole = (a: Amount, b: Amount): Amount | null => {
+  const result = divA(a, b);
+  return result === null || !ratIsWhole(result.value) ? null : result;
+};
+/**
+ * MAY THIS ANSWER BE A FRACTION? "How MUCH" asks for an amount, and an
+ * amount may be fractional whatever noun follows it — "how much did each
+ * DVD cost" is money per DVD, not a number of DVDs. "How MANY" counts, and
+ * a count has to come out whole unless the thing counted is itself
+ * divisible (see DIVISIBLE_NOUNS). With no noun asked for, the story's own
+ * quantities say what the answer is made of.
+ */
+function fractionalAsk(question: StoryQuestion, askedNoun: string | null, quantities?: readonly StoryQuantity[]): boolean {
+  if (/\bhow much\b/i.test(question.text)) return true;
+  if (askedNoun !== null) return DIVISIBLE_NOUNS.has(askedNoun);
+  return quantities !== undefined && quantities.every((q) => q.noun === null || DIVISIBLE_NOUNS.has(q.noun));
+}
 
-function sumOf(values: number[]): Amount | null {
+/** Division by what the answer IS: exact-fractional for an amount, whole-only
+ *  for anything counted. */
+const divBy = (a: Amount, b: Amount, question: StoryQuestion, askedNoun: string | null): Amount | null =>
+  fractionalAsk(question, askedNoun) ? divA(a, b) : divWhole(a, b);
+const compare = (a: Rational, b: Rational): number => a.numerator * b.denominator - b.numerator * a.denominator;
+const absDiff = (a: Amount, b: Amount): Amount => (compare(a.value, b.value) >= 0 ? (subA(a, b) as Amount) : (subA(b, a) as Amount));
+
+function sumOf(values: readonly Rational[]): Amount | null {
   if (values.length === 0) return null;
   let acc = amount(values[0]);
-  for (const v of values.slice(1)) acc = addA(acc, amount(v));
+  for (const value of values.slice(1)) acc = addA(acc, amount(value));
   return acc;
 }
 
@@ -805,12 +889,58 @@ function divides(op: Op): boolean {
 
 const DIGIT_HEADS: Record<'add' | 'sub' | 'mul', string> = { add: 'dig.add', sub: 'dig.sub', mul: 'dig.mul' };
 const PEANO_HEADS: Record<'add' | 'sub' | 'mul' | 'div', string> = { add: 'nat.add', sub: 'nat.sub', mul: 'nat.mul', div: 'nat.div' };
+const RAT_HEADS: Record<'add' | 'sub' | 'mul' | 'div', string> = { add: 'rat.add', sub: 'rat.sub', mul: 'rat.mul', div: 'rat.div' };
 
 /** The operation tree as engine terms, in the deck the tree needs. */
-export function emitTerm(op: Op, deck: 'digits' | 'peano'): Term {
-  if (op.k === 'lit') return deck === 'digits' ? digitsFromDecimal(op.v) : natFromDecimal(op.v);
+export function emitTerm(op: Op, deck: 'digits' | 'peano' | 'rat'): Term | null {
+  if (deck === 'rat') {
+    if (op.k === 'lit') return ratTerm(op.v);
+    const left = emitTerm(op.a, deck);
+    const right = emitTerm(op.b, deck);
+    return left === null || right === null ? null : tSym(RAT_HEADS[op.k], [left, right]);
+  }
+  if (op.k === 'lit') {
+    if (!ratIsWhole(op.v)) return null;
+    const value = ratToNumber(op.v);
+    return deck === 'digits' ? digitsFromDecimal(value) : natFromDecimal(value);
+  }
   const head = deck === 'digits' && op.k !== 'div' ? DIGIT_HEADS[op.k] : PEANO_HEADS[op.k];
-  return tSym(head, [emitTerm(op.a, deck), emitTerm(op.b, deck)]);
+  const left = emitTerm(op.a, deck);
+  const right = emitTerm(op.b, deck);
+  return left === null || right === null ? null : tSym(head, [left, right]);
+}
+
+/**
+ * WHICH DECK READS THIS TREE. Fractions and decimals go to `rat.*`, which
+ * normalises by gcd after every step and speaks an exact decimal where one
+ * exists. Whole-number trees stay where they were: digits for add, subtract
+ * and multiply (columns, not tally marks) and Peano when a division is in
+ * the tree, since the digits deck has no division rule.
+ */
+function deckFor(op: Op): 'digits' | 'peano' | 'rat' {
+  if (!wholeThroughout(op)) return 'rat';
+  return divides(op) ? 'peano' : 'digits';
+}
+
+/**
+ * Whole at EVERY step, not just at the leaves. `nat.div` and `dig.*` are
+ * total only over whole numbers: "7 ÷ 2" has whole leaves and a half for an
+ * answer, and emitting it in Peano would leave the term stuck. A tree whose
+ * leaves are whole but whose arithmetic is not goes to the rationals with
+ * everything else.
+ */
+function wholeThroughout(op: Op): boolean {
+  const walk = (node: Op): Rational | null => {
+    if (node.k === 'lit') return ratIsWhole(node.v) ? node.v : null;
+    const a = walk(node.a);
+    if (a === null) return null;
+    const b = walk(node.b);
+    if (b === null) return null;
+    const value =
+      node.k === 'add' ? ratAdd(a, b) : node.k === 'sub' ? ratSub(a, b) : node.k === 'mul' ? ratMul(a, b) : ratDiv(a, b);
+    return value === null || !ratIsWhole(value) || ratIsNegative(value) ? null : value;
+  };
+  return walk(op) !== null;
 }
 
 /** Every total reachable by adding some of these values (capped: the check
@@ -859,7 +989,9 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
   if (read === null) return null;
   const { quantities, unknowns } = read;
   if (quantities.length === 0) return null;
-  if (quantities.some((q) => !Number.isFinite(q.value) || q.value > MAX_OPERAND)) return null;
+  // The ceiling applies to the numbers the DECKS will hold: a rational's
+  // numerator and denominator both ride unary Peano underneath.
+  if (quantities.some((q) => !Number.isFinite(q.value) || Math.abs(q.exact.numerator) > MAX_OPERAND || q.exact.denominator > MAX_OPERAND)) return null;
 
   const question = readQuestion(questionText, {
     nouns: new Set([
@@ -975,14 +1107,13 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
       const parts = sameKind.filter((q) => !wholes.includes(q));
       const partsSum = parts.reduce((total, q) => total + q.value, 0);
       if (wholes.length === 1 && parts.length >= 1 && parts.every((q) => q.role === 'add' && q.slots.mod.length > 0) && partsSum < wholes[0].value) {
-        let acc: Amount = amount(wholes[0].value);
+        let acc: Amount = amount(wholes[0].exact);
         for (const part of parts) {
-          const next = subA(acc, amount(part.value));
+          const next = subA(acc, amount(part.exact));
           if (next === null) return null;
           acc = next;
         }
-        const partsDeck = divides(acc.op) ? 'peano' : 'digits';
-        return { term: emitTerm(acc.op, partsDeck), deck: partsDeck, value: acc.value, shape: 'whole − stated parts', quantities, question };
+        return finish(acc, 'whole − stated parts', quantities, question);
       }
     }
     return null;
@@ -1031,9 +1162,45 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
   const built = build(question, rates, groupCounts, plain, unknowns, world);
   if (built === null) return null;
   const { amount: result, shape, coveredKinds } = built;
-  if (!Number.isFinite(result.value) || result.value < 0) return null;
-  const deck = divides(result.op) ? 'peano' : 'digits';
-  return { term: emitTerm(result.op, deck), deck, value: result.value, shape, coveredKinds, quantities, question };
+  return finish(result, shape, quantities, question, coveredKinds);
+}
+
+/**
+ * THE READING, ONCE THE ARITHMETIC IS SETTLED. The deck follows the tree
+ * (whole numbers to digits or Peano, anything else to the rationals), the
+ * answer is SAID from the exact value rather than a float, and a tree the
+ * chosen deck cannot express is a decline: an answer the observer cannot
+ * derive is not an answer it may state.
+ */
+function finish(
+  result: Amount,
+  shape: string,
+  quantities: StoryQuantity[],
+  question: StoryQuestion,
+  coveredKinds?: readonly string[]
+): StoryReading | null {
+  const value = result.value;
+  if (!Number.isFinite(value.numerator) || !Number.isFinite(value.denominator) || ratIsNegative(value)) return null;
+  // A COUNT CANNOT BE FRACTIONAL. Money and measures divide — half a dollar
+  // is fifty cents — but things do not. "Kira has $1.20 in quarters and
+  // dimes. How many coins does she have?" reads 1.2, and 1.2 is not a
+  // number of coins: the story asks for a change of unit this engine cannot
+  // make, so a fractional answer to a counted question is a decline.
+  if (!ratIsWhole(value) && !fractionalAsk(question, question.stemNoun, quantities)) return null;
+  const deck = deckFor(result.op);
+  const term = emitTerm(result.op, deck);
+  if (term === null) return null;
+  return {
+    term,
+    deck,
+    spoken: sayRational(value),
+    exact: value,
+    value: ratToNumber(value),
+    shape,
+    coveredKinds,
+    quantities,
+    question
+  };
 }
 
 function build(
@@ -1060,7 +1227,7 @@ function build(
       if (!plain.every((q) => sameNoun(q.noun, perNoun) || q.noun === null)) return null;
       const whole = narrative(plain, 'total', unknowns, question.text);
       if (whole === null) return null;
-      const shared = divA(whole, amount(rate.value));
+      const shared = divBy(whole, amount(rate.exact), question, question.stemNoun ?? groupNoun);
       return shared === null ? null : { amount: shared, shape: 'groups = whole ÷ per' };
     }
     if (!asksPer && question.nouns.length > 0) return null;
@@ -1070,7 +1237,7 @@ function build(
     if (counts.length !== 1) return null;
     const others = plain.filter((q) => q !== counts[0]);
     if (others.length > 0) return null; // a third quantity: not this shape
-    return { amount: mulA(amount(counts[0].value), amount(rate.value)), shape: 'per × groups' };
+    return { amount: mulA(amount(counts[0].exact), amount(rate.exact)), shape: 'per × groups' };
   }
   // -------- a share with no stated rate: whole ÷ groups --------
   if (question.kind === 'share') {
@@ -1085,7 +1252,7 @@ function build(
     if (rest.length === 0) return null;
     const whole = narrative(rest, 'total', unknowns, question.text);
     if (whole === null) return null;
-    const shared = divA(whole, amount(counts[0].value));
+    const shared = divBy(whole, amount(counts[0].exact), question, question.stemNoun ?? rest[0].noun);
     return shared === null ? null : { amount: shared, shape: 'share = whole ÷ groups' };
   }
   // -------- difference --------
@@ -1104,18 +1271,18 @@ function build(
       const b = pickOne(plain.filter((q) => sameNoun(q.noun, question.nouns[1])), question);
       if (a === null || b === null) return null;
       if (plain.length !== 2) return null;
-      return { amount: absDiff(amount(a.value), amount(b.value)), shape: 'difference of two kinds' };
+      return { amount: absDiff(amount(a.exact), amount(b.exact)), shape: 'difference of two kinds' };
     }
     if (question.owners.length === 2) {
       const a = pickOne(plain.filter((q) => q.owner === question.owners[0]), question);
       const b = pickOne(plain.filter((q) => q.owner === question.owners[1]), question);
       if (a === null || b === null || plain.length !== 2) return null;
-      return { amount: absDiff(amount(a.value), amount(b.value)), shape: 'difference by owner' };
+      return { amount: absDiff(amount(a.exact), amount(b.exact)), shape: 'difference by owner' };
     }
     if (plain.length !== 2) return null;
     // The two must be comparable: same kind, or one kind and one unnamed.
     if (plain[0].noun !== null && plain[1].noun !== null && !sameNoun(plain[0].noun, plain[1].noun)) return null;
-    return { amount: absDiff(amount(plain[0].value), amount(plain[1].value)), shape: 'difference' };
+    return { amount: absDiff(amount(plain[0].exact), amount(plain[1].exact)), shape: 'difference' };
   }
   // -------- narrative over one kind --------
   const nouns = new Set(plain.map((q) => (q.noun === null ? null : MONEY_NOUNS.has(q.noun) ? 'money' : q.noun)).filter((n): n is string => n !== null));
@@ -1136,7 +1303,7 @@ function build(
     // quantities is that number.
     if (kinds.some((noun) => world.hasPart?.(noun, asked) === true)) return null;
     if (!kinds.every((noun) => world.isKindOf(noun, asked))) return null;
-    const sum = sumOf(plain.map((q) => q.value));
+    const sum = sumOf(plain.map((q) => q.exact));
     return sum === null ? null : { amount: sum, shape: 'total by kind (store)', coveredKinds: kinds.map((noun) => `${noun} is-a ${asked}`) };
   }
   // The question must be about the kind the story counts. A question naming
@@ -1176,9 +1343,9 @@ function narrative(pool: StoryQuantity[], kind: QuestionKind, unknowns: number, 
       const possessions = adds.filter((q) => q.possession);
       const activities = adds.filter((q) => !q.possession);
       if (possessions.length !== 1 || activities.length === 0) return null;
-      let acc = amount(possessions[0].value);
+      let acc = amount(possessions[0].exact);
       for (const a of activities) {
-        const next = subA(acc, amount(a.value));
+        const next = subA(acc, amount(a.exact));
         if (next === null) return null;
         acc = next;
       }
@@ -1201,11 +1368,11 @@ function narrative(pool: StoryQuantity[], kind: QuestionKind, unknowns: number, 
       const others = adds.filter((q) => q !== candidate).map((q) => q.value);
       if (others.length >= 2 && subsetSums(others).has(candidate.value)) return null;
     }
-    const sum = sumOf(adds.map((q) => q.value));
+    const sum = sumOf(adds.map((q) => q.exact));
     if (sum === null) return null;
     let acc = sum;
     for (const l of losses) {
-      const next = subA(acc, amount(l.value));
+      const next = subA(acc, amount(l.exact));
       if (next === null) return null;
       acc = next;
     }
@@ -1221,13 +1388,13 @@ function narrative(pool: StoryQuantity[], kind: QuestionKind, unknowns: number, 
     // away … how many did HE have at first" names no other party: it adds
     // the losses back.
     if (losses.length > 0 && losses.some((q) => q.fromParty !== null && (questionText.toLowerCase().includes(q.fromParty) || false))) return null;
-    let acc: Amount = amount(end.value);
+    let acc: Amount = amount(end.exact);
     for (const a of adds) {
-      const next = subA(acc, amount(a.value));
+      const next = subA(acc, amount(a.exact));
       if (next === null) return null;
       acc = next;
     }
-    for (const l of losses) acc = addA(acc, amount(l.value));
+    for (const l of losses) acc = addA(acc, amount(l.exact));
     return acc;
   }
 
@@ -1240,24 +1407,24 @@ function narrative(pool: StoryQuantity[], kind: QuestionKind, unknowns: number, 
     const activities = pool.filter((q) => q.role === 'add' && !q.possession);
     const states = pool.filter((q) => q.role === 'add' && q.possession);
     if (activities.length > 0 && states.length > 0 && losses.length === 0 && unknowns === 0) {
-      return sumOf(activities.map((q) => q.value));
+      return sumOf(activities.map((q) => q.exact));
     }
     // No stated end: two possession states of one owner ARE the change.
     if (adds.length === 2 && losses.length === 0 && adds.every((q) => q.possession) && adds[0].owner === adds[1].owner && adds[0].clause !== adds[1].clause && unknowns === 0) {
-      return absDiff(amount(adds[0].value), amount(adds[1].value));
+      return absDiff(amount(adds[0].exact), amount(adds[1].exact));
     }
     if (unknowns > 0) return null;
     // "how many push-ups did Zachary do" over stated parts: the parts sum.
     if (losses.length > 0) return null;
-    return sumOf(adds.map((q) => q.value));
+    return sumOf(adds.map((q) => q.exact));
   }
   if (adds.length === 0 && losses.length === 0) return null;
-  const known = sumOf(adds.map((q) => q.value)) ?? amount(0);
+  const known = sumOf(adds.map((q) => q.exact)) ?? amount(0);
   let net = known;
   for (const l of losses) {
-    const next = subA(net, amount(l.value));
+    const next = subA(net, amount(l.exact));
     if (next === null) return null;
     net = next;
   }
-  return absDiff(amount(end.value), net);
+  return absDiff(amount(end.exact), net);
 }

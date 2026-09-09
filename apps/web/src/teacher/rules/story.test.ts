@@ -12,8 +12,9 @@
  * never states — and each one is here so that it stays a decline.
  *
  * The whole-corpus measurement is curriculum/problemsBenchmark.test.ts
- * (bench config): of 3,004 problems the engine answers 407 and gets 407
- * right. Every reading is also DERIVED here by the rewrite engine, so a
+ * (bench config): of 3,004 problems the engine answers 418 and gets 418
+ * right (414 before the rationals deck; measured with the relation store,
+ * 411 without it). Every reading is also DERIVED here by the rewrite engine, so a
  * reading the engine could not reduce would fail this file rather than
  * quietly becoming an ASK in production.
  */
@@ -21,11 +22,12 @@ import { describe, it, expect } from '@jest/globals';
 import { RuleStore } from './types';
 import { PEANO_RULES } from './peano';
 import { DIGITS_RULES } from './digits';
+import { RAT_RULES } from './rat';
 import { reduce } from './engine';
 import { decodeNormalForm, parseRewritePrompt } from './parse';
 import { digitsForNumberWords, parseStory, type StoryWorld } from './story';
 
-const store = new RuleStore([...PEANO_RULES, ...DIGITS_RULES]);
+const store = new RuleStore([...PEANO_RULES, ...DIGITS_RULES, ...RAT_RULES]);
 
 /** What the observer would actually say: the term, reduced by the engine. */
 function derive(prompt: string): { value: string | null; status: string; steps: number } {
@@ -166,10 +168,28 @@ const READS: Array<[string, number, string, string]> = [
     'Julia played tag with 5 kids on monday, 9 kids on tuesday and 15 kids on wednesday. How many kids did she play with on monday and wednesday?',
     20, 'total', 'the question names which days'
   ],
+  // Money, exactly (TASKS #67). Both of these were declined outright until
+  // the rationals deck existed: no deck could hold $17.15.
+  [
+    'After paying $2.30 for a drink, Bryon has $17.15. How much money did he have before buying the drink?',
+    19.45, 'start', 'a decimal start, exact'
+  ],
+  [
+    'Lisa rented 4 DVDs for $4.80. How much did each DVD cost to rent?',
+    1.2, 'share = whole ÷ groups', 'a share that does not come out even, in money'
+  ],
 ];
 
 /** prompt, and the reason this story is beyond the engine. */
 const DECLINES: Array<[string, string]> = [
+  [
+    'Kira has $1.20 in quarters and dimes. She has minimized coins altogether. How many coins does she have?',
+    'a count cannot be fractional: 1.2 is not a number of coins (TASKS #67)'
+  ],
+  [
+    "Lastly, he went to a music store and bought a new set of speakers for his dad's entertainment system. If the initial price of the speakers is $475.00 he got it for $199.00, how much money was he able to save from having a discount?",
+    'a stated price beside what was paid is a comparison, not two events'
+  ],
   [
     'In a school there are 308 girls and 318 boys. There are also 36 teachers How many pupils are there in that school?',
     'is a pupil a girl? only the relation store can say (TASKS #65)'
@@ -337,6 +357,39 @@ describe('story-state engine — what it reads', () => {
     expect(digitsForNumberWords('two hundred sixty-six sinks')).toBe('266 sinks');
     expect(digitsForNumberWords('one of her trees')).toBe('one of her trees');
     expect(digitsForNumberWords('she saw one more minivan')).toBe('she saw 1 more minivan');
+  });
+});
+
+describe('story-state engine — money and measures, exactly (TASKS #67)', () => {
+  it('a decimal is a quantity now, and the deck follows the arithmetic', () => {
+    const reading = parseStory('After paying $2.30 for a drink, Bryon has $17.15. How much money did he have before buying the drink?');
+    expect(reading?.deck).toBe('rat');
+    // The exact value is the pair, not the float: 389/20.
+    expect(reading?.exact).toEqual({ numerator: 389, denominator: 20 });
+    expect(reading?.spoken).toBe('19.45');
+    expect(derive('After paying $2.30 for a drink, Bryon has $17.15. How much money did he have before buying the drink?').value).toBe('19.45');
+  });
+
+  it('a whole-number story still goes to the whole-number decks', () => {
+    // The rationals cost more per step, so nothing that was whole before
+    // may become a fraction now.
+    expect(parseStory('There are 37 baskets. There are 17 apples in each basket. How many apples are there in all?')?.deck).toBe('digits');
+    expect(parseStory('Laura has 28 blocks and 8 cards. If she shares the blocks among 4 friends, how many blocks does each friend get?')?.deck).toBe('peano');
+  });
+
+  it('a division that does not come out even is an ANSWER for money and a DECLINE for things', () => {
+    // "How much did each DVD cost" asks for an amount; "how many blocks
+    // does each friend get" asks for a count, and 4.5 blocks is not a
+    // reading of the story — it is a misreading of it.
+    expect(parseStory('Lisa rented 4 DVDs for $4.80. How much did each DVD cost to rent?')?.spoken).toBe('1.2');
+    expect(parseStory('Laura has 9 blocks and 8 cards. If she shares the blocks among 2 friends, how many blocks does each friend get?')).toBeNull();
+  });
+
+  it('the operand ceiling is the honest bound: cents ride unary numerals underneath', () => {
+    // $53.90 is 539/10 and $39.33 is 3933/100, and `rat.sub` cross-multiplies
+    // them into tens of thousands of successors. Declining is coverage, not
+    // a wrong answer — a digit-backed rational is the fix (TASKS #81).
+    expect(parseStory('Dave earned $53.90. Sara earned $39.33. How much more money did Dave earn than Sara?')).toBeNull();
   });
 });
 
