@@ -57,6 +57,28 @@ import { digitsFromDecimal } from './digits';
 import { natFromDecimal } from './peano';
 import { tSym, type Term } from './terms';
 
+/**
+ * WHAT THE OBSERVER KNOWS ABOUT KINDS (docs/TASKS.md #65). "58 geese and 37
+ * ducks — how many BIRDS in all?" is a sum only if a goose is a bird and a
+ * duck is a bird; "35 elephants and 48 tigers — how many LEGS?" never is,
+ * however the sentence is shaped. Arithmetic alone cannot tell those apart,
+ * so the story engine asks the relation store — the same is-a chains the
+ * observer answers questions from — and declines when the store is silent.
+ * This is the one place the arithmetic path and the knowledge path meet.
+ */
+export interface StoryWorld {
+  /** Does the store say `word` is a kind of `kind` (transitively)? */
+  isKindOf(word: string, kind: string): boolean;
+  /**
+   * Does the store say `word` HAS a `part`? A part question is not a kind
+   * question however the sentence is shaped: "35 elephants and 48 tigers —
+   * how many LEGS?" needs legs-per-elephant, a number no is-a chain holds.
+   * Asking this is what keeps a sum of kinds from swallowing a sum of
+   * parts.
+   */
+  hasPart?(word: string, part: string): boolean;
+}
+
 export type QuantityRole = 'add' | 'loss' | 'end' | 'per' | 'groups';
 export type QuestionKind = 'total' | 'residual' | 'start' | 'change' | 'difference' | 'share';
 
@@ -130,6 +152,8 @@ export interface StoryQuestion {
 
 export interface StoryReading {
   term: Term;
+  /** Kinds the store had to cover for this reading to be sound (#65). */
+  coveredKinds?: readonly string[];
   /** Which rule deck the term is written in. */
   deck: 'digits' | 'peano';
   value: number;
@@ -806,7 +830,7 @@ function subsetSums(values: number[]): Set<number> {
 // The reading
 // ---------------------------------------------------------------------------
 
-export function parseStory(prompt: string): StoryReading | null {
+export function parseStory(prompt: string, world?: StoryWorld): StoryReading | null {
   const text = normalise(prompt);
   const questionAt = text.search(/\b[Hh]ow (?:many|much|far|long|old|heavy|tall)\b(?![^]*\b[Hh]ow (?:many|much|far|long|old|heavy|tall)\b)/);
   if (questionAt < 0) return null;
@@ -851,7 +875,20 @@ export function parseStory(prompt: string): StoryReading | null {
     ...quantities.map((q) => q.noun).filter((n): n is string => n !== null),
     ...quantities.map((q) => q.groupNoun).filter((n): n is string => n !== null)
   ]);
-  if (question.stemNoun !== null && !countable.has(question.stemNoun) && ![...countable].some((n) => sameNoun(n, question.stemNoun))) return null;
+  if (question.stemNoun !== null && !countable.has(question.stemNoun) && ![...countable].some((n) => sameNoun(n, question.stemNoun))) {
+    // …unless the store says the story's kinds ARE kinds of it: "58 geese
+    // and 37 ducks — how many BIRDS?" counts nothing called a bird, and is
+    // still a question about birds (#65). The sum itself is built, and
+    // guarded, in `build`.
+    const stem = question.stemNoun;
+    const kinds = [...countable];
+    const covered =
+      world !== undefined &&
+      kinds.length > 0 &&
+      !kinds.some((noun) => world.hasPart?.(noun, stem) === true) &&
+      kinds.every((noun) => world.isKindOf(noun, stem));
+    if (!covered) return null;
+  }
   // "How many bags did she find AFTER MONDAY", "besides the red ones",
   // "other than the first" — a question that names a qualifier in order to
   // leave it OUT is a selection this engine cannot express. Decline.
@@ -991,12 +1028,12 @@ export function parseStory(prompt: string): StoryReading | null {
   const groupCounts = selected.filter((q) => q.role === 'groups');
   const plain = selected.filter((q) => q.role !== 'per' && q.role !== 'groups');
 
-  const built = build(question, rates, groupCounts, plain, unknowns);
+  const built = build(question, rates, groupCounts, plain, unknowns, world);
   if (built === null) return null;
-  const { amount: result, shape } = built;
+  const { amount: result, shape, coveredKinds } = built;
   if (!Number.isFinite(result.value) || result.value < 0) return null;
   const deck = divides(result.op) ? 'peano' : 'digits';
-  return { term: emitTerm(result.op, deck), deck, value: result.value, shape, quantities, question };
+  return { term: emitTerm(result.op, deck), deck, value: result.value, shape, coveredKinds, quantities, question };
 }
 
 function build(
@@ -1004,8 +1041,9 @@ function build(
   rates: StoryQuantity[],
   groupCounts: StoryQuantity[],
   plain: StoryQuantity[],
-  unknowns: number
-): { amount: Amount; shape: string } | null {
+  unknowns: number,
+  world?: StoryWorld
+): { amount: Amount; shape: string; coveredKinds?: readonly string[] } | null {
   // -------- equal groups --------
   if (rates.length > 0 || groupCounts.length > 0) {
     if (rates.length !== 1) return null;
@@ -1081,7 +1119,26 @@ function build(
   }
   // -------- narrative over one kind --------
   const nouns = new Set(plain.map((q) => (q.noun === null ? null : MONEY_NOUNS.has(q.noun) ? 'money' : q.noun)).filter((n): n is string => n !== null));
-  if (nouns.size > 1) return null; // a sum across kinds needs the store (#65)
+  if (nouns.size > 1) {
+    // A SUM ACROSS KINDS — the store decides (#65). Every quantity's noun
+    // must be a kind of the thing asked for, and the question must be a
+    // plain total of them ("how many BIRDS in all"). If the store cannot
+    // say, or the shape is anything but a total, this is the decline it
+    // always was.
+    const asked = question.stemNoun;
+    if (world === undefined || asked === null || question.kind !== 'total' || unknowns > 0) return null;
+    if (!plain.every((q) => q.role === 'add')) return null;
+    const kinds = [...nouns];
+    if (kinds.includes(asked)) return null; // one of the parts, not their kind
+    // A PART IS NOT A KIND. If the store knows the thing asked for is a
+    // part of what the story counts, the answer needs a count per item —
+    // "how many legs" over elephants and tigers — and no sum of the
+    // quantities is that number.
+    if (kinds.some((noun) => world.hasPart?.(noun, asked) === true)) return null;
+    if (!kinds.every((noun) => world.isKindOf(noun, asked))) return null;
+    const sum = sumOf(plain.map((q) => q.value));
+    return sum === null ? null : { amount: sum, shape: 'total by kind (store)', coveredKinds: kinds.map((noun) => `${noun} is-a ${asked}`) };
+  }
   // The question must be about the kind the story counts. A question naming
   // a noun no quantity counts ("how many DAYS would the bottles last") is
   // asking something the story states only as a rate.

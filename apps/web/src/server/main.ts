@@ -101,6 +101,18 @@ const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'json');
 const CORPUS_FLAG = process.env.OBSERVER_CORPUS ?? arg('--corpus', '');
 const CORPUS = CORPUS_FLAG.length > 0 ? resolve(CORPUS_FLAG) : existsSync(resolve('./corpus')) ? resolve('./corpus') : '';
 
+/** Corpus feed cadence and slice. The measured defaults live in
+ *  trainingLoop.ts; these let an operator slow the feed down (a busy
+ *  machine) or speed it up (a fresh corpus to get through) without editing
+ *  code. A non-numeric or non-positive value is ignored. */
+const positive = (value: string | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+};
+const CURRICULUM_EVERY = positive(process.env.OBSERVER_CURRICULUM_EVERY);
+const CURRICULUM_BUDGET = positive(process.env.OBSERVER_CURRICULUM_BUDGET);
+
 const GATES_FILE = process.env.OBSERVER_GATES_FILE ?? '';
 
 /** Apply the calibrated gates artifact BEFORE the observer boots, so every
@@ -143,6 +155,8 @@ async function main(): Promise<void> {
     store: STORE === 'sqlite' ? 'sqlite' : 'json',
     researchTopics: RESEARCH_TOPICS,
     corpusDir: CORPUS.length > 0 ? CORPUS : undefined,
+    curriculumEvery: CURRICULUM_EVERY,
+    curriculumBudget: CURRICULUM_BUDGET,
     chaperone: CHAPERONE_ENDPOINT.length > 0 ? { endpoint: CHAPERONE_ENDPOINT, apiKey: CHAPERONE_KEY, model: CHAPERONE_MODEL } : undefined
   });
 
@@ -153,7 +167,8 @@ async function main(): Promise<void> {
       `restored ${state.restored} traces${state.freshTrained ? ' (fresh core trained)' : ''} · data ${DATA_DIR} · store ${STORE}` +
       ` · readout ${process.env.OBSERVER_SMF_WEIGHT !== undefined && Number(process.env.OBSERVER_SMF_WEIGHT) === 0 ? 'smf-off (index-only)' : 'control (SMF term on)'}` +
       (GATES_FILE.length > 0 ? ' · calibrated gates' : ' · hand-constant gates') +
-      (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : ' · no corpus')
+      (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : ' · no corpus') +
+      (CORPUS.length > 0 ? ` (feed ${CURRICULUM_BUDGET ?? 1000} rows every ${CURRICULUM_EVERY ?? 5} cycles)` : '')
   );
 
   const http = startHttpServer(server, PORT);

@@ -60,6 +60,17 @@ export interface TrainingStats {
   /** src/curriculum: rows consumed from the corpus, and edges/pairs/definitions it took. */
   curriculumRows: number;
   curriculumAccepted: number;
+  /** What the practice corpus (word problems) has done, this run: the three
+   *  verdicts and how many passes over the corpus it has completed. The
+   *  accuracy of a checkable source is the one number that says whether the
+   *  arithmetic is getting better, so it belongs in the stats and not only
+   *  in the event text. */
+  curriculumRight: number;
+  curriculumWrong: number;
+  curriculumAbstained: number;
+  curriculumPasses: number;
+  /** Words the corpus has added to the deck this run. */
+  curriculumGrown: number;
   /** docs/SYNTHETIC_MIND.md task 39: the network entropy readout — the
    *  latest measurement and its change since the previous one. Null until
    *  the first measurement. Readout only. */
@@ -84,6 +95,11 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
   graderTrusted: null,
   curriculumRows: 0,
   curriculumAccepted: 0,
+  curriculumRight: 0,
+  curriculumWrong: 0,
+  curriculumAbstained: 0,
+  curriculumPasses: 0,
+  curriculumGrown: 0,
   entropy: null,
   entropyDelta: null
 };
@@ -297,6 +313,13 @@ export class TrainingLoop {
       if (report === null) return null;
       this.stats.curriculumRows += report.rows;
       this.stats.curriculumAccepted += report.accepted;
+      this.stats.curriculumGrown += report.grown;
+      if (report.kind === 'problems') {
+        this.stats.curriculumRight += report.accepted;
+        this.stats.curriculumWrong += report.wrong;
+        this.stats.curriculumAbstained += report.abstained;
+        this.stats.curriculumPasses = Math.max(this.stats.curriculumPasses, report.pass);
+      }
       return makeEvent({ kind: 'system', label: 'curriculum', text: describeFeed(report) });
     } catch (reason) {
       return makeEvent({ kind: 'error', label: 'curriculum', text: `corpus feed failed: ${reason instanceof Error ? reason.message : String(reason)}` });

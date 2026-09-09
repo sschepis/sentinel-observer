@@ -9,7 +9,7 @@ The observer is only as deep as its world, and its world was a dictionary, a few
 | shape | what it is | where it goes | source in the corpus |
 |---|---|---|---|
 | relations | typed edge (subject, predicate, object) with a source class | the relation graph, multi-valued | ConceptNet 5 (`conceptnet.en.jsonl`) |
-| definitions | word → gloss + example | the deck (`applyDefinitions`) | `definitions.jsonl` (no fetcher yet) |
+| definitions | word → gloss + example | the deck (`applyDefinitions`), which also admits the word | Simple English Wikipedia lead sentences, extracted from `passages.jsonl` (`definitions.jsonl`) |
 | dialogue | short cue → response | the conversation deck | DailyDialog (`dialogue.jsonl`) |
 | passages | declarative prose | the reader (`readFrom`) | Simple English Wikipedia, TinyStories (`passages.jsonl`) |
 | problems | question + checkable answer | posed and checked, no LLM | SVAMP, ASDiv (`problems.jsonl`) |
@@ -24,17 +24,24 @@ npm run fetch-hf -- simplewiki --rows 20000
 npm run fetch-hf -- tinystories --rows 20000
 npm run fetch-hf -- svamp
 npm run fetch-hf -- asdiv
+npm run extract-definitions               # passages.jsonl → definitions.jsonl (no network: the glosses are already on disk)
 ```
 
 Everything lands in `apps/web/corpus/`. The server picks that directory up by default (`--corpus DIR` / `OBSERVER_CORPUS` to point elsewhere) and logs `corpus …` at boot.
 
 ## How it goes in
 
-Every 5 classroom cycles the feeder hands the observer 1,000 rows of the next source with rows left (round-robin), converts them with the shape's adapter, ingests them, and advances a cursor that is persisted in the learning state — a restart resumes, nothing is ingested twice. Every tenth row of every source is held out and never ingested; the benches read those rows.
+Every 5 classroom cycles the feeder hands the observer 1,000 rows of the next source with rows left (round-robin), converts them with the shape's adapter, ingests them, and advances a cursor that is persisted in the learning state — a restart resumes, nothing is ingested twice. Every tenth row of every source is held out and never ingested; the benches read those rows. `OBSERVER_CURRICULUM_EVERY` and `OBSERVER_CURRICULUM_BUDGET` change the cadence and the slice without editing code.
+
+**Knowledge is consumed; practice is not.** A relation, a definition or a passage teaches something the observer then holds, so those cursors only move forward. A word problem teaches nothing — it is an exercise, and what it produces is a grade against whatever the observer can derive *today*. Its cursor therefore wraps: when the last problem has been attempted the corpus starts again, at a smaller slice (50 rows a feed, since each row costs a full answer), and the classroom keeps practising. Before this, the 3,004 problems were spent once — by the story parser that got 19 of 24 wrong — and the corpus was dead to learning for good; the accuracy of the current pass is now in the training stats and the Introspect panel, because a checkable source's accuracy is the one number that says whether the arithmetic is improving.
+
+**A corpus that is present but inert must not look like one that is teaching.** `curriculum/corpusWiring.test.ts` (bench config) walks the real corpus directory and reports, per source, what one feed changes in the observer — deck words, graph edges, exchanges, grades — and fails a source that changes nothing and grades nothing. It also names any reader with no file: that is how `definitions.jsonl` was found to have had a reader and no producer since the day it was written, while 9,039 ConceptNet-grown words sat with `definition: ''`.
 
 The budget comes from a measurement (`ingestScaleBenchmark`, full 20k deck): a 1,000-row relation feed costs about a second, the graph rebuild 0.3 s at 30k edges and 1 s at 110k, and a relational question stays at ~150 ms throughout. A 300k-row ConceptNet file lands in a few hours at this pace.
 
 ## What each source means to the observer
+
+**Definitions.** Simple English Wikipedia opens each article with a definition of its own title — "Air is the Earth's atmosphere", "Aquaculture is the farming of fish, shrimp, abalones, algae, and other seafood" — and `passages.jsonl` already holds 19,324 of them, so the missing corpus needed no download: `npm run extract-definitions` lifts the lead sentences into glosses (2,875 of them, after filters that demand a single-word title, a copular lead whose subject is that word, and prose that is a meaning rather than a list of links or a disambiguation notice). A definition row may also ADMIT its word: the deck already grows from ConceptNet with empty definitions, so a row that brings a gloss is better vocabulary than the empty slot it replaces. An authored deck gloss is never overwritten. Definitions pay for themselves twice — the gloss is what the definition-extracted relation graph is built from, so 27 glosses in one feed produced 6 new edges on their own.
 
 **ConceptNet.** Its relations are the observer's predicates: IsA, PartOf, HasA, AtLocation, MadeOf, HasProperty, CapableOf, UsedFor, Causes, Antonym, HasPrerequisite, DefinedAs → is-a, has-part, located-in, made-of, has-property, capable-of, used-for, causes, opposite-of, requires, defined-as. Its `Not*` relations become confirmed-false claims — the first negatives the honesty benches have that come from outside the observer's own graph. Ingestion is multi-valued (a knowledge graph states many objects per predicate; only a stored denial refuses an edge, and a same-batch denial is applied first). A claim only ConceptNet states is spoken hedged ("Probably, a zebu is a mammal") until a taught definition or a read passage agrees, exactly like a chaperone edge; the ConceptNet weight adds a small confidence overlay so a heavily attested edge weathers a wrong grade. Edge origins now survive restore instead of collapsing to "chaperone".
 

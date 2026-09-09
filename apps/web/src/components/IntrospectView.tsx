@@ -265,8 +265,15 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
             {training.curriculumRows !== undefined && (
               <Row
                 label="corpus rows fed / taken"
-                value={`${training.curriculumRows} / ${training.curriculumAccepted}`}
-                hint="outside corpora (ConceptNet, dialogue, passages, problems) ingested by the classroom under its budget"
+                value={`${training.curriculumRows} / ${training.curriculumAccepted}${Number(training.curriculumGrown ?? 0) > 0 ? ` · ${training.curriculumGrown} new words` : ''}`}
+                hint="outside corpora (ConceptNet, definitions, dialogue, passages, problems) ingested by the classroom under its budget"
+              />
+            )}
+            {Number(training.curriculumRight ?? 0) + Number(training.curriculumWrong ?? 0) + Number(training.curriculumAbstained ?? 0) > 0 && (
+              <Row
+                label="word problems right / wrong / declined"
+                value={`${training.curriculumRight} / ${training.curriculumWrong} / ${training.curriculumAbstained}${Number(training.curriculumPasses ?? 0) > 1 ? ` · pass ${training.curriculumPasses}` : ''}`}
+                hint="the arithmetic corpus is CHECKABLE — graded against the stated answer with no model in the loop, so wrong is wrong. It is practice, not knowledge: when the corpus runs out it comes round again, and the accuracy here is how the arithmetic is measured while it learns"
               />
             )}
             {training.entropyDelta !== undefined && training.entropyDelta !== null && typeof training.entropyDelta === 'object' && (

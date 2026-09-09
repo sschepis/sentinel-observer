@@ -23,7 +23,7 @@ import { PEANO_RULES } from './peano';
 import { DIGITS_RULES } from './digits';
 import { reduce } from './engine';
 import { decodeNormalForm, parseRewritePrompt } from './parse';
-import { digitsForNumberWords, parseStory } from './story';
+import { digitsForNumberWords, parseStory, type StoryWorld } from './story';
 
 const store = new RuleStore([...PEANO_RULES, ...DIGITS_RULES]);
 
@@ -361,5 +361,59 @@ describe('story-state engine — what it declines', () => {
     // guards the invariant in the unit suite.
     for (const [prompt, expected] of READS) expect(derive(prompt).value).toBe(String(expected));
     for (const [prompt] of DECLINES) expect(parseStory(prompt)).toBeNull();
+  });
+});
+
+describe('story-state engine — where the arithmetic asks what the observer knows (TASKS #65)', () => {
+  /** A store that knows what ConceptNet knows about these two words. */
+  const birds: StoryWorld = {
+    isKindOf: (word, kind) => kind === 'bird' && (word === 'goose' || word === 'duck' || word === 'geese')
+  };
+
+  it('sums two kinds only when the store says the asked kind covers both', () => {
+    const prompt = 'There were 58 geese and 37 ducks in the marsh. How many birds were there in all?';
+    // Without a store the observer cannot know a goose is a bird: decline.
+    expect(parseStory(prompt)).toBeNull();
+    // With one, the sum is derived — and the reading records what the store
+    // had to say for it to be sound.
+    const reading = parseStory(prompt, birds);
+    expect(reading?.value).toBe(95);
+    expect(reading?.shape).toBe('total by kind (store)');
+    expect(reading?.coveredKinds).toEqual(['goose is-a bird', 'duck is-a bird']);
+  });
+
+  it('a store that covers only one of the kinds still declines', () => {
+    const half: StoryWorld = { isKindOf: (word, kind) => kind === 'bird' && word === 'goose' };
+    expect(parseStory('There were 58 geese and 37 ducks in the marsh. How many birds were there in all?', half)).toBeNull();
+  });
+
+  it('a PART question is never a kind question, however generous the store', () => {
+    // "How many legs" over elephants and tigers needs legs-per-elephant, a
+    // number no is-a chain holds. Soundness here is relative to the store,
+    // so a store claiming an elephant IS a leg would be believed — but a
+    // store that knows an elephant HAS legs settles it structurally, and
+    // that is the store the observer actually has.
+    const anatomy: StoryWorld = { isKindOf: () => true, hasPart: (_word, part) => part === 'leg' || part === 'wheel' };
+    expect(parseStory('At the zoo, I see 35 elephants and 48 tigers. How many legs do I see?', anatomy)).toBeNull();
+    expect(parseStory('There are 22 bicycles and 3 cars in the garage. How many wheels are there in the garage?', anatomy)).toBeNull();
+  });
+
+  it('the store never rescues a shape the engine does not understand', () => {
+    const yesToEverything: StoryWorld = { isKindOf: () => true };
+    // A difference across kinds, a stated whole, an unknown quantity: all
+    // still decline with a maximally generous store.
+    for (const prompt of [
+      'Marco and his dad went strawberry picking. Marco\'s strawberries weighed 10 pounds. If together their strawberries weighed 26 pounds. How much more did his dad\'s strawberries weigh than his?',
+      'A book has 2 chapters across 23 pages. The first chapter is 10 pages long. How many pages are in the first chapter?',
+      'There were some birds sitting on the fence. 4 more birds came to join them. How many birds are sitting on the fence now?'
+    ]) {
+      expect(parseStory(prompt, yesToEverything)).toBeNull();
+    }
+  });
+
+  it('every reading and every decline in this file is unchanged by a store that knows nothing', () => {
+    const silent: StoryWorld = { isKindOf: () => false };
+    for (const [prompt, expected] of READS) expect(parseStory(prompt, silent)?.value).toBe(expected);
+    for (const [prompt] of DECLINES) expect(parseStory(prompt, silent)).toBeNull();
   });
 });

@@ -34,6 +34,14 @@ import {
   decodeNormalForm
 } from '../rules/parse';
 import {
+  type StoryWorld
+} from '../rules/story';
+import {
+  deniedFromNegations,
+  edgeObjects,
+  isATypeOf
+} from '../chain';
+import {
   CompositionRuleStore
 } from '../rules/compositionSeeds';
 import {
@@ -211,6 +219,25 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
      * the creative layer (a memory-composed answer to a computation request
      * is a fabrication channel).
      */
+    /** The is-a view the story reader asks about kinds (#65). */
+    private storyWorld(): StoryWorld {
+      return {
+        isKindOf: (word: string, kind: string): boolean => {
+          const relations = this.relations();
+          const denied = deniedFromNegations(this.negations);
+          return isATypeOf(relations, word, kind, denied) || isATypeOf(relations, `${word}s`, kind, denied);
+        },
+        hasPart: (word: string, part: string): boolean => {
+          const relations = this.relations();
+          const denied = deniedFromNegations(this.negations);
+          // Held directly, or inherited from what the word is a kind of (a
+          // tiger has legs because a mammal does).
+          const parts = edgeObjects(relations, word, 'has-part', denied);
+          return parts.includes(part) || parts.includes(`${part}s`);
+        }
+      };
+    }
+
     protected applyRewriteRules(utterance: string):
       | {
           kind: 'rewrite';
@@ -221,7 +248,13 @@ export function RulesMixin<TBase extends Constructor<TeacherAgentCore & CrossFac
         }
       | { kind: 'underivable' }
       | null {
-      const parsed = parseRewritePrompt(utterance);
+      // THE STORE AS PART OF THE ARITHMETIC (docs/TASKS.md #65). A word
+      // problem that sums two kinds ("58 geese and 37 ducks — how many
+      // BIRDS?") is derivable only if the observer's own is-a chains cover
+      // both, so the story reader is handed a view of them. It is the same
+      // graph, the same denials and the same walk the answer layer uses; a
+      // silent store means a decline, exactly as before this existed.
+      const parsed = parseRewritePrompt(utterance, this.storyWorld());
       if (parsed === null) return null;
       const reduction = reduce(this.ruleStore, parsed.term, { fuel: parsed.fuel });
       if (reduction.outcome.status !== 'normal') return { kind: 'underivable' };

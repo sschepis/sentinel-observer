@@ -15,7 +15,7 @@
 
 import { matchArgs, type DSLValue } from '../technical/dsl';
 import { natFromDecimal, natToDecimal } from './peano';
-import { parseStory } from './story';
+import { parseStory, type StoryWorld } from './story';
 import { digitsFromDecimal, digitsToDecimal } from './digits';
 import { intToDecimal } from './int';
 import { parseLogicDrill } from './logic';
@@ -178,7 +178,7 @@ function termFor(drill: string, args: DSLValue[]): Term | null {
  * Lift a prompt into the engine's term language. Null = unparseable or
  * outside the rewrite domain — the caller falls through.
  */
-export function parseRewritePrompt(prompt: string): ParsedRewritePrompt | null {
+export function parseRewritePrompt(prompt: string, world?: StoryWorld): ParsedRewritePrompt | null {
   const text = prompt.trim();
   const logic = parseLogicDrillFromText(text);
   if (logic !== null) return { drill: logic.drill, term: logic.term, fuel: RULE_DEFAULT_FUEL };
@@ -228,7 +228,7 @@ export function parseRewritePrompt(prompt: string): ParsedRewritePrompt | null {
   // share), and a derivation only when every quantity is accounted for.
   // It covers subtraction, division and equal groups, so it runs BEFORE the
   // two-number parser below; both decline far more often than they answer.
-  const story = parseStory(text);
+  const story = parseStory(text, world);
   if (story !== null) {
     return { drill: `story-${story.shape.replace(/[^a-z]+/g, '-')}`, term: story.term, fuel: RULE_DEFAULT_FUEL };
   }

@@ -79,6 +79,10 @@ export interface ServerSessionOptions {
   store?: 'json' | 'sqlite';
   /** src/curriculum: corpus directory the classroom ingests from (absent = none). */
   corpusDir?: string;
+  /** Corpus feed cadence and slice, from the environment (see main.ts).
+   *  Undefined keeps the measured defaults in trainingLoop.ts. */
+  curriculumEvery?: number;
+  curriculumBudget?: number;
 }
 
 export interface ServerSnapshot {
@@ -172,7 +176,9 @@ export class ServerSession {
       chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
       researchTopics: options.researchTopics ?? false,
       store: options.store ?? 'json',
-      corpusDir: options.corpusDir ?? ''
+      corpusDir: options.corpusDir ?? '',
+      curriculumEvery: options.curriculumEvery,
+      curriculumBudget: options.curriculumBudget
     };
     this.store =
       this.options.store === 'sqlite'
@@ -262,6 +268,8 @@ export class ServerSession {
         // `--research-topics` was inert until training was toggled via the API.
         researchTopics: this.options.researchTopics ?? false,
         corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
+        curriculumEvery: this.options.curriculumEvery,
+        curriculumBudget: this.options.curriculumBudget,
         onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
         onError: (message) =>
           this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })
@@ -314,6 +322,8 @@ export class ServerSession {
           cadenceMs: this.options.trainCadenceMs ?? 400,
           researchTopics: this.options.researchTopics ?? false,
           corpusDir: this.options.corpusDir.length > 0 ? this.options.corpusDir : undefined,
+          curriculumEvery: this.options.curriculumEvery,
+          curriculumBudget: this.options.curriculumBudget,
           onEvents: (events) => this.broadcast({ kind: 'learning', at: Date.now(), events }),
           onError: (message) =>
             this.broadcast({ kind: 'lifecycle', at: Date.now(), event: 'booted', detail: `training error: ${message}` })

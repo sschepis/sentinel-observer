@@ -138,4 +138,86 @@ describe('growVocabulary', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60000);
+
+  it('a graded source is NOT used up: the problems cursor wraps and the corpus comes round again', async () => {
+    // THE FINDING THIS PINS. On the live record the problems cursor sat at
+    // 3,004 of 3,004: every word problem had been attempted once — by the
+    // parser that got 19 of 24 wrong — and the corpus was dead to learning
+    // for good. A problem stores nothing; it produces a grade against
+    // whatever the observer can derive today, so it is practice, not
+    // knowledge, and practice recycles.
+    const { session, teacher } = await taughtTeacher();
+    const dir = mkdtempSync(join(tmpdir(), 'corpus-'));
+    try {
+      const problems = [
+        { body: 'A farm has 3 birds.', question: 'How many birds does the farm have?', answer: '3', source: 'test' },
+        { body: 'A farm has 2 birds and 4 more birds arrive.', question: 'How many birds are there in all?', answer: '6', source: 'test' },
+        { body: 'A farm has 9 birds and 2 fly away.', question: 'How many birds are left?', answer: '7', source: 'test' }
+      ];
+      writeFileSync(join(dir, 'problems.jsonl'), problems.map((row) => JSON.stringify(row)).join('\n'));
+      const feeder = new CurriculumFeeder(teacher, discoverSources(dir));
+      const first = feeder.step(10);
+      expect(first?.kind).toBe('problems');
+      expect(first?.pass).toBe(1);
+      expect(first?.wrapped).toBe(false);
+      expect(teacher.curriculumCursor('problems')).toBe(problems.length);
+      // Exhausted by the literal count — and still live.
+      expect(feeder.remaining(discoverSources(dir)[0])).toBe(0);
+      const second = feeder.step(10);
+      expect(second).not.toBeNull();
+      expect(second?.wrapped).toBe(true);
+      expect(second?.pass).toBe(2);
+      expect((second?.accepted ?? 0) + (second?.wrong ?? 0) + (second?.abstained ?? 0)).toBeGreaterThan(0);
+      // A knowledge source, by contrast, stays exhausted.
+      writeFileSync(join(dir, 'passages.jsonl'), JSON.stringify({ title: 'Rain', text: 'Rain is water. Rain falls from clouds.' }));
+      const knowledge = new CurriculumFeeder(teacher, discoverSources(dir).filter((source) => source.id === 'passages'));
+      expect(knowledge.step(10)).not.toBeNull();
+      expect(knowledge.step(10)).toBeNull();
+      session.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  it('a definition admits the word it defines, and the deck vocabulary the adapters filter to stays fresh', async () => {
+    // Two wiring defects in one test. (1) definitions.jsonl had a reader and
+    // no producer, and its adapter skipped any word not already in the deck
+    // — while ConceptNet grows the deck with EMPTY definitions all day. A
+    // row that brings a gloss should be allowed to admit its word. (2) the
+    // feeder cached the deck vocabulary once per instance, so a word learned
+    // through any other channel was invisible to the ConceptNet filter for
+    // the life of the loop, and rows about it were silently skipped.
+    const { session, teacher } = await taughtTeacher();
+    const dir = mkdtempSync(join(tmpdir(), 'corpus-'));
+    try {
+      writeFileSync(
+        join(dir, 'definitions.jsonl'),
+        [
+          JSON.stringify({ word: 'zebu', definition: 'a kind of cattle with a large hump', example: 'A zebu is a cow.' }),
+          JSON.stringify({ word: 'dog', definition: 'this must not overwrite the deck gloss', example: '' })
+        ].join('\n')
+      );
+      const definitions = new CurriculumFeeder(teacher, discoverSources(dir));
+      const report = definitions.step(10);
+      expect(report?.kind).toBe('definitions');
+      expect(report?.grown).toBe(1);
+      expect(teacher.knowsWord('zebu')).toBe(true);
+      const glossOf = (word: string): string => teacher.listWords().find((entry) => entry.word.word === word)?.word.definition ?? '';
+      expect(glossOf('zebu')).toContain('large hump');
+      // An authored definition is never overwritten by corpus text.
+      expect(glossOf('dog')).toContain('four legs');
+
+      // Now a ConceptNet row about the word the DEFINITIONS feed taught: the
+      // stale cache used to skip this row.
+      writeFileSync(join(dir, 'conceptnet.en.jsonl'), JSON.stringify({ rel: 'IsA', start: 'zebu', end: 'animal', weight: 2, sources: 2 }));
+      const relations = new CurriculumFeeder(teacher, discoverSources(dir).filter((source) => source.id === 'conceptnet'));
+      const edges = relations.step(10);
+      expect(edges?.skipped).toBe(0);
+      expect(edges?.accepted).toBe(1);
+      expect(teacher.relations().some((edge) => edge.subject === 'zebu' && edge.predicate === 'is-a' && edge.object === 'animal')).toBe(true);
+      session.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120000);
 });

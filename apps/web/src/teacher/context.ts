@@ -111,6 +111,15 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
   return dot / Math.sqrt(normA * normB);
 }
 
+/**
+ * Number words, whole or hyphenated ("twenty-three", "fifty"). A quantity is
+ * never the unknown SUBJECT of an utterance, so the ask layer must not offer
+ * to be taught one.
+ */
+const NUMBER_UNIT =
+  '(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)';
+export const NUMBER_WORDS = new RegExp(`^${NUMBER_UNIT}(?:[-\\s]${NUMBER_UNIT})*$`);
+
 /** Conservative plural stripping: "apples" -> "apple" (never "ss" or short words). */
 export function singularize(word: string): string {
   return word.endsWith('s') && !word.endsWith('ss') && word.length > 3 ? word.slice(0, -1) : word;
@@ -220,9 +229,14 @@ export function resolveReferences(utterance: string, window: readonly WorkingTur
 export function extractUnknownSubject(text: string, known: ReadonlySet<string>): string | null {
   const words = tokens(text);
   for (const word of [...words].reverse()) {
-    if (word.length > 2 && !FUNCTION_WORDS.has(word) && !known.has(word)) {
-      return word;
-    }
+    if (word.length <= 2 || FUNCTION_WORDS.has(word) || COMMON_VERBS.has(word) || known.has(word)) continue;
+    // A NUMBER IS NOT A WORD IT COULD BE TAUGHT. "I do not know what
+    // \"twenty-three\" means. Could you teach me?" was a real reply from the
+    // word-problems corpus: the ask layer read the numeral as the utterance's
+    // unknown referent. Digits and number words are quantities — whatever the
+    // observer cannot do with them, the fix is never vocabulary.
+    if (!/[a-z]/.test(word) || NUMBER_WORDS.test(word)) continue;
+    return word;
   }
   return null;
 }

@@ -41,7 +41,8 @@ module.exports = {
     // Corpus-scale cost profile (tasks 60/61): reads the operator's corpus.
     '<rootDir>/src/curriculum/corpusProfile.test.ts',
     // Word-problem capability on the SVAMP/ASDiv corpus: reads the operator's corpus.
-    '<rootDir>/src/curriculum/problemsBenchmark.test.ts'
+    '<rootDir>/src/curriculum/problemsBenchmark.test.ts',
+    '<rootDir>/src/curriculum/corpusWiring.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

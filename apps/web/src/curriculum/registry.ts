@@ -15,6 +15,17 @@
  * observer recovers, answers or reads correctly about material it was not
  * shown — the same split for every source, fixed by row index so it is the
  * same slice on every machine and every run.
+ *
+ * KNOWLEDGE IS CONSUMED, PRACTICE IS NOT. A relation, a definition or a
+ * passage teaches something the observer then holds: reading it twice adds
+ * nothing, so those cursors only ever move forward. A word problem teaches
+ * nothing — it is an EXERCISE, and what it produces is a grade against
+ * whatever the observer can derive today. Its cursor therefore wraps: when
+ * the last problem has been attempted the source starts again, at a smaller
+ * budget, so the classroom keeps practising and every improvement to the
+ * arithmetic is re-measured against the whole corpus. (Before this, the
+ * 3,004 problems were spent once — by a parser that got 19 of 24 wrong —
+ * and the corpus was dead to learning for good.)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -62,6 +73,30 @@ export const KNOWN_SOURCES: ReadonlyArray<Omit<CurriculumSource, 'path'> & { fil
   }
 ];
 
+/**
+ * The kinds whose rows are EXERCISES rather than knowledge: attempting one
+ * stores nothing, so the source is never used up and its cursor wraps.
+ */
+export const PRACTICE_KINDS: ReadonlySet<CurriculumKind> = new Set<CurriculumKind>(['problems']);
+
+/**
+ * Practice costs an answer per row (the whole chat dispatch: ≈40–120 ms
+ * each), so a practice source takes a smaller slice than a knowledge source
+ * — otherwise one feed would spend a minute on arithmetic. At 50 rows a
+ * feed the 3,004-problem corpus comes round about every 60 feeds.
+ */
+export const PRACTICE_BUDGET = 50;
+
+/**
+ * Words one feed may add to the deck. Growth is how the observer comes to
+ * know that "spleen" and "vireo" exist, and it is unbounded over a run —
+ * but a single feed adding thousands of word-only states at once buys
+ * nothing (their edges arrive with the rows that named them) and makes
+ * every later rebuild slower. A cap per feed spreads the growth across the
+ * corpus instead of front-loading it.
+ */
+export const GROWTH_PER_FEED = 400;
+
 /** Every tenth row is held out (index % HOLD_OUT_EVERY === HOLD_OUT_EVERY − 1). */
 export const HOLD_OUT_EVERY = 10;
 export const isHeldOutRow = (index: number): boolean => index % HOLD_OUT_EVERY === HOLD_OUT_EVERY - 1;
@@ -97,6 +132,10 @@ export interface FeedReport {
   grown: number;
   /** Rows left in the source after this step. */
   remaining: number;
+  /** Practice sources only: this step finished a pass and the cursor wrapped. */
+  wrapped: boolean;
+  /** Practice sources only: which pass over the corpus this step belongs to. */
+  pass: number;
   ms: number;
 }
 
@@ -112,7 +151,10 @@ function parseRow<T>(line: string): T | null {
 export class CurriculumFeeder {
   private readonly lines = new Map<string, string[]>();
   private vocabulary: Set<string> | null = null;
+  private vocabularyAt = -1;
   private turn = 0;
+  /** Passes completed per practice source, this process. */
+  private readonly passes = new Map<string, number>();
 
   constructor(
     private readonly teacher: TeacherAgent,
@@ -138,17 +180,46 @@ export class CurriculumFeeder {
     return Math.max(0, this.rowsOf(source).length - this.teacher.curriculumCursor(source.id));
   }
 
-  /** The deck vocabulary the adapters filter to (computed once). */
+  /**
+   * The deck vocabulary the adapters filter to. REBUILT WHENEVER THE DECK
+   * HAS GROWN by any route: a passage that taught a word, a definition, the
+   * chaperone. The cache used to be built once per feeder, so ConceptNet
+   * rows about words learned through another channel were skipped for the
+   * whole life of the loop — silently, since a skipped row looks exactly
+   * like a row about two unknown words.
+   */
   private deckVocabulary(): Set<string> {
-    if (this.vocabulary === null) {
-      this.vocabulary = new Set(this.teacher.listWords().map((entry) => entry.word.word.toLowerCase()).filter((word) => WORD_SHAPE.test(word)));
+    const words = this.teacher.listWords();
+    if (this.vocabulary === null || words.length !== this.vocabularyAt) {
+      this.vocabulary = new Set(words.map((entry) => entry.word.word.toLowerCase()).filter((word) => WORD_SHAPE.test(word)));
+      this.vocabularyAt = words.length;
     }
     return this.vocabulary;
   }
 
-  /** One step: the next source with rows left (round-robin), `budget` rows. */
+  /** Words this feed may add to the deck (see growth cap in `feed`). */
+  private grow(words: Iterable<string>, vocabulary: Set<string>, cap: number): number {
+    const toGrow: string[] = [];
+    for (const word of words) {
+      if (toGrow.length >= cap) break;
+      if (!vocabulary.has(word)) toGrow.push(word);
+    }
+    if (toGrow.length === 0) return 0;
+    const growth = this.teacher.growVocabulary(toGrow);
+    for (const entry of growth.added) {
+      vocabulary.add(entry.word);
+      this.vocabularyAt += 1;
+    }
+    return growth.added.length;
+  }
+
+  /**
+   * One step: the next source with rows left (round-robin), `budget` rows.
+   * A practice source is always live — when its cursor has reached the end
+   * it wraps and starts the corpus again (see the header).
+   */
   step(budget: number): FeedReport | null {
-    const live = this.sources.filter((source) => this.remaining(source) > 0);
+    const live = this.sources.filter((source) => this.remaining(source) > 0 || PRACTICE_KINDS.has(source.kind));
     if (live.length === 0) return null;
     const source = live[this.turn % live.length];
     this.turn += 1;
@@ -159,8 +230,19 @@ export class CurriculumFeeder {
   feed(source: CurriculumSource, budget: number): FeedReport {
     const started = Date.now();
     const rows = this.rowsOf(source);
-    const cursor = this.teacher.curriculumCursor(source.id);
-    const end = Math.min(rows.length, cursor + Math.max(1, Math.floor(budget)));
+    const isPractice = PRACTICE_KINDS.has(source.kind);
+    let cursor = this.teacher.curriculumCursor(source.id);
+    let wrapped = false;
+    if (isPractice && cursor >= rows.length) {
+      // A new pass over the exercises: the corpus is not used up, and the
+      // observer that answers it now is not the one that answered it last
+      // time.
+      cursor = 0;
+      wrapped = true;
+      this.passes.set(source.id, (this.passes.get(source.id) ?? 0) + 1);
+    }
+    const sliceBudget = isPractice ? Math.min(Math.max(1, Math.floor(budget)), PRACTICE_BUDGET) : Math.max(1, Math.floor(budget));
+    const end = Math.min(rows.length, cursor + sliceBudget);
     const slice: string[] = [];
     for (let index = cursor; index < end; index += 1) {
       if (!isHeldOutRow(index)) slice.push(rows[index]);
@@ -178,6 +260,8 @@ export class CurriculumFeeder {
       abstained: 0,
       grown: 0,
       remaining: rows.length - end,
+      wrapped,
+      pass: (this.passes.get(source.id) ?? 0) + 1,
       ms: 0
     };
     switch (source.kind) {
@@ -197,11 +281,7 @@ export class CurriculumFeeder {
           if (vocabulary.has(a) && !vocabulary.has(b)) toGrow.add(b);
           else if (vocabulary.has(b) && !vocabulary.has(a)) toGrow.add(a);
         }
-        if (toGrow.size > 0) {
-          const growth = this.teacher.growVocabulary([...toGrow]);
-          for (const entry of growth.added) vocabulary.add(entry.word);
-          report.grown = growth.added.length;
-        }
+        report.grown = this.grow(toGrow, vocabulary, GROWTH_PER_FEED);
         const batch = conceptNetToRelations(rows, vocabulary);
         report.skipped = batch.skipped;
         const took = this.teacher.ingestRelationBatch(batch);
@@ -221,7 +301,20 @@ export class CurriculumFeeder {
           }
           definitions.push({ word: row.word.toLowerCase(), definition: row.definition, example: typeof row.example === 'string' ? row.example : '' });
         }
-        report.accepted = definitions.length > 0 ? this.teacher.applyDefinitions(definitions) : 0;
+        // A DEFINITION IS BETTER VOCABULARY THAN AN EMPTY SLOT. The deck
+        // already grows from ConceptNet rows with `definition: ''` — a word
+        // it knows exists and cannot say anything about. A row that brings
+        // a gloss should therefore be allowed to admit its word, not be
+        // skipped for not being in the deck yet.
+        if (definitions.length > 0) {
+          const vocabulary = this.deckVocabulary();
+          report.grown = this.grow(
+            definitions.map((entry) => entry.word).filter((word) => WORD_SHAPE.test(word)),
+            vocabulary,
+            GROWTH_PER_FEED
+          );
+          report.accepted = this.teacher.applyDefinitions(definitions);
+        }
         report.skipped += definitions.length - report.accepted;
         break;
       }
@@ -286,7 +379,15 @@ export function describeFeed(report: FeedReport): string {
     parts.push(`${report.accepted} edges read`, `${report.negations} negations`);
   } else if (report.kind === 'problems') {
     const attempted = report.accepted + report.wrong;
-    parts.push(`${report.accepted} right`, `${report.wrong} wrong`, `${report.abstained} abstained`, `accuracy when answering ${attempted === 0 ? '—' : `${((100 * report.accepted) / attempted).toFixed(0)}%`}`);
+    parts.push(
+      `pass ${report.pass}${report.wrapped ? ' (corpus came round)' : ''}`,
+      `${report.accepted} right`,
+      `${report.wrong} wrong`,
+      `${report.abstained} abstained`,
+      `accuracy when answering ${attempted === 0 ? '—' : `${((100 * report.accepted) / attempted).toFixed(0)}%`}`
+    );
+  } else if (report.kind === 'definitions') {
+    parts.push(`${report.accepted} defined`, `${report.grown} new words`);
   } else {
     parts.push(`${report.accepted} taught`);
   }
