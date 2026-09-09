@@ -178,10 +178,49 @@ const READS: Array<[string, number, string, string]> = [
     'Lisa rented 4 DVDs for $4.80. How much did each DVD cost to rent?',
     1.2, 'share = whole ÷ groups', 'a share that does not come out even, in money'
   ],
+  // Rate stories with more than one thing in them (TASKS #68). All four
+  // were declines: the rate counted as one more unnamed alternative, or the
+  // count had to be a single number.
+  [
+    'Robin has 28 packages of gum and 13 packages of candy. There are 4 pieces in each package. How many pieces of gum does Robin have?',
+    112, 'per × groups', 'the measure is not one of the alternatives'
+  ],
+  [
+    'Faye was placing her pencils and crayons into 19 rows with 4 pencils and 27 crayons in each row. How many pencils does she have?',
+    76, 'per × groups', 'two rates over the same groups, and the question names which'
+  ],
+  [
+    'The Ferris wheel in paradise park has 2 small seats and 23 large seats. Each small seat can hold 14 people and large seat can hold 54 people. How many people can ride the Ferris wheel on small seats?',
+    28, 'per × groups', 'the most specific named slot decides'
+  ],
+  [
+    'Kaleb bought 14 boxes of chocolate candy and gave 5 to his little brother. If each box has 6 pieces inside it, how many pieces did Kaleb still have?',
+    54, 'per × groups after the story', 'a rate over a story that lost something: (14 − 5) × 6'
+  ],
 ];
 
 /** prompt, and the reason this story is beyond the engine. */
 const DECLINES: Array<[string, string]> = [
+  [
+    'There are 466 pots. Each pot has 53 flowers and 181 sticks in it. How many flowers and sticks are there in all?',
+    'two rates and the question names BOTH: nothing to choose, and no shape for their sum yet'
+  ],
+  [
+    'Lewis earns $ 491 every week during the 1181 weeks of harvest. If he has to pay $ 216 rent every week How much money will have at the end of the harvest season?',
+    'two amounts of money over the same groups are a net, not a choice'
+  ],
+  [
+    'We ordered 17 pizzas. Each pizza has 4 slices. If there are 25 of us How many slices of pizza are there altogether?',
+    'an unnamed ADDITION to a rate story is a third thing the shape cannot place'
+  ],
+  [
+    'Bryan took a look at his books and magazines. If he has 23 books and 61 magazines in each of his 29 bookshelves How many books and magazines does he have in total?',
+    'the books have a rate of their own, stated in another clause'
+  ],
+  [
+    'Mary is baking a cake. The recipe calls for 9 cups of sugar 14 cups of flour and 40 cups of salt. She already put in 4 cups of flour. How many more cups of flour than cups of sugar does she need to add now?',
+    'two steps: (14 − 4) − 9, a comparison against a derived quantity'
+  ],
   [
     'Kira has $1.20 in quarters and dimes. She has minimized coins altogether. How many coins does she have?',
     'a count cannot be fractional: 1.2 is not a number of coins (TASKS #67)'
@@ -383,6 +422,21 @@ describe('story-state engine — money and measures, exactly (TASKS #67)', () =>
     // reading of the story — it is a misreading of it.
     expect(parseStory('Lisa rented 4 DVDs for $4.80. How much did each DVD cost to rent?')?.spoken).toBe('1.2');
     expect(parseStory('Laura has 9 blocks and 8 cards. If she shares the blocks among 2 friends, how many blocks does each friend get?')).toBeNull();
+  });
+
+  it('a composed reading is one TERM, two operations deep', () => {
+    // The first derivation this engine builds that is not a single
+    // operation: the count the rate multiplies is itself a subtraction, and
+    // it is one term the engine reduces — not two answers stitched
+    // together (TASKS #68).
+    const prompt = 'Kaleb bought 14 boxes of chocolate candy and gave 5 to his little brother. If each box has 6 pieces inside it, how many pieces did Kaleb still have?';
+    const reading = parseStory(prompt);
+    expect(reading?.shape).toBe('per × groups after the story');
+    const term = reading!.term;
+    expect(term.t === 'sym' ? term.head : null).toBe('dig.mul');
+    const inner = term.t === 'sym' ? term.args[0] : null;
+    expect(inner !== null && inner.t === 'sym' ? inner.head : null).toBe('dig.sub');
+    expect(derive(prompt).value).toBe('54');
   });
 
   it('the operand ceiling is the honest bound: cents ride unary numerals underneath', () => {

@@ -556,7 +556,11 @@ function mentionsOf(clause: Clause, names: ReadonlySet<string>): Mention[] | nul
 }
 
 function groupNounOf(lower: string): string | null {
-  const hit = lower.match(/\b(?:each|every|per)\s+(?:of\s+(?:the\s+)?)?(?:\d+\s+)?([a-z]+)(?:\s+([a-z]+))?/);
+  // "each of THE 5 bags", "each of HIS 29 bookshelves", "each of THEIR
+  // rows": the determiner after "of" is part of the frame, not the group's
+  // name — without it the group noun came out as "of" and the whole rate
+  // went unread.
+  const hit = lower.match(/\b(?:each|every|per)\s+(?:of\s+(?:the\s+|his\s+|her\s+|their\s+|its\s+|these\s+|those\s+|my\s+|our\s+|your\s+)?)?(?:\d+\s+)?([a-z]+)(?:\s+([a-z]+))?/);
   if (hit === null) {
     const rate = lower.match(/\d+\s+[a-z-]+\s+(?:a|an)\s+(minute|hour|day|week|month|year|second|game|trip|lap|page|box|bag|row)\b/);
     return rate === null ? null : singular(rate[1]);
@@ -677,6 +681,11 @@ function readBody(body: string): { quantities: StoryQuantity[]; unknowns: number
       if (rate) {
         const before = clause.lower.slice(Math.max(0, mention.index - 20), mention.index);
         if (/\b(?:each|every)\s+(?:of\s+)?(?:the\s+|his\s+|her\s+|their\s+)?$/.test(before)) role = 'groups';
+        // A quantity that counts the GROUP is the number of groups, not a
+        // rate: "placing her pencils into 19 ROWS with 4 pencils in each
+        // ROW" states one rate and one count, and reading the 19 as a
+        // third rate lost the count the rate needed.
+        else if (groupNoun !== null && mention.noun !== null && sameNoun(mention.noun, groupNoun)) role = 'groups';
         else {
           role = 'per';
           thisGroupNoun = groupNoun;
@@ -1041,6 +1050,14 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
   // A noun the question does not name is handled by the shapes below —
   // most of them decline outright when two kinds are in play.
   const tagsOf = (q: StoryQuantity): string[] => q.tags;
+  // THE SET THE QUESTION NARROWS is the story's quantities, not its
+  // MEASURES. "Robin has 28 packages of gum and 13 packages of candy.
+  // There are 4 pieces in each package. How many pieces of GUM?" narrows
+  // the packages; the rate is what turns the chosen packages into pieces,
+  // and it carries no kind word of its own — so counting it as one more
+  // unnamed alternative made the contrast test incoherent and declined
+  // every two-kind rate story in the corpus (TASKS #68).
+  const narrowable = quantities.filter((q) => q.role !== 'per' && q.role !== 'groups');
   // THE CONTRAST TEST. A word rules a quantity out only if it DISCRIMINATES
   // — it is not shared by every quantity ("pages of MATH homework" against
   // "of READING homework"; "homework" itself separates nothing) — and only
@@ -1049,9 +1066,9 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
   // among alternatives rather than merely sitting next to one of them.
   // "How long will her PENCIL be" names no kind: it selects nothing, and
   // the whole story is read.
-  const discriminating = (q: StoryQuantity): string[] => q.tags.filter((word) => !quantities.every((other) => other.tags.includes(word)));
+  const discriminating = (q: StoryQuantity): string[] => q.tags.filter((word) => !narrowable.every((other) => other.tags.includes(word)));
   const namesADiscriminator =
-    question.stemNoun !== null && question.tags.length > 0 && quantities.length > 1 && quantities.some((q) => discriminating(q).some((t) => question.tags.includes(t)));
+    question.stemNoun !== null && question.tags.length > 0 && narrowable.length > 1 && narrowable.some((q) => discriminating(q).some((t) => question.tags.includes(t)));
   // A COHERENT SELECTION. The question named a distinguishing word; for the
   // selection to mean anything, every quantity it does NOT name must carry
   // its own distinguishing word in the SAME SLOT — "of MATH homework"
@@ -1063,10 +1080,10 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
     const value = q.slots[slot];
     return Array.isArray(value) ? value : [];
   };
-  const namedSlots = TAG_SLOTS.filter((slot) => quantities.some((q) => wordsIn(q, slot).some((t) => question.tags.includes(t) && discriminating(q).includes(t))));
+  const namedSlots = TAG_SLOTS.filter((slot) => narrowable.some((q) => wordsIn(q, slot).some((t) => question.tags.includes(t) && discriminating(q).includes(t))));
   const coherent =
     namesADiscriminator &&
-    quantities.every(
+    narrowable.every(
       (q) => discriminating(q).some((t) => question.tags.includes(t)) || namedSlots.some((slot) => wordsIn(q, slot).some((t) => discriminating(q).includes(t)))
     );
   // A TOTAL ASKS FOR EVERYTHING. "15 pieces of pepperoni, 10 of salami and
@@ -1126,19 +1143,37 @@ export function parseStory(prompt: string, world?: StoryWorld): StoryReading | n
   // TOTAL"); a total that names a word two of them share is narrowing
   // ("played TAG with 7 … and 13 … played cards with 20 … how many kids did
   // she play tag with altogether").
-  const namedCount = quantities.filter((q) => discriminating(q).some((t) => question.tags.includes(t))).length;
+  const namedCount = narrowable.filter((q) => discriminating(q).some((t) => question.tags.includes(t))).length;
   const totalOverridesSelection = totalCue && namedCount <= 1;
   if (namesADiscriminator && !coherent && !totalOverridesSelection) return null;
   const canSelectByTag = coherent && !totalOverridesSelection;
+  const questionTags = question.tags;
+  // THE MOST SPECIFIC NAMED SLOT DECIDES. A question can name words in more
+  // than one slot, and they are not equal: "The Ferris wheel has 2 SMALL
+  // seats and 23 LARGE seats … how many people can ride on SMALL seats"
+  // names 'wheel', which both seats sit under, and 'small', which is the
+  // actual contrast. Selecting on any named word kept the large seats too
+  // and read the whole story instead of the part asked about; selecting on
+  // the modifier — the tightest slot the question named — chooses. Slot
+  // order (modifier, of-phrase, pre-verbal, time) is that specificity.
+  const decidingSlot = namedSlots[0];
+  const keptByTags = (q: StoryQuantity): boolean =>
+    decidingSlot === undefined
+      ? discriminating(q).some((t) => questionTags.includes(t))
+      : wordsIn(q, decidingSlot).some((t) => questionTags.includes(t) && discriminating(q).includes(t));
   const excluded: StoryQuantity[] = [];
   const selected: StoryQuantity[] = [];
-  const questionTags = question.tags;
   for (const q of quantities) {
+    // A measure is never ruled out: it is not one of the alternatives.
+    if (q.role === 'per' || q.role === 'groups') {
+      selected.push(q);
+      continue;
+    }
     if (question.owners.length > 0 && q.owner !== null && !question.owners.includes(q.owner)) {
       excluded.push(q);
       continue;
     }
-    if (canSelectByTag && q.role !== 'end' && !discriminating(q).some((t) => questionTags.includes(t))) {
+    if (canSelectByTag && q.role !== 'end' && !keptByTags(q)) {
       excluded.push(q);
       continue;
     }
@@ -1203,6 +1238,36 @@ function finish(
   };
 }
 
+/**
+ * Which of several stated rates the question is asking about. They have to
+ * contrast the way two kinds of quantity contrast — a different thing
+ * counted, over the same groups — and the question has to name exactly one
+ * of them. Anything looser is a decline: a story with two measures and no
+ * way to choose between them has not been understood.
+ */
+function pickRate(rates: StoryQuantity[], question: StoryQuestion): StoryQuantity | null {
+  if (question.stemNoun === null) return null;
+  // Every rate the question names, not just the first: "Each pot has 53
+  // flowers and 181 sticks in it. How many flowers AND sticks are there in
+  // all?" names both, so there is nothing to choose and the shape declines
+  // rather than answering about one of them.
+  const named = rates.filter((q) => q.noun !== null && question.nouns.some((n) => sameNoun(n, q.noun)));
+  if (named.length !== 1) return null;
+  const chosen = named[0];
+  if (!sameNoun(chosen.noun, question.stemNoun)) return null;
+  const rest = rates.filter((q) => q !== chosen);
+  if (!rest.every((q) => q.noun !== null && !sameNoun(q.noun, chosen.noun) && sameNoun(q.groupNoun, chosen.groupNoun))) return null;
+  // TWO AMOUNTS OF MONEY OVER THE SAME GROUPS ARE A NET, NOT A CHOICE.
+  // "Lewis earns $491 every week during the 1181 weeks of harvest. If he
+  // has to pay $216 rent every week" is (491 − 216) × 1181; naming one of
+  // them answers a different question, and the shape has no sign for a
+  // rate that is paid out. Decline.
+  const money = (q: StoryQuantity): boolean =>
+    (q.noun !== null && MONEY_NOUNS.has(q.noun)) || q.slots.mod.some((w) => MONEY_NOUNS.has(w)) || q.premodifiers.some((w) => MONEY_NOUNS.has(w));
+  if (money(chosen) && rest.some(money)) return null;
+  return chosen;
+}
+
 function build(
   question: StoryQuestion,
   rates: StoryQuantity[],
@@ -1213,9 +1278,18 @@ function build(
 ): { amount: Amount; shape: string; coveredKinds?: readonly string[] } | null {
   // -------- equal groups --------
   if (rates.length > 0 || groupCounts.length > 0) {
-    if (rates.length !== 1) return null;
-    if (question.kind !== 'total' && question.kind !== 'change') return null;
-    const rate = rates[0];
+    // SEVERAL RATES, ONE ASKED FOR. "Faye was placing her pencils and
+    // crayons into 19 rows with 4 pencils and 27 crayons in each row. How
+    // many PENCILS does she have?" states two rates over the same groups,
+    // and they contrast by what they count — so the question's noun rules
+    // one out, which is exactly the accounting the soundness rule wants
+    // (TASKS #68). Two rates and no noun to choose by still declines.
+    const rate = rates.length === 1 ? rates[0] : pickRate(rates, question);
+    if (rate === null) return null;
+    // A residual question is a rate question too, once the count can be a
+    // story rather than a single number ("gave 5 of his 14 boxes away —
+    // how many pieces does he still have?").
+    if (question.kind !== 'total' && question.kind !== 'change' && question.kind !== 'residual') return null;
     const perNoun = rate.noun;
     const groupNoun = rate.groupNoun;
     const asksPer = question.nouns.some((n) => sameNoun(n, perNoun));
@@ -1225,19 +1299,40 @@ function build(
       // and it must all count the per-noun.
       if (groupCounts.length > 0 || plain.length === 0) return null;
       if (!plain.every((q) => sameNoun(q.noun, perNoun) || q.noun === null)) return null;
-      const whole = narrative(plain, 'total', unknowns, question.text);
+      const whole = narrative(plain, question.kind === 'residual' ? 'residual' : 'total', unknowns, question.text);
       if (whole === null) return null;
       const shared = divBy(whole, amount(rate.exact), question, question.stemNoun ?? groupNoun);
       return shared === null ? null : { amount: shared, shape: 'groups = whole ÷ per' };
     }
     if (!asksPer && question.nouns.length > 0) return null;
-    // per × groups. The group count is the explicit "each of the N" or the
-    // one remaining quantity counting the group noun.
-    const counts = groupCounts.length > 0 ? groupCounts : plain.filter((q) => groupNoun !== null && sameNoun(q.noun, groupNoun));
-    if (counts.length !== 1) return null;
-    const others = plain.filter((q) => q !== counts[0]);
-    if (others.length > 0) return null; // a third quantity: not this shape
-    return { amount: mulA(amount(counts[0].exact), amount(rate.exact)), shape: 'per × groups' };
+    // per × groups. An explicit "each of the N" IS the count, and then
+    // nothing else may be left over.
+    if (groupCounts.length > 0) {
+      if (groupCounts.length !== 1 || plain.length > 0) return null;
+      return { amount: mulA(amount(groupCounts[0].exact), amount(rate.exact)), shape: 'per × groups' };
+    }
+    // Otherwise the count is the story the remaining quantities tell ABOUT
+    // THE GROUPS — one number in the simple case, and a gain, a loss or
+    // what is left when the story moves them. That is the first COMPOSED
+    // derivation this engine builds (TASKS #68): "Kaleb bought 14 boxes and
+    // gave 5 to his brother; each box has 6 pieces" is (14 − 5) × 6, a
+    // term two operations deep, and the narrative's own soundness rules
+    // (every quantity placed, no negative intermediate) still decide it.
+    // Every remaining quantity has to count the groups, or the story holds
+    // a third thing this shape cannot place.
+    if (groupNoun === null || plain.length === 0) return null;
+    // A quantity with no noun of its own joins the group story only when it
+    // TAKES FROM it: "gave 5 to his little brother" can only be five of the
+    // boxes just mentioned, while "We ordered 17 pizzas … if there are 25
+    // of us" adds a number that counts something else entirely. An unnamed
+    // ADDITION to a rate story is the third thing this shape cannot place.
+    if (!plain.every((q) => sameNoun(q.noun, groupNoun) || (q.noun === null && q.role === 'loss'))) return null;
+    const groups = narrative(plain, question.kind, unknowns, question.text);
+    if (groups === null) return null;
+    return {
+      amount: mulA(groups, amount(rate.exact)),
+      shape: plain.length > 1 ? 'per × groups after the story' : 'per × groups'
+    };
   }
   // -------- a share with no stated rate: whole ÷ groups --------
   if (question.kind === 'share') {
