@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { SemanticObserverState } from '@sschepis/sentient-core';
 import type { ObserverStatus } from '../observer/engine';
 import type { RemoteServerState } from '../server/client';
@@ -20,12 +21,19 @@ import type { RemoteServerState } from '../server/client';
  *              competency the creative layer unlocks on);
  *   drives     the drive vector, non-perturbing snapshot.
  *
- * A value the server has not sent is shown as "—", never as 0.000.
+ * A value the server has not sent is shown as "—", never as 0.000. And a
+ * value the server sent A WHILE AGO is shown as stale, never as current:
+ * the strip carries the age of its own reading, because a frozen number
+ * that looks live is the one failure this project cannot tolerate in a
+ * readout. (It happened: a single failed poll used to end the polling for
+ * good, and the whole strip sat still while the app looked awake.)
  */
 export interface ModelStateBarProps {
   status: ObserverStatus;
   /** The server's state line (null while offline). */
   server: RemoteServerState | null;
+  /** When that state line was last read successfully. */
+  stateAt?: number | null;
   /** The live field metrics from the tick stream (null until one arrives). */
   metrics: SemanticObserverState | null;
   /** True while the autonomous classroom is running. */
@@ -57,13 +65,29 @@ function Meter({ label, value, tone }: { label: string; value: number | null; to
 
 const fixed = (value: number | null | undefined, digits: number): string => (value === null || value === undefined || !Number.isFinite(value) ? '—' : value.toFixed(digits));
 
-export function ModelStateBar({ status, server, metrics, learning }: ModelStateBarProps) {
+/** How old a reading may get before the strip stops calling it current. */
+const STALE_AFTER_MS = 12_000;
+
+export function ModelStateBar({ status, server, stateAt = null, metrics, learning }: ModelStateBarProps) {
+  // The strip keeps its own clock: when the poll stops, nothing else
+  // re-renders it, and a readout that cannot notice its own silence is
+  // exactly the problem.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 2000);
+    return () => clearInterval(id);
+  }, []);
+  const age = stateAt === null ? null : now - stateAt;
+  const stale = server !== null && (age === null || age > STALE_AFTER_MS);
+  const ageText = age === null ? 'never read' : age < 90_000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60_000)} min ago`;
+
   // The field: the tick stream is freshest; the state line's settled reading
   // is the fallback (and the only source while the field is asleep).
   const field = server?.field ?? null;
   const ticking = field?.ticking ?? server?.running ?? false;
-  // A stale tick-stream reading must not outlive the field's sleep.
-  const live = ticking ? metrics : null;
+  // A stale tick-stream reading must not outlive the field's sleep — nor
+  // the connection that carried it.
+  const live = ticking && !stale ? metrics : null;
   const coherence = live?.coherence ?? field?.coherence ?? null;
   const entropy = live?.entropy ?? field?.entropy ?? null;
   const order = live?.orderParameter ?? field?.orderParameter ?? null;
@@ -86,16 +110,30 @@ export function ModelStateBar({ status, server, metrics, learning }: ModelStateB
           : status === 'loading'
             ? 'bg-sky-400'
             : 'bg-slate-600';
-  const statusText = server === null ? 'offline' : status === 'idle' || !ticking ? 'asleep' : learning ? 'learning' : status === 'degraded' ? 'degraded' : 'awake';
+  const statusText = server === null ? 'offline' : stale ? 'stale' : status === 'idle' || !ticking ? 'asleep' : learning ? 'learning' : status === 'degraded' ? 'degraded' : 'awake';
 
   return (
-    <header className="flex shrink-0 flex-wrap items-stretch gap-x-1 gap-y-1 border-b border-slate-800/80 bg-slate-950/60 px-4 py-1.5 backdrop-blur">
-      <div className="flex items-center gap-2 px-2" title={server === null ? 'no observer server reachable' : `server build ${server.build} · ${server.tickCount.toLocaleString()} ticks`}>
+    <header
+      className={`flex shrink-0 flex-wrap items-stretch gap-x-1 gap-y-1 border-b bg-slate-950/60 px-4 py-1.5 backdrop-blur transition-opacity ${
+        stale ? 'border-amber-500/40 opacity-60' : 'border-slate-800/80'
+      }`}
+    >
+      <div
+        className="flex items-center gap-2 px-2"
+        title={
+          server === null
+            ? 'no observer server reachable'
+            : `server build ${server.build} · ${server.tickCount.toLocaleString()} ticks · state read ${ageText}${
+                stale ? ' — these numbers are NOT current; the app is retrying' : ''
+              }`
+        }
+      >
         <span className="relative flex h-2 w-2">
-          {learning && server !== null && <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${statusTone} opacity-70`} />}
-          <span className={`relative inline-flex h-2 w-2 rounded-full ${server === null ? 'bg-slate-600' : statusTone}`} />
+          {learning && server !== null && !stale && <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${statusTone} opacity-70`} />}
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${server === null ? 'bg-slate-600' : stale ? 'bg-amber-400' : statusTone}`} />
         </span>
-        <span className="text-xs font-medium text-slate-300">{statusText}</span>
+        <span className={`text-xs font-medium ${stale ? 'text-amber-300' : 'text-slate-300'}`}>{statusText}</span>
+        {stale && <span className="font-mono text-[10px] text-amber-400/80">{ageText}</span>}
       </div>
 
       <div className="w-px self-stretch bg-slate-800/80" />

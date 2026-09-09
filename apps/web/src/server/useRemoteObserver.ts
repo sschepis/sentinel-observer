@@ -34,6 +34,10 @@ export interface RemoteObserverState {
   signals: ObserverSignal[];
   learningEvents: RemoteLearningEvent[];
   server: RemoteServerState | null;
+  /** When the state line was last read successfully (null before the first
+   *  read) — the UI marks the strip stale rather than showing an old
+   *  reading as a live one. */
+  stateAt: number | null;
   client: RemoteClient;
   connect: () => void;
   disconnect: () => void;
@@ -53,12 +57,27 @@ export function useRemoteObserver(url: string): RemoteObserverState {
   const [signals, setSignals] = useState<ObserverSignal[]>([]);
   const [learningEvents, setLearningEvents] = useState<RemoteLearningEvent[]>([]);
   const [server, setServer] = useState<RemoteServerState | null>(null);
+  /** When the state line was last read SUCCESSFULLY — the UI shows numbers
+   *  as stale rather than presenting an old reading as a live one. */
+  const [stateAt, setStateAt] = useState<number | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  /** When the last stream event arrived, for the liveness watchdog. */
+  const lastEventRef = useRef<number>(Date.now());
+  /** The freshest server state, readable from the watchdog without making
+   *  it depend on a re-render. */
+  const serverRef = useRef<RemoteServerState | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const state = await client.state();
       setServer(state);
+      serverRef.current = state;
+      setStateAt(Date.now());
+      // A SUCCESSFUL READ CLEARS THE FAILURE. Without this the hook stayed
+      // in `error` after the server came back, and every number on the
+      // model-state strip froze at whatever it last read (see the polling
+      // effect below).
+      setError(null);
       setStatus(state.status === 'error' ? 'error' : 'ready');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -72,6 +91,7 @@ export function useRemoteObserver(url: string): RemoteObserverState {
     unsubscribeRef.current?.();
     unsubscribeRef.current = client.connect(
       (event) => {
+        lastEventRef.current = Date.now();
         if (event.kind === 'metrics') {
           setMetrics(event.state);
           return;
@@ -113,16 +133,43 @@ export function useRemoteObserver(url: string): RemoteObserverState {
     void refresh();
   }, [client, refresh]);
 
-  // The state line (vocabulary, drives, knowledge entropy) must not depend on
-  // a server event arriving: poll it every few seconds while connected. It is
-  // one small GET; the server answers from cached readings.
+  // THE POLL MUST OUTLIVE A FAILURE. The state line (field, vocabulary,
+  // drives, knowledge entropy) must not depend on a server event arriving,
+  // so it is polled every few seconds — and the poll runs whenever the hook
+  // is connected AT ALL, not only while it is healthy.
+  //
+  // It used to be gated on `status === 'ready'`, which made a single failed
+  // read permanent: the dev server restarts on every source edit, one GET
+  // failed, status went to `error`, the interval was torn down, and nothing
+  // was left to notice the server had come back. Every number on the strip
+  // then sat frozen at its last reading while the app looked awake — which
+  // is the one thing this project must never do with a number.
   useEffect(() => {
-    if (status !== 'ready') return;
+    if (status === 'idle') return;
     const id = setInterval(() => {
       void refresh();
     }, 4000);
     return () => clearInterval(id);
   }, [status, refresh]);
+
+  // A STREAM THAT HAS GONE QUIET IS A DEAD STREAM. The server sends a
+  // comment keepalive every 15 s, which does not fire an event listener, so
+  // silence here means only that no real event arrived — harmless while the
+  // field sleeps. But when the server says it is ticking or training and
+  // nothing has arrived for half a minute, the EventSource is half-open (a
+  // laptop that slept, a restarted server the browser never re-reached):
+  // rebuild it rather than waiting for a retry that is not coming.
+  useEffect(() => {
+    if (status === 'idle') return;
+    const id = setInterval(() => {
+      const expectingEvents = serverRef.current?.running === true || serverRef.current?.trainingRunning === true;
+      if (!expectingEvents) return;
+      if (Date.now() - lastEventRef.current < 30_000) return;
+      lastEventRef.current = Date.now();
+      connect();
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [status, connect]);
 
   const disconnect = useCallback(() => {
     unsubscribeRef.current?.();
@@ -133,5 +180,5 @@ export function useRemoteObserver(url: string): RemoteObserverState {
 
   useEffect(() => () => disconnect(), [disconnect]);
 
-  return { status, error, metrics, signals, learningEvents, server, client, connect, disconnect, refresh };
+  return { status, error, metrics, signals, learningEvents, server, stateAt, client, connect, disconnect, refresh };
 }

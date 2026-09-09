@@ -115,6 +115,10 @@ export const CURRICULUM_BUDGET = 1000;
 /** Network-entropy readout cadence (task 39): every N cycles, after the
  *  curriculum feed so a feed's effect is read in the same cycle. */
 export const ENTROPY_EVERY = 5;
+/** How many cycles in a row may fail before the loop gives up. One bad
+ *  corpus row is a hiccup and must be survived; five in a row is a real
+ *  fault, and stopping with the reason on the feed is the honest answer. */
+export const MAX_CONSECUTIVE_FAILURES = 5;
 const round3 = (x: number): number => Math.round(x * 1000) / 1000;
 
 /** Cycles between grader checks (the first runs before the first cycle). */
@@ -221,58 +225,88 @@ export class TrainingLoop {
       const first = this.entropyStep();
       if (first !== null) this.options.onEvents?.([first]);
     }
+    // ONE BAD CYCLE MUST NOT END THE CLASSROOM. The loop used to have a
+    // single try around the whole `while`, so the first exception anywhere
+    // in it — one malformed corpus row, one arithmetic step that threw —
+    // fell out of the loop, emitted "learning stopped", and the observer sat
+    // idle until the process was restarted. Nothing in the UI said why, and
+    // nothing brought it back. A cycle that throws is now reported and
+    // RETRIED; only a run of consecutive failures stops the loop, and then
+    // it says so in as many words.
+    let consecutiveFailures = 0;
     try {
       while (!controller.signal.aborted) {
-        if (grader !== null && checkEvery > 0 && this.stats.cycles % checkEvery === 0) {
-          const checked = await this.graderCheckStep(grader, controller.signal);
-          if (checked.length > 0) this.options.onEvents?.(checked);
-          if (controller.signal.aborted) break;
-        }
-        const cycle = await runAutonomousCycle(this.teacher, chaperone, grader, controller.signal, {
-          wordsPerCycle: this.options.wordsPerCycle ?? 3,
-          reviewsPerCycle: this.options.reviewsPerCycle ?? 2
-        });
-        if (controller.signal.aborted) break;
-        const at = Date.now();
-        this.stats.cycles += 1;
-        this.stats.wordsTaught += cycle.wordsTaught;
-        this.stats.wordsReviewed += cycle.wordsReviewed;
-        this.stats.phrasesTaught += cycle.phrasesTaught;
-        this.stats.llmCalls += cycle.llmCalls;
-        this.stats.selfAnswered += cycle.selfAnswered;
-        if (cycle.drill !== null) {
-          this.stats.drillsRun += 1;
-          if (cycle.drill.verdict === 'induced' || cycle.drill.verdict === 'rule-induced') this.stats.drillsInduced += 1;
-          if (cycle.drill.verdict === 'memorized') this.stats.drillsMemorized += 1;
-        }
-        this.options.onEvents?.(cycle.events.map((event) => fromAutonomousEvent(event, at)));
-        if (this.options.pursueGoals !== false && !controller.signal.aborted) {
-          const goalEvents = await this.goalStep();
-          if (goalEvents.length > 0) this.options.onEvents?.(goalEvents);
-        }
-        if (this.feeder !== null && feedEvery > 0 && this.stats.cycles % feedEvery === 0 && !controller.signal.aborted) {
-          const fed = this.curriculumStep();
-          if (fed !== null) this.options.onEvents?.([fed]);
-        }
-        if (entropyEvery > 0 && this.stats.cycles % entropyEvery === 0 && !controller.signal.aborted) {
-          const measured = this.entropyStep();
-          if (measured !== null) this.options.onEvents?.([measured]);
-        }
-        this.options.onCycle?.(this.statistics());
-        if (this.options.researchTopics === true && !controller.signal.aborted) {
-          const researched = await this.researchTopicStep(chaperone, controller.signal);
-          if (researched !== null) {
-            this.stats.phrasesTaught += researched.phrasesTaught;
-            this.options.onEvents?.(researched.events);
+        try {
+          if (grader !== null && checkEvery > 0 && this.stats.cycles % checkEvery === 0) {
+            const checked = await this.graderCheckStep(grader, controller.signal);
+            if (checked.length > 0) this.options.onEvents?.(checked);
+            if (controller.signal.aborted) break;
           }
+          const cycle = await runAutonomousCycle(this.teacher, chaperone, grader, controller.signal, {
+            wordsPerCycle: this.options.wordsPerCycle ?? 3,
+            reviewsPerCycle: this.options.reviewsPerCycle ?? 2
+          });
+          if (controller.signal.aborted) break;
+          const at = Date.now();
+          this.stats.cycles += 1;
+          this.stats.wordsTaught += cycle.wordsTaught;
+          this.stats.wordsReviewed += cycle.wordsReviewed;
+          this.stats.phrasesTaught += cycle.phrasesTaught;
+          this.stats.llmCalls += cycle.llmCalls;
+          this.stats.selfAnswered += cycle.selfAnswered;
+          if (cycle.drill !== null) {
+            this.stats.drillsRun += 1;
+            if (cycle.drill.verdict === 'induced' || cycle.drill.verdict === 'rule-induced') this.stats.drillsInduced += 1;
+            if (cycle.drill.verdict === 'memorized') this.stats.drillsMemorized += 1;
+          }
+          this.options.onEvents?.(cycle.events.map((event) => fromAutonomousEvent(event, at)));
+          if (this.options.pursueGoals !== false && !controller.signal.aborted) {
+            const goalEvents = await this.goalStep();
+            if (goalEvents.length > 0) this.options.onEvents?.(goalEvents);
+          }
+          if (this.feeder !== null && feedEvery > 0 && this.stats.cycles % feedEvery === 0 && !controller.signal.aborted) {
+            const fed = this.curriculumStep();
+            if (fed !== null) this.options.onEvents?.([fed]);
+          }
+          if (entropyEvery > 0 && this.stats.cycles % entropyEvery === 0 && !controller.signal.aborted) {
+            const measured = this.entropyStep();
+            if (measured !== null) this.options.onEvents?.([measured]);
+          }
+          this.options.onCycle?.(this.statistics());
+          if (this.options.researchTopics === true && !controller.signal.aborted) {
+            const researched = await this.researchTopicStep(chaperone, controller.signal);
+            if (researched !== null) {
+              this.stats.phrasesTaught += researched.phrasesTaught;
+              this.options.onEvents?.(researched.events);
+            }
+          }
+          consecutiveFailures = 0;
+          await pause(this.options.cadenceMs ?? 400, controller.signal);
+        } catch (reason) {
+          if (controller.signal.aborted) break;
+          const message = reason instanceof Error ? reason.message : String(reason);
+          consecutiveFailures += 1;
+          this.options.onError?.(message);
+          this.options.onEvents?.([
+            makeEvent({
+              kind: 'error',
+              label: 'error',
+              text: `cycle failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}) — retrying · ${message}`
+            })
+          ]);
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            this.options.onEvents?.([
+              makeEvent({
+                kind: 'error',
+                label: 'error',
+                text: `learning stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive failures · ${message}`
+              })
+            ]);
+            break;
+          }
+          // Back off a little so a hard failure does not spin the process.
+          await pause(Math.max(this.options.cadenceMs ?? 400, 1000), controller.signal);
         }
-        await pause(this.options.cadenceMs ?? 400, controller.signal);
-      }
-    } catch (reason) {
-      if (!controller.signal.aborted) {
-        const message = reason instanceof Error ? reason.message : String(reason);
-        this.options.onError?.(message);
-        this.options.onEvents?.([makeEvent({ kind: 'error', label: 'error', text: message })]);
       }
     } finally {
       if (this.controller === controller) this.controller = null;
