@@ -68,6 +68,7 @@ import {
 } from '../conceptSynthesis';
 import { conceptNetConfidenceBump, conceptNetWeightOf } from '../../curriculum/conceptnet';
 import type { RelationBatch } from '../../curriculum/types';
+import { conceptEntropies, networkEntropy, type ConceptEntropy, type NetworkEntropyReport } from '../networkEntropy';
 
 /**
  * H (Phase H): an induced concept node — MDL abstraction over the graph
@@ -476,6 +477,35 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
     relations(): Relation[] {
       this.ensureRelationsBuilt();
       return this.relationsCache as Relation[];
+    }
+
+    /**
+     * NETWORK ENTROPY (docs/SYNTHETIC_MIND.md §1, task 39): how unsure the
+     * observer would be if asked about each concept it knows, summed. A
+     * readout over the relation graph, the confirmed-false store and the gap
+     * ledger — it changes nothing. `concepts` restricts the measurement to a
+     * fixed set (the benches compare a step's before/after on the same words).
+     */
+    networkEntropy(options: { concepts?: ReadonlySet<string>; topN?: number } = {}): NetworkEntropyReport {
+      return networkEntropy(this.entropyInput(options));
+    }
+
+    /** Per-concept entropy, most uncertain (weighted) first. */
+    conceptEntropies(options: { concepts?: ReadonlySet<string> } = {}): ConceptEntropy[] {
+      return conceptEntropies(this.entropyInput(options));
+    }
+
+    private entropyInput(options: { concepts?: ReadonlySet<string>; topN?: number }): Parameters<typeof networkEntropy>[0] {
+      const words: Array<{ word: string; definition: string }> = [];
+      for (const state of this.states.values()) words.push({ word: state.word.word, definition: state.word.definition });
+      return {
+        words,
+        relations: this.relations(),
+        negations: this.negations,
+        gapCounts: this.gapMissCounts,
+        concepts: options.concepts,
+        topN: options.topN
+      };
     }
 
     /** The UNSPlit relation graph — the surface-word view the pre-split

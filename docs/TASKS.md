@@ -1,6 +1,6 @@
 # Sentinel Observer — task list
 
-*Updated 2026-09-08. Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it), NULL_ARMS.md (the memory-substrate measurements) and SYNTHETIC_MIND.md (the gap analysis from here to the stated goal; its tasks 39–58 are listed below).*
+*Updated 2026-09-09. Companion to ANALYSIS.md (what was wrong), IMPROVEMENT_PLAN.md (what to do about it), NULL_ARMS.md (the memory-substrate measurements) and SYNTHETIC_MIND.md (the gap analysis from here to the stated goal; its tasks 39–58 are listed below).*
 
 ## Where things stand, in plain terms
 
@@ -99,11 +99,11 @@ The goal, stated so it can fail: a system that self-organizes and learns in real
 
 | # | Task | Who | Acceptance |
 |---|---|---|---|
-| 39 | Network entropy readout: `networkEntropy()` over the observer's own answers per concept, logged per learning step, in introspection | Claude | unit test: corroborating edge lowers, contradicting edge raises, re-teaching is invariant |
-| 40 | Held-out ConceptNet edge-recovery bench (was #38), by relation and hop count | Claude, after #35 | `bench/curriculum/*.json` artifact |
-| 41 | The prediction: Δ entropy per feeder step vs held-out recovery, with "edges added" as the null predictor | Claude | correlations reported whichever sign |
-| 42 | Soundness audit gate: every assertion in every bench has provenance that exists and entails the claim; CI fails on the first that does not | Claude | `soundnessGate.test.ts` green on main |
-| 43 | One-shot learning bench — the person test (teach once in conversation → use with old knowledge → after a delay → after a correction → composition → contradiction handled) | Claude | runs on main; expected to fail shapes 1, 3, 4 today |
+| 39 | Network entropy readout: `networkEntropy()` over the observer's own answers per concept, logged per learning step, in introspection | Claude — **done** | `teacher/networkEntropy.ts` + test (6 green). Training loop reads it every 5 cycles (`entropy` / `entropyDelta` in stats, an `entropy:` line in the stream); `introspection().trust.entropy`; Introspect view shows total, per-concept mean, slot states and the most uncertain concepts. Slot ladder: certain 0.29 bits · single-source 0.81 · inherited 0.88 · weakened 0.93 · conflicted / unknown 1.00. |
+| 40 | Held-out ConceptNet edge-recovery bench (was #38), by relation and by path (direct / inherited / graded layer) | Claude — built, first run pending | `curriculum/heldOutRecoveryBenchmark.test.ts` (bench config; `RECOVERY_STEPS/BUDGET/PROBES/TAUGHT` env). Writes `bench/curriculum/held-out-recovery-<date>.json`. |
+| 41 | The prediction: Δ entropy per feeder step vs held-out recovery, with "edges added" as the null predictor | Claude — in #40's artifact | Reports Spearman ρ(Δentropy, Δrecovery) (expect < 0) beside ρ(edges added, Δrecovery). |
+| 42 | Soundness audit gate: every assertion in every bench has provenance that exists and entails the claim; CI fails on the first that does not | Claude — **done, green** | `teacher/soundness.ts` (the invariant, per layer; the graded layer counts when the answer is hedged and the distributed-vector score re-checks above the operators' floor) + `soundnessGate.test.ts`: 476 answers audited · 80 derived · 12 structural · 384 abstained · 0 dangling · 0 unbacked. **Its first run found a real defect**: a Markov fallback sentence spoken as a flat assertion ("tell me about the farm" → "Tell me about the farm."). Fixed: an ungrounded composition is now spoken inside a decline that names it as word-play (`speakUngrounded`, speechAct.ts); the `grounded: false` flag and the grounding score are unchanged. |
+| 43 | One-shot learning bench — the person test | Claude — **done; 1/6 today** | `teacher/oneShotLearningBenchmark.test.ts` (bench config), writes `bench/one-shot/latest.json`. First run: shape 1 fails (a declarative typed in chat is not read into an edge → task 44); shapes 2, 4, 5 blocked by 1; **shape 3 fails as WRONG** — "no, a cow does not have a tail" is not parsed by the negation grammar (it wants the bare "X does not have Y"), so the correction is asked back and the old answer stands → task 45; control (no unearned Yes) passes. |
 
 **Phase 1 — conversation as a learning channel**
 

@@ -7,7 +7,7 @@
  * that motivated the task: a read-about entity spoken at the ask layer.
  */
 import { describe, it, expect } from '@jest/globals';
-import { readSpeech, speechActOf } from './speechAct';
+import { readSpeech, speechActOf, speakUngrounded, UNGROUNDED_LEAD } from './speechAct';
 import type { ChatAnswer } from './agent/support';
 import { ObserverSession } from '../observer/engine';
 import { TeacherAgent } from './TeacherAgent';
@@ -78,6 +78,12 @@ describe('readSpeech — speech act × backing', () => {
     expect(readSpeech(cited)).toEqual({ act: 'assertion', meter: 'grounded', unbacked: false });
     const markov: ChatAnswer = { ...base, grounded: false, response: 'A robin flies the sky red.', provenance: NONE };
     expect(readSpeech(markov)).toEqual({ act: 'assertion', meter: 'composed', unbacked: true });
+    // Task 42: the fallback as chatAnswer now SPEAKS it — inside a decline that
+    // names it as word-play. Nothing ungrounded is asserted.
+    const labeled: ChatAnswer = { ...markov, response: speakUngrounded('A robin flies the sky red.') };
+    expect(labeled.response.startsWith(UNGROUNDED_LEAD)).toBe(true);
+    expect(labeled.response).toContain('“A robin flies the sky red.”');
+    expect(readSpeech(labeled)).toEqual({ act: 'decline', meter: 'abstained', unbacked: false });
   });
 });
 

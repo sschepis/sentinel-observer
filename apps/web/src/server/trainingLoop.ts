@@ -37,6 +37,7 @@ import { fromAutonomousEvent, makeEvent, type LearningEvent } from '../learning/
 import { checkGrader, describeGraderCheck, graderProbesFrom } from '../teacher/graderCheck';
 import type { SemanticGrader } from '../teacher/chaperone';
 import { CurriculumFeeder, describeFeed, discoverSources } from '../curriculum/registry';
+import { describeEntropy, type NetworkEntropyReport } from '../teacher/networkEntropy';
 
 export interface TrainingStats {
   cycles: number;
@@ -59,6 +60,11 @@ export interface TrainingStats {
   /** src/curriculum: rows consumed from the corpus, and edges/pairs/definitions it took. */
   curriculumRows: number;
   curriculumAccepted: number;
+  /** docs/SYNTHETIC_MIND.md task 39: the network entropy readout — the
+   *  latest measurement and its change since the previous one. Null until
+   *  the first measurement. Readout only. */
+  entropy: NetworkEntropyReport | null;
+  entropyDelta: { total: number; mean: number; weightedTotal: number } | null;
 }
 
 export const EMPTY_TRAINING_STATS: TrainingStats = {
@@ -77,7 +83,9 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
   graderChecks: 0,
   graderTrusted: null,
   curriculumRows: 0,
-  curriculumAccepted: 0
+  curriculumAccepted: 0,
+  entropy: null,
+  entropyDelta: null
 };
 
 /** Corpus ingestion cadence: one feed every N cycles (the relation graph is
@@ -88,6 +96,10 @@ export const EMPTY_TRAINING_STATS: TrainingStats = {
 export const CURRICULUM_EVERY = 5;
 /** Rows per feed. */
 export const CURRICULUM_BUDGET = 1000;
+/** Network-entropy readout cadence (task 39): every N cycles, after the
+ *  curriculum feed so a feed's effect is read in the same cycle. */
+export const ENTROPY_EVERY = 5;
+const round3 = (x: number): number => Math.round(x * 1000) / 1000;
 
 /** Cycles between grader checks (the first runs before the first cycle). */
 export const GRADER_CHECK_EVERY = 100;
@@ -126,6 +138,8 @@ export interface TrainingLoopOptions {
   onEvents?: (events: readonly LearningEvent[]) => void;
   onCycle?: (stats: Readonly<TrainingStats>) => void;
   onError?: (message: string) => void;
+  /** Measure the network entropy every N cycles (default ENTROPY_EVERY; 0 = never). */
+  entropyEvery?: number;
 }
 
 export class TrainingLoop {
@@ -186,6 +200,11 @@ export class TrainingLoop {
       ]);
     }
     const feedEvery = this.options.curriculumEvery ?? CURRICULUM_EVERY;
+    const entropyEvery = this.options.entropyEvery ?? ENTROPY_EVERY;
+    if (entropyEvery > 0) {
+      const first = this.entropyStep();
+      if (first !== null) this.options.onEvents?.([first]);
+    }
     try {
       while (!controller.signal.aborted) {
         if (grader !== null && checkEvery > 0 && this.stats.cycles % checkEvery === 0) {
@@ -219,6 +238,10 @@ export class TrainingLoop {
           const fed = this.curriculumStep();
           if (fed !== null) this.options.onEvents?.([fed]);
         }
+        if (entropyEvery > 0 && this.stats.cycles % entropyEvery === 0 && !controller.signal.aborted) {
+          const measured = this.entropyStep();
+          if (measured !== null) this.options.onEvents?.([measured]);
+        }
         this.options.onCycle?.(this.statistics());
         if (this.options.researchTopics === true && !controller.signal.aborted) {
           const researched = await this.researchTopicStep(chaperone, controller.signal);
@@ -238,6 +261,31 @@ export class TrainingLoop {
     } finally {
       if (this.controller === controller) this.controller = null;
       this.options.onEvents?.([makeEvent({ kind: 'system', label: 'system', text: 'learning stopped' })]);
+    }
+  }
+
+  /**
+   * Task 39: measure the network entropy (teacher/networkEntropy.ts) and log
+   * it next to the learning stats, with its change since the last reading —
+   * the number the whole design predicts should fall as channels open. A
+   * readout: nothing in the observer moves. Never throws.
+   */
+  private entropyStep(): LearningEvent | null {
+    try {
+      const previous = this.stats.entropy;
+      const report = this.teacher.networkEntropy({ topN: 10 });
+      this.stats.entropy = report;
+      this.stats.entropyDelta =
+        previous === null
+          ? null
+          : {
+              total: round3(report.total - previous.total),
+              mean: round3(report.mean - previous.mean),
+              weightedTotal: round3(report.weightedTotal - previous.weightedTotal)
+            };
+      return makeEvent({ kind: 'system', label: 'entropy', text: describeEntropy(report, previous) });
+    } catch (reason) {
+      return makeEvent({ kind: 'error', label: 'entropy', text: `entropy readout failed: ${reason instanceof Error ? reason.message : String(reason)}` });
     }
   }
 

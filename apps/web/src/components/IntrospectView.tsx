@@ -91,8 +91,17 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
     deviation?: { answers: number; grounded: number; composed: number; abstained: number; groundedShare: number; composedShare: number; abstainedShare: number };
     /** The grader check's verdicts — absent from older servers. */
     graders?: Record<string, { trusted: boolean; auc: number | null; goodPass: number | null; probes: number; at: number; reason: string }>;
+    /** Task 39 — the network entropy readout; absent from older servers. */
+    entropy?: {
+      concepts: number;
+      total: number;
+      weightedTotal: number;
+      mean: number;
+      byState: Record<string, number>;
+      top: Array<{ word: string; bits: number; weight: number }>;
+    };
   };
-  const training = snapshot.training as Record<string, number | boolean | null> | null;
+  const training = snapshot.training as Record<string, number | boolean | null | object> | null;
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto px-6 py-5 lg:grid-cols-2">
@@ -186,6 +195,21 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
             />
           </div>
         )}
+        {trust.entropy !== undefined && trust.entropy.concepts > 0 && (
+          <div className="mb-2 border-b border-slate-800/60 pb-2">
+            <Row
+              label="network entropy"
+              value={`${trust.entropy.total.toFixed(0)} bits · ${trust.entropy.mean.toFixed(2)} per concept`}
+              hint={`how unsure it would be if asked about each of ${trust.entropy.concepts} concepts · ${trust.entropy.byState.certain ?? 0} slots certain · ${trust.entropy.byState.conflicted ?? 0} conflicted · ${trust.entropy.byState.unknown ?? 0} unknown`}
+            />
+            {trust.entropy.top.length > 0 && (
+              <div className="mt-1 text-[11px] text-slate-500">
+                most uncertain, weighted by how often asked:{' '}
+                <span className="text-slate-400">{trust.entropy.top.slice(0, 8).map((entry) => `${entry.word} (${entry.bits.toFixed(1)}${entry.weight > 1 ? ` ×${entry.weight}` : ''})`).join(', ')}</span>
+              </div>
+            )}
+          </div>
+        )}
         {trust.graders !== undefined && Object.keys(trust.graders).length > 0 && (
           <div className="mb-2 space-y-1 border-b border-slate-800/60 pb-2">
             {Object.entries(trust.graders).map(([name, entry]) => (
@@ -243,6 +267,13 @@ export function IntrospectView({ client, revision }: IntrospectViewProps): JSX.E
                 label="corpus rows fed / taken"
                 value={`${training.curriculumRows} / ${training.curriculumAccepted}`}
                 hint="outside corpora (ConceptNet, dialogue, passages, problems) ingested by the classroom under its budget"
+              />
+            )}
+            {training.entropyDelta !== undefined && training.entropyDelta !== null && typeof training.entropyDelta === 'object' && (
+              <Row
+                label="entropy change (last reading)"
+                value={`${(training.entropyDelta as unknown as { total: number }).total >= 0 ? '+' : ''}${(training.entropyDelta as unknown as { total: number }).total.toFixed(1)} bits · mean ${(training.entropyDelta as unknown as { mean: number }).mean >= 0 ? '+' : ''}${(training.entropyDelta as unknown as { mean: number }).mean.toFixed(3)}`}
+                hint="falling is learning; rising is new vocabulary or new disagreement"
               />
             )}
             {training.goalSteps !== undefined && (

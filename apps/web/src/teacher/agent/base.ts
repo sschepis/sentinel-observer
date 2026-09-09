@@ -60,6 +60,7 @@ import type { WeightMeta } from '../agedWeights';
 import type { Relation, SourceClass, Negation, RelationPredicate } from '../relations';
 import type { DerivationDenial } from '../rules/types';
 import type { SenseAssignment } from '../senseModel';
+import type { ConceptEntropy, NetworkEntropyReport } from '../networkEntropy';
 
 export type Constructor<T = object> = new (...args: any[]) => T;
 /** One grader's measured ability to judge (teacher/graderCheck.ts). */
@@ -99,6 +100,8 @@ export interface CrossFacultyApi {
   grownWordList(): Array<{ word: string; primes: number[] }>;
   // ── relations ───────────────────────────────────────────────────────────
   relations(): Relation[];
+  networkEntropy(options?: { concepts?: ReadonlySet<string>; topN?: number }): NetworkEntropyReport;
+  conceptEntropies(options?: { concepts?: ReadonlySet<string> }): ConceptEntropy[];
   addEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void;
   bumpEdge(subject: string, predicate: string, object: string, delta: number): void;
   removeEdgeSource(subject: string, predicate: string, object: string, sourceClass: SourceClass): void;

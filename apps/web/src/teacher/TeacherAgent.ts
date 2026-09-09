@@ -29,7 +29,7 @@ import {
 } from './operators';
 import { deniedFromNegations } from './chain';
 import { senseCandidatesAmbiguous } from './cde';
-import { readSpeech } from './speechAct';
+import { readSpeech, speakUngrounded } from './speechAct';
 import { pathEvidence, pathHedgeWord, type PathEvidence } from './pathEvidence';
 import type { SenseSplitConfig } from './senseModel';
 import {
@@ -82,6 +82,7 @@ import { ConversationMixin } from './agent/conversation';
 import { WordLoopMixin } from './agent/wordloop';
 import { CreativeMixin } from './agent/creative';
 import { PersistenceMixin } from './agent/persistence';
+import type { SoundnessStore } from './soundness';
 import {
   // Module-scope vocabulary moved to agent/support.ts (public names are
   // re-exported below; the internal ones are imported for the class body).
@@ -572,6 +573,33 @@ export class TeacherAgent extends TeacherAgentComposed {
   }
 
   /**
+   * THE STORE AS THE SOUNDNESS CHECKER SEES IT (teacher/soundness.ts, task
+   * 42): read-only views of the relation graph, the confirmed-false store,
+   * taught exchanges, definitions and rules — enough to verify that every
+   * assertion the observer speaks derives from something it holds.
+   */
+  soundnessStore(): SoundnessStore {
+    return {
+      relations: () => this.relations(),
+      negations: () => this.negationsList(),
+      exchangeResponse: (cue) => {
+        const key = cue.trim().toLowerCase();
+        for (const traceId of this.conversationTraceIds) {
+          const trace = this.traceOf(traceId);
+          if (trace?.metadata?.cue === key) return trace.content;
+        }
+        return null;
+      },
+      definitionOf: (word) => this.states.get(word.trim().toLowerCase())?.word.definition ?? '',
+      knowsWord: (word) => this.knowsWord(word),
+      hasTrace: (id) => this.traceOf(id) !== undefined,
+      hasRewriteRule: (id) => this.rewriteRuleStore().get(id) !== undefined,
+      hasCompiledRule: (concept, drill) => this.compiledRulesView().some((rule) => rule.concept === concept && rule.drill === drill),
+      relationalScore: (subject, predicate, object) => this.relationalScore(subject, predicate, object)
+    };
+  }
+
+  /**
    * The observer's single conversational entry point:
    *   1. memorized exchange (from its conversation memory),
    *   2. deterministic OPERATOR answer (novel questions computed from
@@ -1026,7 +1054,10 @@ export class TeacherAgent extends TeacherAgentComposed {
       const contextSeeds = this.workingMemory.recent(4).map((turn) => turn.text);
       const reply = this.creativeReply(resolved, contextSeeds);
       if (reply.sentence.trim().length > 0) {
-        this.workingMemory.note('observer', reply.sentence);
+        // Task 42: an ungrounded composition is never spoken as a claim — it
+        // is quoted inside a decline that names it as word-play.
+        const spoken = reply.grounded ? reply.sentence : speakUngrounded(reply.sentence);
+        this.workingMemory.note('observer', spoken);
         // CURIOSITY FEED: a creative answer to an utterance containing words
         // the observer has never heard still records the gap — fluency must
         // not starve the curiosity drive (a fluent observer that never asks
@@ -1047,7 +1078,7 @@ export class TeacherAgent extends TeacherAgentComposed {
         this.noteGrounding(groundingScore(stripHedges(reply.sentence), seedContents).grounding);
         return finish({
           mode: 'creative',
-          response: reply.sentence,
+          response: spoken,
           confidence: reply.confidence,
           seedTraceIds: reply.seedTraceIds,
           seedCount: reply.seedCount,

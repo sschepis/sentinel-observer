@@ -194,8 +194,8 @@ function listPhrase(words: readonly string[]): string {
 // cosine that gates a hedged answer instead of a hard ASK. Thresholds were
 // measured against the real relation graph: a 2-6 edge subject scores its
 // true filler ≈ 0.4-0.6 while unrelated objects sit < 0.2.
-const HOLO_YES_STRONG = 0.5; // "I believe so — ..."
-const HOLO_YES_WEAK = 0.32; // "Probably — ..." (below: silent -> ASK)
+export const HOLO_YES_STRONG = 0.5; // "I believe so — ..."
+export const HOLO_YES_WEAK = 0.32; // "Probably — ..." (below: silent -> ASK)
 const HOLO_OPEN_FLOOR = 0.3; // open-form candidates above noise
 const HOLO_PARENT_MIN = 0.3; // a parent must itself be a real recovery
 

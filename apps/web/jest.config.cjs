@@ -31,7 +31,13 @@ module.exports = {
     // classroom's ingest budget is set from, not a unit test.
     '<rootDir>/src/curriculum/ingestScaleBenchmark.test.ts',
     // Reads the operator's corpus files (absent in CI): a measurement, not a unit test.
-    '<rootDir>/src/curriculum/passageBenchmark.test.ts'
+    '<rootDir>/src/curriculum/passageBenchmark.test.ts',
+    // The person test (docs/SYNTHETIC_MIND.md task 43): a measurement whose
+    // shapes are expected to fail until conversation is a learning channel.
+    '<rootDir>/src/teacher/oneShotLearningBenchmark.test.ts',
+    // Held-out ConceptNet recovery + the entropy prediction (tasks 40/41):
+    // reads the operator's corpus and feeds for minutes — a measurement.
+    '<rootDir>/src/curriculum/heldOutRecoveryBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

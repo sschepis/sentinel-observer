@@ -1,11 +1,13 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-08.2';
+export const SERVER_BUILD = '2026-09-09.1';
 
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
  *  so the cadence only bounds how stale a strength reading can be. */
 export const RETENTION_SWEEP_MS = 5 * 60 * 1000;
+/** Task 39: the on-demand entropy readout is re-measured at most this often. */
+export const ENTROPY_CACHE_MS = 30 * 1000;
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';
@@ -477,6 +479,17 @@ export class ServerSession {
     this.definitionsRunner?.cancel();
   }
 
+  /** The entropy readout when the training loop is not measuring it: at most
+   *  once every ENTROPY_CACHE_MS, so a polling client never pays twice. */
+  private entropyCache: { at: number; report: ReturnType<TeacherAgent['networkEntropy']> } | null = null;
+  private cachedEntropy(teacher: TeacherAgent): ReturnType<TeacherAgent['networkEntropy']> {
+    const now = Date.now();
+    if (this.entropyCache === null || now - this.entropyCache.at > ENTROPY_CACHE_MS) {
+      this.entropyCache = { at: now, report: teacher.networkEntropy({ topN: 10 }) };
+    }
+    return this.entropyCache.report;
+  }
+
   /**
    * THE INTROSPECTION SNAPSHOT — everything the observer currently wants,
    * believes, prioritizes, and trusts, for the web introspection view. Pure
@@ -545,7 +558,12 @@ export class ServerSession {
         deviation: teacher.deviationMeter(),
         answerModes: teacher.answerModeCounts(),
         // The grader check's verdicts per grader (teacher/graderCheck.ts).
-        graders: teacher.graderTrustSnapshot()
+        graders: teacher.graderTrustSnapshot(),
+        // docs/SYNTHETIC_MIND.md task 39: the network entropy — how unsure
+        // the observer would be if asked about each concept it knows, summed.
+        // The latest training-loop reading when the loop runs (free), else
+        // measured now (a readout; ~ms on the full deck).
+        entropy: this.trainingLoop?.statistics().entropy ?? this.cachedEntropy(teacher)
       },
       training: this.trainingLoop !== null ? this.trainingLoop.statistics() : null
     };

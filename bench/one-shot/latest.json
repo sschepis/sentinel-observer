@@ -1,0 +1,94 @@
+{
+  "at": "2026-09-09T00:46:25.801Z",
+  "passed": 1,
+  "of": 6,
+  "results": [
+    {
+      "shape": "1 told once → used with old knowledge",
+      "verdict": "abstained",
+      "turns": [
+        {
+          "said": "a zebu is a cow",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        },
+        {
+          "said": "does a zebu have a tail",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        }
+      ],
+      "note": "the statement was not read into an edge (task 44)"
+    },
+    {
+      "shape": "2 still known a week later",
+      "verdict": "blocked",
+      "turns": [
+        {
+          "said": "(a week later) does a zebu have a tail",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        }
+      ],
+      "note": "blocked by shape 1"
+    },
+    {
+      "shape": "3 a correction is taken",
+      "verdict": "wrong",
+      "turns": [
+        {
+          "said": "does a cow have a tail",
+          "reply": "Yes, cow has tail.",
+          "mode": "operator"
+        },
+        {
+          "said": "no, a cow does not have a tail",
+          "reply": "I do not know that yet. Could you teach me?",
+          "mode": "ask"
+        },
+        {
+          "said": "does a cow have a tail",
+          "reply": "Yes, cow has tail.",
+          "mode": "operator"
+        }
+      ],
+      "note": "the negation path (chatAnswer 1.5) — a taught falsehood outranks the read edge"
+    },
+    {
+      "shape": "4 the told fact + an old one → an open answer",
+      "verdict": "blocked",
+      "turns": [
+        {
+          "said": "where is a zebu",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        }
+      ],
+      "note": "blocked by shape 1"
+    },
+    {
+      "shape": "5 a contradicting fact is questioned",
+      "verdict": "blocked",
+      "turns": [
+        {
+          "said": "a zebu is a fish",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        }
+      ],
+      "note": "blocked by shape 1"
+    },
+    {
+      "shape": "control: no unearned Yes",
+      "verdict": "pass",
+      "turns": [
+        {
+          "said": "is a zebu a bird",
+          "reply": "I do not know what \"zebu\" means. Could you teach me?",
+          "mode": "ask"
+        }
+      ],
+      "note": "must never be Yes — there is no evidence"
+    }
+  ]
+}

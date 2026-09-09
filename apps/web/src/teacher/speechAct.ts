@@ -60,8 +60,25 @@ const DECLINE_SHAPES: readonly RegExp[] = [
   /^i haven't learned\b/i,
   /^i do not have\b/i,
   /^i cannot trust\b/i,
-  /^i could not parse\b/i
+  /^i could not parse\b/i,
+  // The composition layer's Markov fallback, spoken with its label (task 42):
+  // the observer says it has nothing grounded and quotes the words as play.
+  /^i have nothing grounded\b/i
 ];
+
+/**
+ * THE LABELED FALLBACK, SPOKEN. When the composition layer cannot ground a
+ * sentence in the relation graph it still produces one (the Markov path);
+ * that sentence is NOT a claim about the world and must not be spoken as one
+ * — the soundness invariant (teacher/soundness.ts) forbids exactly that
+ * shape. So it is spoken inside a decline that names what it is: word-play,
+ * not fact. The `grounded: false` flag on the answer and the 'composed'
+ * grounding score keep measuring the same thing they always did.
+ */
+export const UNGROUNDED_LEAD = 'I have nothing grounded to say about that yet — these are only words I put together:';
+export function speakUngrounded(sentence: string): string {
+  return `${UNGROUNDED_LEAD} “${sentence.trim()}”`;
+}
 
 /** Classify a spoken response by its shape alone. Exported for the bench. */
 export function speechActOf(response: string): SpeechAct {
