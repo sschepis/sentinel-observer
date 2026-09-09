@@ -167,7 +167,10 @@ export function WordLoopMixin<TBase extends Constructor<TeacherAgentCore & Cross
         state.word.example = generated.example;
         applied += 1;
       }
-      if (applied > 0) this.invalidateRelations();
+      if (applied > 0) {
+        this.definitionsVersion += 1;
+        this.invalidateRelations();
+      }
       return applied;
     }
 

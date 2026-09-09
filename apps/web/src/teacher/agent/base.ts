@@ -153,6 +153,9 @@ export class TeacherAgentCore {
   protected episodic!: EpisodicMemory;
   protected operatorLearner!: OperatorLearner;
   protected knownWords!: ReadonlySet<string>;
+  /** Task 60: bumped whenever a deck definition is written — keys the
+   *  memoized definition extraction (agent/relations.ts). */
+  protected definitionsVersion = 0;
   protected compositionRng!: () => number;
   protected hiddenRelationKeys: ReadonlySet<string> | null = null;
   protected curriculumConfig: CurriculumConfig = {};

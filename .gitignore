@@ -21,3 +21,4 @@ bench/curriculum/.recovery-state/
 # Training corpora fetched by the operator (npm run fetch-conceptnet / fetch-hf) — never versioned
 apps/web/corpus/
 apps/web/corpus-bench/
+bench/curriculum/.profile-record.json

@@ -37,7 +37,9 @@ module.exports = {
     '<rootDir>/src/teacher/oneShotLearningBenchmark.test.ts',
     // Held-out ConceptNet recovery + the entropy prediction (tasks 40/41):
     // reads the operator's corpus and feeds for minutes — a measurement.
-    '<rootDir>/src/curriculum/heldOutRecoveryBenchmark.test.ts'
+    '<rootDir>/src/curriculum/heldOutRecoveryBenchmark.test.ts',
+    // Corpus-scale cost profile (tasks 60/61): reads the operator's corpus.
+    '<rootDir>/src/curriculum/corpusProfile.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

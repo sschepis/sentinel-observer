@@ -269,16 +269,14 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
         this.storeNegation(negation.subject, negation.predicate, negation.object, negation.evidence, 'conceptnet');
         negations += 1;
       }
-      const applied = this.applyRelations(batch.relations, { allowUnknownSubjects: false, multiValued: true });
-      let bumped = false;
+      // The attestation overlay is applied at graph-build time: record the
+      // bumps BEFORE applyRelations so its one reseed carries them, instead of
+      // invalidating the graph it just built (task 60: one rebuild per feed).
       for (const relation of batch.relations) {
         const bump = conceptNetConfidenceBump(conceptNetWeightOf(relation.source));
-        if (bump > 0) {
-          this.bumpEdge(relation.subject, relation.predicate, relation.object, bump);
-          bumped = true;
-        }
+        if (bump > 0) this.bumpEdge(relation.subject, relation.predicate, relation.object, bump);
       }
-      if (bumped || negations > 0) this.invalidateRelations();
+      const applied = this.applyRelations(batch.relations, { allowUnknownSubjects: false, multiValued: true });
       // `agreed` = rows already in the graph (they raised confidence and added
       // the class): everything relevant that was neither new nor denied.
       const agreed = Math.max(0, batch.relations.length - applied.accepted - applied.denied);
@@ -313,9 +311,7 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       const relevant = options.allowUnknownSubjects === true
         ? relations
         : relations.filter((relation) => this.knownWords.has(relation.subject));
-      const extracted = extractRelations(
-        [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
-      );
+      const extracted = this.extractedStrict();
       const authored = this.authoredRelationPool();
       // Reconcile against the FULL precision-first graph (regex + authored),
       // not just the regex extractor — a same-predicate disagreement with the
@@ -523,14 +519,51 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       return this.unsplitRelationsCache as Relation[];
     }
 
+    /**
+     * TASK 60 — the definition extraction, memoized. The strict and loose
+     * extractions read every deck definition (20k regex passes each) and a
+     * rebuild used to run them three times (graph, hypotheses, hologram) and
+     * an ingest a fourth. Their input changes only when a definition is
+     * written (applyDefinitions bumps `definitionsVersion`) or the vocabulary
+     * grows (a new word can become an extractable object), so they are keyed
+     * on both and re-run at most once per feed.
+     */
+    private extractionCache: { key: string; strict: Relation[]; loose: Relation[] | null } | null = null;
+
+    private extractionKey(): string {
+      return `${this.definitionsVersion}:${this.states.size}`;
+    }
+
+    protected extractedStrict(): Relation[] {
+      const key = this.extractionKey();
+      if (this.extractionCache === null || this.extractionCache.key !== key) {
+        this.extractionCache = {
+          key,
+          strict: extractRelations([...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))),
+          loose: null
+        };
+      }
+      return this.extractionCache.strict;
+    }
+
+    protected extractedLoose(): Relation[] {
+      this.extractedStrict();
+      const cache = this.extractionCache!;
+      if (cache.loose === null) {
+        cache.loose = extractRelations(
+          [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition })),
+          { loose: true }
+        );
+      }
+      return cache.loose;
+    }
+
     /** Build the relation caches lazily (both the served view and the
      *  unsplit view are populated by the one build). */
     protected ensureRelationsBuilt(): void {
       if (this.relationsCache === null) {
         const t0 = Date.now();
-        const extracted = extractRelations(
-          [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition }))
-        );
+        const extracted = this.extractedStrict();
         const t1 = Date.now();
         const authored = this.authoredRelationPool();
         const t2 = Date.now();
@@ -606,14 +639,12 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       const HYPOTHESIS_EDGE_CAP = 2000;
       const assertedKeys = new Set(asserted.map((r) => edgeKey(r.subject, r.predicate, r.object)));
       const known = new Set(this.hypothesisEdges.map((r) => edgeKey(r.subject, r.predicate, r.object)));
-      const loose = extractRelations(
-        [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition })),
-        { loose: true }
-      );
+      const loose = this.extractedLoose();
+      const deniedKeys = new Set(this.negations.map((n) => edgeKey(n.subject, n.predicate, n.object)));
       for (const relation of loose) {
         const key = edgeKey(relation.subject, relation.predicate, relation.object);
         if (assertedKeys.has(key) || known.has(key)) continue;
-        if (this.negations.some((n) => n.subject === relation.subject && n.predicate === relation.predicate && n.object === relation.object)) continue;
+        if (deniedKeys.has(key)) continue;
         // F.2: with the sense split on, edges of sense-split words live on
         // sense nodes — a surface-word hypothesis would re-merge the senses
         // the split just separated.
@@ -753,11 +784,13 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
     }
 
     /** Rebuild the distributed-vector view from the current relation graph. */
+    /** Per-subject fingerprints of what the hologram currently binds (task 60). */
+    private hologramFingerprints = new Map<string, string>();
+
     protected rebuildRelationalHologram(): void {
       if (this.relationalHologram === null) {
         this.relationalHologram = new RelationalHologram({ slots: 128 });
-      } else {
-        this.relationalHologram.clear();
+        this.hologramFingerprints.clear();
       }
       const bySubject = new Map<string, Relation[]>();
       // The curated graph (regex + authored + chaperone)...
@@ -771,25 +804,40 @@ export function RelationsMixin<TBase extends Constructor<TeacherAgentCore & Cros
       // creature is not a deck word, "with feathers" when feathers is not).
       // The graded layer answers those with unbind scores, never as edges.
       const tLoose = Date.now();
-      for (const relation of extractRelations(
-        [...this.states.values()].map((s) => ({ word: s.word.word, definition: s.word.definition })),
-        { loose: true }
-      )) {
+      for (const relation of this.extractedLoose()) {
         const list = bySubject.get(relation.subject) ?? [];
         list.push(relation);
         bySubject.set(relation.subject, list);
       }
       const tBind = Date.now();
+      // INCREMENTAL (task 60): re-bind only the subjects whose edge set changed
+      // since the last rebuild; drop the ones that vanished. A 1,000-row feed
+      // touches a few hundred subjects of ~17k — the rest keep their traces.
       let bound = 0;
+      let rebound = 0;
+      const seen = new Set<string>();
       for (const [subject, edges] of bySubject) {
+        seen.add(subject);
+        bound += edges.length;
+        const fingerprint = edges
+          .map((relation) => `${relation.predicate}\u0001${relation.object}`)
+          .sort()
+          .join('\u0002');
+        if (this.hologramFingerprints.get(subject) === fingerprint) continue;
+        this.hologramFingerprints.set(subject, fingerprint);
         this.relationalHologram.setTrace(
           subject,
           edges.map((relation) => ({ predicate: relation.predicate, object: relation.object }))
         );
-        bound += edges.length;
+        rebound += 1;
+      }
+      for (const subject of [...this.hologramFingerprints.keys()]) {
+        if (seen.has(subject)) continue;
+        this.hologramFingerprints.delete(subject);
+        this.relationalHologram.setTrace(subject, []);
       }
       if (process.env.OBSERVER_PROFILE_REBUILD === '1') {
-        console.log(`[rebuild]     hologram: loose extraction ${tBind - tLoose} ms · bind ${Date.now() - tBind} ms over ${bySubject.size} subjects / ${bound} edges / ${this.relationalHologram.objectCount} objects`);
+        console.log(`[rebuild]     hologram: loose extraction ${tBind - tLoose} ms · bind ${Date.now() - tBind} ms — ${rebound} of ${bySubject.size} subjects re-bound / ${bound} edges / ${this.relationalHologram.objectCount} objects`);
       }
     }
 
