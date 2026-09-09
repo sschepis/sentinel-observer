@@ -39,7 +39,9 @@ module.exports = {
     // reads the operator's corpus and feeds for minutes — a measurement.
     '<rootDir>/src/curriculum/heldOutRecoveryBenchmark.test.ts',
     // Corpus-scale cost profile (tasks 60/61): reads the operator's corpus.
-    '<rootDir>/src/curriculum/corpusProfile.test.ts'
+    '<rootDir>/src/curriculum/corpusProfile.test.ts',
+    // Word-problem capability on the SVAMP/ASDiv corpus: reads the operator's corpus.
+    '<rootDir>/src/curriculum/problemsBenchmark.test.ts'
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }]

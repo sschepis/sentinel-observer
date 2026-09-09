@@ -1,0 +1,724 @@
+{
+  "at": "2026-09-09T10:40:03.974Z",
+  "sample": 300,
+  "rows": 3004,
+  "totals": {
+    "correct": 15,
+    "wrong": 0,
+    "abstained": 285
+  },
+  "bySource": {
+    "svamp": {
+      "correct": 2,
+      "wrong": 0,
+      "abstained": 79
+    },
+    "asdiv": {
+      "correct": 13,
+      "wrong": 0,
+      "abstained": 206
+    }
+  },
+  "needBuckets": {
+    "decrease/residual": {
+      "seen": 122,
+      "correct": 1,
+      "wrong": 0,
+      "abstained": 121
+    },
+    "3+ quantities": {
+      "seen": 123,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 123
+    },
+    "total": {
+      "seen": 50,
+      "correct": 9,
+      "wrong": 0,
+      "abstained": 41
+    },
+    "≤1 number stated": {
+      "seen": 56,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 56
+    },
+    "multiplicative": {
+      "seen": 20,
+      "correct": 1,
+      "wrong": 0,
+      "abstained": 19
+    },
+    "rate (each/per)": {
+      "seen": 94,
+      "correct": 4,
+      "wrong": 0,
+      "abstained": 90
+    },
+    "other": {
+      "seen": 14,
+      "correct": 2,
+      "wrong": 0,
+      "abstained": 12
+    },
+    "3+ sentences": {
+      "seen": 63,
+      "correct": 2,
+      "wrong": 0,
+      "abstained": 61
+    },
+    "units": {
+      "seen": 29,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 29
+    },
+    "fraction/decimal": {
+      "seen": 12,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 12
+    },
+    "comparison": {
+      "seen": 10,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 10
+    },
+    "division/sharing": {
+      "seen": 7,
+      "correct": 0,
+      "wrong": 0,
+      "abstained": 7
+    }
+  },
+  "wrongs": [],
+  "abstainedSample": [
+    {
+      "prompt": "Jake has 84 more apples and 10 fewer peaches than Steven. Steven has 13 peaches and 52 apples. How many peaches does Jake have?",
+      "expected": "3",
+      "reply": "I do not know what \"jake\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Dan has $ 4. He bought a candy bar for $ 8. Then his friend have him $ 5 How much money is left?",
+      "expected": "1",
+      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Maria was buying DVDs of her old favorite TV series. She bought eight DVDs at the store and she bought two online. How many DVDs did she buy total?",
+      "expected": "10 (DVDs)",
+      "reply": "I do not know what \"dvds\" means. Could you teach me?",
+      "needs": [
+        "total",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "Victor was playing checkers with a friend. The ratio of games Victor won was 9:5. If Victor won 36 games, how many games did his friend win?",
+      "expected": "20 (games)",
+      "reply": "I do not know what \"win\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "The sum of the digits of a two-digit number is 9. Also, nine times this number is twice the number obtained by reversing the order of the digits. Find the number.",
+      "expected": "18",
+      "reply": "I do not know what \"digits\" means. Could you teach me?",
+      "needs": [
+        "multiplicative",
+        "total",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "A lawn had an area of 20 square feet. If it was 5 feet width, how long was it?",
+      "expected": "4 (feet)",
+      "reply": "I do not know what \"width\" means. Could you teach me?",
+      "needs": [
+        "other"
+      ]
+    },
+    {
+      "prompt": "I want to plant 45 sunflower plants, 81 corn plants and 63 tomato plants in my garden. If I put the same number of plants in each row and each row has only one type of plant, what is the greatest number of plants I can put in one row?",
+      "expected": "9 (plants)",
+      "reply": "I do not know what \"row\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Rachel picked 7 apples from her tree. Thereafter 2 new apples grew on the tree. Now the tree has 6 apples still on it. How many apples did the tree have to begin with?",
+      "expected": "11",
+      "reply": "I do not know what \"begin\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Jack received 6 emails in the morning and 8 emails in the afternoon. How many more emails did Jack receive in the afternoon than in the morning?",
+      "expected": "2",
+      "reply": "I do not know what \"morning\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual"
+      ]
+    },
+    {
+      "prompt": "A baker is putting cupcakes on trays to cool. She put 3 cupcakes on the first tray, 6 cupcakes on the second tray, 12 cupcakes on the third tray, and 24 cupcakes on the fourth tray. If this pattern continues, how many cupcakes will the baker put on the fifth tray?",
+      "expected": "48 (cupcakes)",
+      "reply": "I do not know what \"tray\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Baker made 149 cakes and 91 pastries. If he sold 10 cakes and 90 pastries How many cakes would baker still have?",
+      "expected": "139",
+      "reply": "I do not know what \"baker\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Tyler had 15 dogs. Each dog had five puppies. How many puppies does Tyler now have?",
+      "expected": "75 (puppies)",
+      "reply": "I do not know what \"tyler\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "A chef was making soups. She made 2 bowls of chicken soup, 2 bowls of mushroom soup and 7 bowls of tomato soup. How many bowls of soup did she make total?",
+      "expected": "11 (bowls of soup)",
+      "reply": "I do not know what \"soup\" means. Could you teach me?",
+      "needs": [
+        "total",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Jesse needs a carpet of size 10 square feet to cover her room. If her room is 5 feet long What is the width of her room?",
+      "expected": "2",
+      "reply": "I do not know what \"room\" means. Could you teach me?",
+      "needs": [
+        "other"
+      ]
+    },
+    {
+      "prompt": "The two groups will also collect garbage from all the 453 houses in the city. If Lizzie's group covered 238 houses while the other group covered 190, how many more houses remain?",
+      "expected": "25 (houses)",
+      "reply": "I do not know what \"remain\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Melissa scored 120 points in each game. How many points did she score in 10 games?",
+      "expected": "1200 (points)",
+      "reply": "I do not know what \"score\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)"
+      ]
+    },
+    {
+      "prompt": "There are 45 questions on the math test. 17 questions are word problems. 28 questions are addition and subtraction problems. Steve can only answer 38 questions. What's the difference between the number of all questions on the math test and the number of questions that Steve can answer?",
+      "expected": "7 (questions)",
+      "reply": "I do not know what \"answer\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "With 28 dollars 2 packs of dvds can be bought. How much does each pack cost?",
+      "expected": "14",
+      "reply": "I do not know what \"cost\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "multiplicative",
+        "units"
+      ]
+    },
+    {
+      "prompt": "A summer sports camp had 88 soccer campers, basketball campers and football campers. If 24 of them were basketball campers and 32 of them were football campers, how many soccer campers were there?",
+      "expected": "32 (soccer campers)",
+      "reply": "I do not know what \"campers\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Sullivan Stationery sells cards in packs of 20 and envelopes in packs of 17. If Vera wants the same number of each, what is the minimum number of cards that she will have to buy?",
+      "expected": "340 (cards)",
+      "reply": "I do not know what \"cards\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "multiplicative"
+      ]
+    },
+    {
+      "prompt": "There were 15 roses and 62 orchids in the vase. Jessica cut some more roses and orchids from her flower garden. There are now 17 roses and 96 orchids in the vase. How many roses did she cut?",
+      "expected": "2",
+      "reply": "I do not know what \"cut\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Paul got a box of 440 crayons for his birthday. During the school year he gave 111 crayons to his friends while he lost 106 crayons. How many crayons did he have left?",
+      "expected": "223",
+      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "A pet store sold 12 siamese cats. If the ratio of siamese cats to house cats sold was 2:1, what is the combined amount of cats sold?",
+      "expected": "18 (cats)",
+      "reply": "I do not know what \"sold\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "total",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Jamal and Moshe began a business with a capital of $7500. If Jamal furnished half as much capital as Moshe, how much did each furnish?",
+      "expected": "2500 (dollars); 5000 (dollars)",
+      "reply": "I do not know what \"furnish\" means. Could you teach me?",
+      "needs": [
+        "fraction/decimal",
+        "rate (each/per)",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "There is a snail problem in Centerville. People work together to get rid 3,482 snails, but 8,278 of them remain. About how many snails were originally in Centerville?",
+      "expected": "11760 (snails)",
+      "reply": "I do not know what \"centerville\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Amy has 67 balloons. 29 of them are red and 17 are green. The rest of the balloons are blue. How many blue balloons does Amy have?",
+      "expected": "21 (blue balloons)",
+      "reply": "I do not know what \"amy\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Julia played tag with 12 kids on Monday. She played tag with 7 kids on Tuesday. How many kids did she play with altogether?",
+      "expected": "19 (kids)",
+      "reply": "I do not know what \"altogether\" means. Could you teach me?",
+      "needs": [
+        "total"
+      ]
+    },
+    {
+      "prompt": "Mrs. Hilt has $10. She spends $3 on a toy truck and $2 on a pencil case. How much money does she have left?",
+      "expected": "5 (dollars)",
+      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Rachel has 4 apple trees. She picked 7 apples from each of her trees. Now the trees have a total 29 apples still on them. How many apples did Rachel pick in all?",
+      "expected": "28",
+      "reply": "I do not know what \"pick\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "total",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Emily was helping her mom pick apples from the tree in their front yard. Together they picked fourteen totals. If six of the apples weren't ripe yet, how many good apples did they pick?",
+      "expected": "8 (good apples)",
+      "reply": "I do not know what \"pick\" means. Could you teach me?",
+      "needs": [
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "Ricky has a magic money box. Every day the box doubles the number of coins placed inside of it. Ricky put in 3 pennies on Monday. He looked inside his box on Friday. How many pennies did Ricky see?",
+      "expected": "48 (pennies)",
+      "reply": "I do not know what \"ricky\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "≤1 number stated",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Tommy had some balloons. His mom gave him 34 more balloons for his birthday. Then, Tommy had 60 balloons. How many balloons did Tommy have to start with?",
+      "expected": "26 (balloons)",
+      "reply": "I do not know what \"start\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "A waiter had 8 customers. After some left he still had 5 customers. Then he got 99 new customers How many customers left?",
+      "expected": "3",
+      "reply": "I do not know what \"left\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Tiffany had six pages of math homework and four pages of reading homework. If each page had three problems on it, how many problems did she have to complete total?",
+      "expected": "30 (problems)",
+      "reply": "I do not know what \"complete\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "total",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "There are 560 bottle caps in Terry's bottle cap collection. If the bottle caps are organized into 80 groups, how big is each group?",
+      "expected": "7 (bottle caps)",
+      "reply": "I do not know what \"big\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)"
+      ]
+    },
+    {
+      "prompt": "Jesse has 18 square feet of carpet. If her room is 4 feet long and 20 feet wide How much more carpet does she need to cover the whole floor?",
+      "expected": "62",
+      "reply": "I do not know what \"floor\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "The grasshopper, the frog and the mouse had a jumping contest. The grasshopper jumped 19 inches. The frog jumped 10 inches farther than the grasshopper and the mouse jumped 20 inches farther than the frog. How much farther did the mouse jump than the grasshopper?",
+      "expected": "30",
+      "reply": "I do not know what \"grasshopper\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Katie had seventy-two DS games and her friend had twenty-three games. How many do they have total?",
+      "expected": "95 (DS games)",
+      "reply": "I do not know what \"twenty-three\" means. Could you teach me?",
+      "needs": [
+        "total",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "He also had 56 aquariums for saltwater animals and 10 aquariums for freshwater animals. Each aquarium has 39 animals in it. How many saltwater animals does Tyler have?",
+      "expected": "2184",
+      "reply": "I do not know what \"tyler\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Marin has nine apples and Donald has two apples. How many apples do Marin and Donald have together?",
+      "expected": "11 (apples)",
+      "reply": "I do not know what \"together\" means. Could you teach me?",
+      "needs": [
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "Dave had sixteen apps on his phone. After deleting some, he had eight left. How many apps did he delete?",
+      "expected": "8 (apps)",
+      "reply": "I do not know what \"delete\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "Emma's room measures 12 feet by 20 feet. She purchased 40 tiles for a section of the floor. Each tile is 1 square foot. What fractional part of the room will have tile?",
+      "expected": "1/6",
+      "reply": "I do not know what \"tile\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Ten years ago, the sum of the ages of two sons was one-third of their father's age. One son is two years older than the other and sum of their present ages is 14 years less than the father's present age. Find the present ages of all.",
+      "expected": "21 (years old)",
+      "reply": "I do not know what \"ages\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "comparison",
+        "total",
+        "≤1 number stated"
+      ]
+    },
+    {
+      "prompt": "23 children were riding on the bus. At the bus stop 24 children got on the bus while some got off the bus. Then there were 8 children altogether on the bus. How many more children got off the bus than those that got on?",
+      "expected": "15",
+      "reply": "I do not know what \"got\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "total",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "A pet supply chain called Pet City has 5 hamsters and 6 gerbils for sale at its Allenville location. At its Westford location there are 7 hamsters and 12 gerbils. Which location has a lower ratio of hamsters to gerbils?",
+      "expected": "Westford location",
+      "reply": "I do not know what \"gerbils\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Antonieta wants to ride the Ferris wheel, the roller coaster, and the log ride. The Ferris wheel costs 6 tickets, the roller coaster costs 5 tickets and the log ride costs 7 tickets. Antonieta has 2 tickets. How many more tickets should Antonieta buy?",
+      "expected": "16 (tickets)",
+      "reply": "I do not know what \"antonieta\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Mary is baking a cake. The recipe calls for 9 cups of sugar 14 cups of flour and 40 cups of salt. She already put in 4 cups of flour. How many more cups of flour than cups of sugar does she need to add now?",
+      "expected": "1",
+      "reply": "I do not know what \"sugar\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "They had 119 matchboxes wrapped in colorful shiny wrappers. If they are to distribute the matchboxes equally to the 9 houses in the first block, how may matchboxes will each house receive?",
+      "expected": "13 (matchboxes)",
+      "reply": "I do not know what \"receive\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "division/sharing"
+      ]
+    },
+    {
+      "prompt": "A fast food restaurant had 3 boxes of chicken nuggets for $19.53. A competing restaurant had 2 boxes of chicken fingers for $13.12. Which food has a higher unit price?",
+      "expected": "Chicken finger",
+      "reply": "I do not know what \"unit\" means. Could you teach me?",
+      "needs": [
+        "fraction/decimal",
+        "multiplicative",
+        "3+ quantities",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "After buying a dress, he went to a gardening store and bought his mom some ornamental plants. If the plants originally cost $467.00 and he was able to get a $399.00 discount, how much did he actually spend on buying the plants?",
+      "expected": "68 (dollars)",
+      "reply": "I do not know what \"plants\" means. Could you teach me?",
+      "needs": [
+        "fraction/decimal",
+        "decrease/residual",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "A mailman has to give 38 pieces of junk mail to each of the 78 blocks. If there are 19 houses on a block How many pieces of junk mail should he give each house?",
+      "expected": "2",
+      "reply": "I do not know what \"give\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "A comic book costs 37 cents. The store owner reversed the digits by mistake. He wrote that number on the comic book. How much did the store owner overcharge his customer?",
+      "expected": "36 (cents)",
+      "reply": "I do not know what \"customer\" means. Could you teach me?",
+      "needs": [
+        "≤1 number stated",
+        "units",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Kendra took a road trip. In the afternoon, she saw 4 minivans like hers. Later, in the evening, she saw one more minivan like hers. How many minivans like hers did she see in all?",
+      "expected": "5 (minivans)",
+      "reply": "I do not know what \"hers\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "total",
+        "≤1 number stated",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Mitch owns a business and assigns two of his employees their shifts. He assigns the first employee shifts in blocks of 2 hours, and he assigns the second worker shifts in blocks of 11 hours. If both workers must receive the same number of hours, what is the minimum number of hours each must be assigned?",
+      "expected": "22 (hours)",
+      "reply": "I do not know what \"assigned\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "units"
+      ]
+    },
+    {
+      "prompt": "Last year, Springtown Hardware ordered 3 hammers in June, 4 hammers in July, 6 hammers in August, and 9 hammers in September. If this pattern continues, how many hammers will the store order in October?",
+      "expected": "13 (hammers)",
+      "reply": "I do not know what \"october\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Jerry had 7 action figures and 2 books on a shelf in his room. Later he added 4 more books to the shelf. How many more action figures than books were on his shelf?",
+      "expected": "1",
+      "reply": "I do not know what \"shelf\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Allen, Charles, Lex and Shiela spent days reading books for their book report. The texts were printed very small so they were only able to cover very few pages a day. Allen read about the Solar System. He read 10 pages a day of a book which has 120 pages. How many days did it take Allen to finish reading the book?",
+      "expected": "12 (days)",
+      "reply": "I do not know what \"reading\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ sentences"
+      ]
+    },
+    {
+      "prompt": "Karlene read 3 pages on Tuesday, 6 pages on Wednesday, 12 pages on Thursday, 24 pages on Friday, and 48 pages on Saturday. If this pattern continues, how many pages will Karlene read on Sunday?",
+      "expected": "96 (pages)",
+      "reply": "I do not know what \"sunday\" means. Could you teach me?",
+      "needs": [
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Jake has 5 fewer peaches than Steven. Steven has 18 more peaches than Jill. If Jill has 87 peaches How many more peaches does Jake have than Jill?",
+      "expected": "13",
+      "reply": "I do not know what \"jill\" means. Could you teach me?",
+      "needs": [
+        "decrease/residual",
+        "3+ quantities"
+      ]
+    },
+    {
+      "prompt": "Mrs. Walker will have 56 apples for bobbing for apples. Each bucket will hold 9 apples. How many buckets will she need?",
+      "expected": "7 (buckets)",
+      "reply": "I do not know what \"buckets\" means. Could you teach me?",
+      "needs": [
+        "rate (each/per)",
+        "3+ sentences"
+      ]
+    }
+  ],
+  "rightSample": [
+    {
+      "prompt": "There are 37 baskets. There are 17 apples in each basket. How many apples are there in all?",
+      "expected": "629 (apples)",
+      "reply": "The answer is 629."
+    },
+    {
+      "prompt": "The first act included 5 clown mobiles, each stuffed with 28 clowns. How many clowns are inside all the clown mobiles combined?",
+      "expected": "140 (clowns)",
+      "reply": "The answer is 140."
+    },
+    {
+      "prompt": "In a school, there are 542 girls and 387 boys. How many pupils are there in that school?",
+      "expected": "929 (pupils)",
+      "reply": "The answer is 929."
+    },
+    {
+      "prompt": "Bianca was practicing for a marathon. To prepare she ran 8 miles the first day and 4 miles the next day. How many miles did Bianca run altogether?",
+      "expected": "12 (miles)",
+      "reply": "The answer is 12."
+    },
+    {
+      "prompt": "Jerry had 8 action figures on a shelf in his room. Later he added 2 more figures to the shelf. How many action figures were on his shelf total?",
+      "expected": "10 (action figures)",
+      "reply": "The answer is 10."
+    },
+    {
+      "prompt": "It is Buddy's first day at a new school and he is feeling very nervous. His day begins with some bacon and egg prepared by his mother. After eating and preparing, Buddy headed out to catch the school bus from the nearest bus stop. Including Buddy, there were 39 students that got on the bus during the first stop. If 29 more students got on the bus at the second stop, how many students are riding the bus?",
+      "expected": "68 (students)",
+      "reply": "The answer is 68."
+    },
+    {
+      "prompt": "If you had 37 bags of cookies with 19 cookies in each bag, how many cookies would you have?",
+      "expected": "703 (cookies)",
+      "reply": "The answer is 703."
+    },
+    {
+      "prompt": "Next on his list is the nursing home near his office. There he 472 boxes of vitamins and 288 boxes of supplements. How many boxes of medicine did the nursing home receive from Mr. Anderson?",
+      "expected": "760 (boxes of medicine)",
+      "reply": "The answer is 760."
+    },
+    {
+      "prompt": "Shelby's teacher gives out gold stars for great math work. Yesterday, Shelby earned 4 gold stars. Today, she earned 3 more. How many gold stars did Shelby earn in all?",
+      "expected": "7 (gold stars)",
+      "reply": "The answer is 7."
+    },
+    {
+      "prompt": "There were 58 geese and 37 ducks in the marsh. How many birds were there in all?",
+      "expected": "95 (birds)",
+      "reply": "The answer is 95."
+    },
+    {
+      "prompt": "There are many different books in the ' crazy silly school ' series. If you have read 13 of the books and are yet to read 8 books How many books are there in the ' crazy silly school ' series?",
+      "expected": "21",
+      "reply": "The answer is 21."
+    },
+    {
+      "prompt": "Andy, another part of the recycling team decided he would gather tin foil wrappers. If he was able to pick up 34 wrappers around the village dumpster and his best friend Max was able to collect 15, how many wrappers were gathered in total?",
+      "expected": "49 (wrappers)",
+      "reply": "The answer is 49."
+    },
+    {
+      "prompt": "Brenda's mother made cookies for 14. If each of them had 30 cookies How many cookies did she prepare?",
+      "expected": "420",
+      "reply": "The answer is 420."
+    },
+    {
+      "prompt": "Haley's mom was buying extra school supplies for Haley and her sister. If she bought 2 reams of paper for Haley and 3 reams for her sister, how many did she buy total?",
+      "expected": "5 (reams of paper)",
+      "reply": "The answer is 5."
+    },
+    {
+      "prompt": "Students from Flora Middle School were asked to participate in the event. They planted 47 apple trees and 27 orange trees in the forest near their school. How many trees in total did the students plant?",
+      "expected": "74 (trees)",
+      "reply": "The answer is 74."
+    }
+  ]
+}

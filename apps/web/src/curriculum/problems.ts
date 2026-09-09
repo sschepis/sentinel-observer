@@ -34,6 +34,8 @@ export interface ProblemCheck {
   prompt: string;
   expected: number | null;
   got: number | null;
+  /** What the observer said (empty when it declined). */
+  response: string;
   mode: string;
   verdict: ProblemVerdict;
 }
@@ -74,7 +76,7 @@ export function checkProblem(teacher: TeacherAgent, row: ProblemRow): ProblemChe
   const expected = numberIn(row.answer);
   const answer = teacher.chatAnswer(prompt);
   if (answer.mode === 'decline' || answer.mode === 'ask') {
-    return { prompt, expected, got: null, mode: answer.mode, verdict: 'abstained' };
+    return { prompt, expected, got: null, response: answer.mode === 'ask' ? answer.response : '', mode: answer.mode, verdict: 'abstained' };
   }
   const got = numberIn(answer.response);
   const correct = expected !== null && got !== null && Math.abs(got - expected) < 1e-6;
@@ -91,5 +93,5 @@ export function checkProblem(teacher: TeacherAgent, row: ProblemRow): ProblemChe
       teacher.weakenRule(ruleId, 1, { evidence: 'verified-wrong', expected: row.answer, input: prompt.slice(0, 80) });
     }
   }
-  return { prompt, expected, got, mode: answer.mode, verdict: correct ? 'correct' : 'wrong' };
+  return { prompt, expected, got, response: answer.response, mode: answer.mode, verdict: correct ? 'correct' : 'wrong' };
 }

@@ -256,10 +256,17 @@ function parseLogicDrillFromText(text: string): { drill: string; term: Term } | 
  *   - addition: two same-story quantities joined by "and" (gets more,
  *     read yesterday/today, holds A and B, scored A and B).
  *
- * It lifts the two numbers IN ORDER from the first sentence. This parser
- * is NOT written from the generator templates — it must clear its own
- * held-out bar (sentences none of the eight templates anchor) before it
- * ships; until then it stays OFF and the finding is recorded.
+ * It lifts the two numbers IN ORDER from the body. This parser is NOT
+ * written from the generator templates — it must clear its own held-out
+ * bar (sentences none of the eight templates anchor) before it ships.
+ *
+ * ITS CONTRACT IS HONESTY, NOT COVERAGE: whatever it answers is exact, and
+ * every shape it does not fully understand is declined — three or more
+ * quantities, a number in the question, decimals, comparisons ("how many
+ * more than"), shares ("each" in the question), periods and ratios ("every
+ * 12 days", "7 eggs for every 2 cups"), take-aways, and a sum asked about
+ * one of two kinds. The word-problem bench (curriculum/problemsBenchmark)
+ * measures both rates against the SVAMP/ASDiv corpus.
  */
 export interface GeneralStory {
   kind: 'add' | 'mul';
@@ -267,23 +274,66 @@ export interface GeneralStory {
   b: number;
 }
 
+/** The word a quantity counts: the first token after the number that is not
+ *  a continuation ("more", "other") or a preposition. `null` when the number
+ *  stands alone ("borrows 2 more"). Singularised by stripping a plural s. */
+const NOT_A_NOUN = /^(more|other|extra|new|additional|of|the|a|an|in|on|at|per|each|every|with|for|to|from|and|into|about|than)$/;
+function quantityNoun(body: string, index: number): string | null {
+  const tail = body.slice(index).replace(/^\d+(?:\.\d+)?\s*/, '');
+  const words = tail.toLowerCase().match(/^[a-z]+(?:\s+[a-z]+){0,2}/)?.[0].split(/\s+/) ?? [];
+  const noun = words.find((word) => !NOT_A_NOUN.test(word));
+  return noun === undefined ? null : noun.replace(/s$/, '');
+}
+
+/** What the question counts: the word after "how many/much", singularised. */
+function askedNoun(question: string): string | null {
+  return question.match(/\bhow (?:many|much)\s+([a-z]+)/)?.[1]?.replace(/s$/, '') ?? null;
+}
+
 export function parseGeneralStory(text: string): GeneralStory | null {
-  const sentences = text.split('. ').map((sentence) => sentence.replace(/[?!.]\s*$/, '').trim());
-  const first = sentences[0];
-  if (first === undefined) return null;
-  const numbers = [...first.matchAll(/\b(\d{1,3})\b/g)].map((hit) => Number(hit[1]));
-  // EXACTLY two quantities — a story with three (10 cookies, ate 4, baked
-  // 6 more) is a different problem shape; answering it with the first two
-  // would be a confident guess. Decline.
-  if (numbers.length !== 2) return null;
-  const [a, b] = [numbers[0], numbers[1]];
+  // The question is the last "how many/much/far" clause; the body is
+  // everything before it. Splitting on sentence punctuation is not enough —
+  // corpus problems run "If there are 19 houses on a block How many…".
+  const questionAt = text.search(/\bhow (many|much|far)\b(?![^]*\bhow (many|much|far)\b)/i);
+  if (questionAt < 0) return null;
+  const body = text.slice(0, questionAt);
+  const question = text.slice(questionAt);
+  // EXACTLY two quantities IN THE WHOLE BODY — a story with three (10
+  // cookies, ate 4, baked 6 more; 56 aquariums and 10 aquariums, 39 in
+  // each) is a different problem shape; answering it with any two would be
+  // a confident guess. The 2026-09-09 bench found 19 of 24 answers wrong for
+  // exactly that reason, so the count covers every sentence of the body and
+  // a number in the question ("already has 16 square feet") declines too.
+  // Decimals and fractions are not in the naturals engine: decline.
+  const numbers = [...body.matchAll(/\d+(?:\.\d+)?/g)];
+  if (numbers.length !== 2 || /\d/.test(question) || numbers.some((hit) => hit[0].includes('.')) || /\d\s*\/\s*\d/.test(text)) return null;
+  const [a, b] = [Number(numbers[0][0]), Number(numbers[1][0])];
   if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) return null;
-  const question = sentences.slice(1).join('. ');
-  if (!/\bhow (many|much|far)\b/i.test(question)) return null;
-  const lower = first.toLowerCase();
+  const lower = body.toLowerCase();
   const questionLower = question.toLowerCase();
-  if (/\b(each|every|per)\b/.test(lower)) return { kind: 'mul', a, b };
-  if (/\bpacks?\b/.test(lower) && /\bbuys?\b/.test(lower)) return { kind: 'mul', a, b };
+  const asked = askedNoun(questionLower);
+  // COMPARISON questions ("how many more … than", "how much longer", "the
+  // difference", "how much additional") ask for a difference, which this
+  // parser cannot form; "each/every/per" IN THE QUESTION asks for a share
+  // (division). Decline both — the bench's wrong answers were sums and
+  // products given to exactly these.
+  if (/\b(more|fewer|less|additional|longer|shorter|taller|heavier|older|younger|bigger|smaller|farther|further|difference)\b/.test(questionLower)) return null;
+  if (/\b(each|every|per|apiece)\b/.test(questionLower)) return null;
+  // "how many students will NOT be on a team" is a remainder: decline.
+  if (/\b(not|without|n't)\b/.test(questionLower)) return null;
+  // AN UNKNOWN START OR CHANGE: "Tommy had some balloons … then had 60. How
+  // many to start with?", "after some more arrived he had 8. How many new
+  // customers?" — the two stated numbers are a change and an end state; the
+  // unknown is the third quantity the story leaves out. Decline.
+  if (/\bsome (more|of the|[a-z]+s)\b/.test(lower) || /\b(to start with|to begin with|at first|originally|initially|new)\b/.test(questionLower)) return null;
+  // The BODY can also give the shape away: "every 12 days" and "7 eggs for
+  // every 2 cups" are periods and ratios, not equal groups (an equal-groups
+  // cue never precedes a number); "Tara had $4 more than Megan" states a
+  // difference; "together their strawberries weighed 37" / "a total of 36
+  // points" states the WHOLE, so the unknown is a part or a share.
+  if (/\b(each|every|per)\s+\d/.test(lower) || /\b(every|each) (other|few|several|second|third)\b/.test(lower)) return null;
+  if (/\b(more|fewer|less)\b[^.?]*\bthan\b/.test(lower)) return null;
+  if (/\b(total|in all|altogether|all together|together|combined)\b/.test(lower)) return null;
   // DECLINE, NEVER GUESS: a change-of-state story (gives away, ate, lost,
   // sold, used…) is subtraction — but without a subtraction term domain
   // this parser must refuse it. A question asking what is LEFT/REMAINING/
@@ -296,11 +346,48 @@ export function parseGeneralStory(text: string): GeneralStory | null {
     /\b(gives?|gave) away\b|\b(ate|eats|eat)\b|\b(lost|loses|lose)\b|\b(sold|sells|sell)\b|\b(used|uses|use) up\b|\b(took|takes?)\b|\b(removed|removes?)\b|\b(paid|spent|spends?)\b|\b(dropped|drops?)\b|\b(runs? out of|ran out of)\b/i;
   const residual = /\b(left|remain|remaining|still)\b/i;
   if (decrease.test(lower) || residual.test(questionLower)) return null;
-  // ADD: two same-story quantities joined by "and" — the held-out additive
-  // shapes all carry it (gets more, read yesterday and today, holds A and
-  // B, scored A and B, ran X and Y).
-  if (/\band\b/.test(lower) && !/\bplus\b/.test(lower)) return { kind: 'add', a, b };
-  return null;
+  const nounA = quantityNoun(body, numbers[0].index ?? 0);
+  const nounB = quantityNoun(body, numbers[1].index ?? 0);
+  // EQUAL GROUPS: N groups × M in each = the items. The answer counts the
+  // ITEMS — "17 apples in each basket … how many apples". A question that
+  // counts the GROUPS ("each bucket holds 9 apples … how many buckets",
+  // "each van holds 9 students … how many vans") is a division, and a
+  // question counting something neither quantity counts is a shape this
+  // parser does not understand. Both decline.
+  const groups = lower.match(/\b(?:each|every|per)\s+(?:[a-z]+\s+)?([a-z]+)/)?.[1]?.replace(/s$/, '') ?? null;
+  if (/\b(each|every|per)\b/.test(lower) || (/\bpacks?\b/.test(lower) && /\bbuys?\b/.test(lower))) {
+    if (asked !== null) {
+      if (asked === groups) return null;
+      if (asked !== nounA && asked !== nounB) return null;
+    }
+    return { kind: 'mul', a, b };
+  }
+  // ADD: two same-story quantities JOINED — "A and B", "A … then B more",
+  // "A … If B more got on" — the held-out additive shapes all carry a join
+  // between the two numbers. "Allan and Jake brought 3 balloons. If Allan
+  // brought 2 …" has no join between the numbers: it is a part of a whole,
+  // and the sum would be wrong. Then "4 birds and 46 storks … How many
+  // birds?" asks about ONE of two kinds: when the quantities count
+  // different things and the question names one of them, decline. A
+  // question naming neither (girls and boys → pupils; geese and ducks →
+  // birds) or carrying a total cue is the sum.
+  if (/\bplus\b/.test(lower)) return null;
+  const secondAt = numbers[1].index ?? 0;
+  const between = lower.slice((numbers[0].index ?? 0) + numbers[0][0].length, secondAt);
+  const secondTail = lower.slice(secondAt + numbers[1][0].length).trimStart();
+  if (!/\b(and|then|more|also|another)\b/.test(between) && !/^(more|other|additional|extra)\b/.test(secondTail)) return null;
+  if (nounA !== null && nounB !== null && nounA !== nounB) {
+    const totalCue = /\b(in all|altogether|all together|in total|total|combined|together)\b/.test(questionLower);
+    if (!totalCue && asked !== null && (asked === nounA || asked === nounB)) return null;
+    // A THIRD noun without a total cue: "girls and boys → how many pupils"
+    // is the sum, but "35 elephants and 48 tigers → how many legs" and "22
+    // bicycles and 3 cars → how many wheels" are not — they need the world
+    // (legs per elephant), which this parser does not have. The honest
+    // reading needs the relation store (is "pupil" a kind both quantities
+    // fall under?) — until the parser can ask it, decline.
+    if (!totalCue && asked !== null && asked !== nounA && asked !== nounB) return null;
+  }
+  return { kind: 'add', a, b };
 }
 
 /**

@@ -162,6 +162,60 @@ describe('R9 — the general story parser (stretch, held-out gated)', () => {
     }
   });
 
+  test('2026-09-09 bench fix: comparisons, shares, periods, three quantities and one-of-two-kinds sums are DECLINED', () => {
+    // Every one of these was answered — wrongly — by the 300-problem
+    // SVAMP/ASDiv sample (bench/curriculum/word-problems-2026-09-09-n300.json):
+    // the parser summed or multiplied the first two numbers it saw.
+    const guesses = [
+      'Zachary did 51 push-ups and David did 44 push-ups in gym class today. How many more push-ups did Zachary do than David?',
+      "Jesse's room is 19 feet wide and 20 feet long. How much longer is her room than it is wide?",
+      'A grocery store had 19 bottles of diet soda and 60 bottles of regular soda. How many more bottles of regular soda than diet soda did they have?',
+      'Melissa played 3 games and scored a total of 81 points scoring the same for each game. How many points did she score in each game?',
+      'Matthew goes hiking every 12 days and swimming every 6 days. He did both kinds of exercise today. How many days from now will he go both hiking and swimming again?',
+      "Chef Pillsbury's secret recipe requires 7 eggs for every 2 cups of flour. How many eggs will he need if he uses 8 cups of flour?",
+      'He also had 56 aquariums for saltwater animals and 10 aquariums for freshwater animals. Each aquarium has 39 animals in it. How many saltwater animals does Tyler have?',
+      'A mailman has to give 38 pieces of junk mail to each of the 78 blocks. If there are 19 houses on a block How many pieces of junk mail should he give each house?',
+      "Jesse's room is 11 feet long and 15 feet wide. If she already has 16 square feet of carpet How much more carpet does she need to cover the whole floor?",
+      '4 birds and 46 storks were sitting on the fence. How many birds are sitting on the fence?',
+      'A jug holds 2.5 liters and a cup holds 3 liters. How many liters is that in all?',
+      // Second round (the whole body now counted): divisions asked as the
+      // number of GROUPS, a stated whole, a part of a whole, a difference
+      // stated in the body, and a residual after equal groups.
+      'Mrs. Walker will have 56 apples for bobbing for apples. Each bucket will hold 9 apples. How many buckets will she need?',
+      'There are 396 students going to a trivia competition. If each school van can hold 9 students, how many vans will they need?',
+      'For Halloween Adam received 201 pieces of candy. If he put them into piles with 43 in each pile, approximately how many piles could he make?',
+      'Melissa scored 12 points in each game. If she scored a total of 36 points How many games did she play?',
+      "Marco and his dad went strawberry picking. Marco's strawberries weighed 15 pounds. If together their strawberries weighed 37 pounds. How much did his dad's strawberries weigh?",
+      'Allan and Jake brought 3 balloons to the park. If Allan brought 2 balloons How many balloons did Jake bring to the park?',
+      'Megan and her sister, Tara, wanted to buy a scooter for $26. Tara had $4 more than Megan. Together they had enough money to buy the scooter. How much money did Tara have?',
+      'While heating the wings, Charlie decided to make metal supports for the wings. If he needs 635 lbs of metal and he has 276 lbs in storage, how much additional metal does he need to buy?',
+      '9 boys went to water trees. There were 29 trees. If each of them watered the equal amount of trees, how many trees are left?',
+      // Third round: an unknown start or an unknown change.
+      'Tommy had some balloons. His mom gave him 34 more balloons for his birthday. Then, Tommy had 60 balloons. How many balloons did Tommy have to start with?',
+      'A waiter had 3 customers. After some more arrived he had 8 customers. How many new customers arrived?',
+      // Out-of-sample slice (PROBLEMS_SKIP=300): a remainder, and sums that
+      // need the world (legs per elephant, wheels per bicycle).
+      '172 students are forming teams for a mountaineering competition. Each team should have 18 students. How many students will not be on a team?',
+      'At the zoo, I see 35 elephants and 48 tigers. How many legs do I see?',
+      "There are 22 bicycles and 3 cars in the garage at Gordon's apartment building. How many wheels are there in the garage?"
+    ];
+    for (const story of guesses) {
+      expect(parseGeneralStory(story)).toBeNull();
+      expect(parseRewritePrompt(story)).toBeNull();
+    }
+    // And the shapes it DOES understand still answer — a sum asked as a
+    // third kind, a sum with a total cue, equal groups.
+    // "pupils" is a third kind: the sum is right here, but the parser cannot
+    // tell it from "legs" without the relation store — so it declines until
+    // it can ask (a recorded loss, not a guess).
+    expect(parseGeneralStory('In a school, there are 542 girls and 387 boys. How many pupils are there in that school?')).toBeNull();
+    expect(parseGeneralStory('In a school, there are 542 girls and 387 boys. How many pupils are there in total?')).toEqual({ kind: 'add', a: 542, b: 387 });
+    expect(parseGeneralStory('There were 58 geese and 37 ducks in the marsh. How many birds were there in all?')).toEqual({ kind: 'add', a: 58, b: 37 });
+    expect(parseGeneralStory('The first act included 5 clown mobiles, each stuffed with 28 clowns. How many clowns are inside all the clown mobiles combined?')).toEqual({ kind: 'mul', a: 5, b: 28 });
+    expect(parseGeneralStory('There are 37 baskets. There are 17 apples in each basket. How many apples are there in all?')).toEqual({ kind: 'mul', a: 37, b: 17 });
+    expect(parseGeneralStory('There were 39 students that got on the bus during the first stop. If 29 more students got on the bus at the second stop, how many students are riding the bus?')).toEqual({ kind: 'add', a: 39, b: 29 });
+  });
+
   test('C1 review fix: the residual question alone is enough to decline', async () => {
     const teacher = await freshTeacher();
     const answer = teacher.chatAnswer('There are 8 cookies and Tom takes 5 of them. How many cookies are left?');
