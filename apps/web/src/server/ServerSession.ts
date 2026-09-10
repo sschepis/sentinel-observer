@@ -1,6 +1,10 @@
 /** The server's code revision — surfaced in /api/state so a stale process
  *  (running older source) is immediately identifiable from the UI. */
-export const SERVER_BUILD = '2026-09-09.2';
+export const SERVER_BUILD = '2026-09-10.1';
+
+/** The event-loop metronome's period, and the window its worst value covers. */
+const LOOP_PROBE_MS = 250;
+const LOOP_WINDOW_MS = 60_000;
 
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
@@ -138,6 +142,14 @@ export interface ServerState {
   /** Task 39: the network entropy — how unsure the observer would be if
    *  asked about each concept it knows (bits; the closure measure). */
   knowledge: { concepts: number; total: number; mean: number; certain: number; conflicted: number; unknown: number } | null;
+  /** HOW RESPONSIVE THIS PROCESS IS, measured by the server itself: the
+   *  worst event-loop delay seen in the last window, and the window's
+   *  length. The observer and the HTTP server share one thread, so a long
+   *  synchronous step — a snapshot write, a corpus feed, a graph rebuild —
+   *  is time the server cannot answer anyone. Without this number the only
+   *  evidence was the UI going quiet, which looks identical to a bug in
+   *  the UI (docs/TASKS.md #87). */
+  loop: { maxLagMs: number; windowMs: number } | null;
 }
 
 export class ServerSession {
@@ -153,6 +165,11 @@ export class ServerSession {
    *  clock. Before this timer, `applyRetention` ran only on restore, so a
    *  long-lived process never decayed a trace until it was restarted. */
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
+  /** The event-loop lag monitor: a metronome whose drift IS the lag. */
+  private loopTimer: ReturnType<typeof setInterval> | null = null;
+  private loopExpected = 0;
+  private loopMaxLagMs = 0;
+  private loopWindowStart = 0;
   private running = false;
   private restored = 0;
   private freshTrained = false;
@@ -278,6 +295,25 @@ export class ServerSession {
       });
       this.trainingLoop.start();
     }
+
+    // THE SERVER MEASURES ITS OWN RESPONSIVENESS. A 250 ms metronome: the
+    // amount by which each tick is LATE is the time the event loop spent
+    // inside something synchronous, which is exactly the time no HTTP
+    // request could be answered. The worst value in each rolling minute is
+    // reported on the state line.
+    this.loopExpected = Date.now() + LOOP_PROBE_MS;
+    this.loopWindowStart = Date.now();
+    this.loopTimer = setInterval(() => {
+      const now = Date.now();
+      const lag = Math.max(0, now - this.loopExpected);
+      this.loopExpected = now + LOOP_PROBE_MS;
+      if (lag > this.loopMaxLagMs) this.loopMaxLagMs = lag;
+      if (now - this.loopWindowStart >= LOOP_WINDOW_MS) {
+        this.loopWindowStart = now;
+        this.loopMaxLagMs = lag;
+      }
+    }, LOOP_PROBE_MS);
+    this.loopTimer.unref?.();
 
     this.autosaveTimer = setInterval(() => {
       void this.saveNow('interval').catch(() => {});
@@ -672,6 +708,10 @@ export class ServerSession {
       clearInterval(this.retentionTimer);
       this.retentionTimer = null;
     }
+    if (this.loopTimer !== null) {
+      clearInterval(this.loopTimer);
+      this.loopTimer = null;
+    }
     this.trainingLoop?.stop();
     this.trainingLoop = null;
     this.signalUnsubscribe?.();
@@ -718,6 +758,7 @@ export class ServerSession {
         this.definitionsRunner !== null
           ? { running: this.definitionsRunner.running, progress: this.definitionsRunner.progress(), result: this.definitionsRunner.result() }
           : null,
+      loop: this.loopTimer === null ? null : { maxLagMs: this.loopMaxLagMs, windowMs: Math.max(1, Date.now() - this.loopWindowStart) },
       field: this.fieldState(),
       drives: teacher !== null ? teacher.driveSignalsStatic() : null,
       knowledge: this.knowledgeState(teacher)

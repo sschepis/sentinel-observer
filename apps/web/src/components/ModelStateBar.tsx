@@ -93,6 +93,10 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
   const order = live?.orderParameter ?? field?.orderParameter ?? null;
   const traces = live?.memoryTraceCount ?? field?.traces ?? server?.tracesInModel ?? null;
   const knowledge = server?.knowledge ?? null;
+  // The server's own account of how long it was unable to answer. A busy
+  // server and an absent one look identical from here without it.
+  const lagMs = server?.loop?.maxLagMs ?? null;
+  const busy = lagMs !== null && lagMs >= 1000;
   const drives = server?.drives ?? null;
   const learned = server?.learned ?? null;
   const total = server?.total ?? null;
@@ -134,6 +138,14 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
         </span>
         <span className={`text-xs font-medium ${stale ? 'text-amber-300' : 'text-slate-300'}`}>{statusText}</span>
         {stale && <span className="font-mono text-[10px] text-amber-400/80">{ageText}</span>}
+        {busy && (
+          <span
+            className="font-mono text-[10px] text-slate-500"
+            title={`the server was unable to answer for ${(lagMs / 1000).toFixed(1)} s at its worst in the last minute — one thread runs both the observer and the HTTP server`}
+          >
+            busy {(lagMs / 1000).toFixed(1)}s
+          </span>
+        )}
       </div>
 
       <div className="w-px self-stretch bg-slate-800/80" />

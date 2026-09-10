@@ -242,6 +242,7 @@ export class TrainingLoop {
             if (checked.length > 0) this.options.onEvents?.(checked);
             if (controller.signal.aborted) break;
           }
+          await yieldToLoop();
           const cycle = await runAutonomousCycle(this.teacher, chaperone, grader, controller.signal, {
             wordsPerCycle: this.options.wordsPerCycle ?? 3,
             reviewsPerCycle: this.options.reviewsPerCycle ?? 2
@@ -261,16 +262,21 @@ export class TrainingLoop {
           }
           this.options.onEvents?.(cycle.events.map((event) => fromAutonomousEvent(event, at)));
           if (this.options.pursueGoals !== false && !controller.signal.aborted) {
+            await yieldToLoop();
             const goalEvents = await this.goalStep();
             if (goalEvents.length > 0) this.options.onEvents?.(goalEvents);
           }
           if (this.feeder !== null && feedEvery > 0 && this.stats.cycles % feedEvery === 0 && !controller.signal.aborted) {
+            await yieldToLoop();
             const fed = this.curriculumStep();
             if (fed !== null) this.options.onEvents?.([fed]);
+            await yieldToLoop();
           }
           if (entropyEvery > 0 && this.stats.cycles % entropyEvery === 0 && !controller.signal.aborted) {
+            await yieldToLoop();
             const measured = this.entropyStep();
             if (measured !== null) this.options.onEvents?.([measured]);
+            await yieldToLoop();
           }
           this.options.onCycle?.(this.statistics());
           if (this.options.researchTopics === true && !controller.signal.aborted) {
@@ -492,6 +498,19 @@ export class TrainingLoop {
       };
     }
   }
+}
+
+/**
+ * HAND THE EVENT LOOP BACK. The observer and the HTTP server share one
+ * thread, so every synchronous step of a cycle is time the server cannot
+ * answer anyone — and the heavy steps here (a 1,000-row corpus feed and the
+ * graph rebuild behind it, the network-entropy sweep over every concept, a
+ * grader check) run for seconds. Yielding between them does not make them
+ * shorter, but it guarantees the browser gets a turn in between rather than
+ * waiting out a whole cycle (docs/TASKS.md #87).
+ */
+function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {

@@ -53,6 +53,11 @@ export interface RemoteServerState {
   field?: { coherence: number; entropy: number; orderParameter: number; traces: number; ticking: boolean } | null;
   drives?: { coherence: number; curiosity: number; novelty: number; conservation: number; selfConsistency: number } | null;
   knowledge?: { concepts: number; total: number; mean: number; certain: number; conflicted: number; unknown: number } | null;
+  /** The server's own responsiveness (build 2026-09-10.1 and later): the
+   *  worst event-loop delay in the last window. The observer and the HTTP
+   *  server share a thread, so this is how long the server was unable to
+   *  answer anything. */
+  loop?: { maxLagMs: number; windowMs: number } | null;
 }
 
 export interface RemoteWordEntry {
