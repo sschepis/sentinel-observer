@@ -9,51 +9,12 @@
  */
 
 import { useMemo, useState } from 'react';
-import type { TeacherAgent } from '../teacher/TeacherAgent';
+// The snapshot is BUILT on the model's side (teacher/rulesSnapshot.ts); this
+// panel only renders one. It re-exports the shapes so existing importers of
+// the panel's types keep working.
+import type { RulesPanelRule, RulesPanelSnapshot } from '../teacher/rulesSnapshot';
 
-/** The store → panel snapshot (read-only view of the observer's rules). */
-export function ruleStoreSnapshot(teacher: TeacherAgent): RulesPanelSnapshot {
-  const store = teacher.rewriteRuleStore();
-  return {
-    rules: store.all().map((rule) => ({
-      id: rule.id,
-      name: rule.name,
-      origin: rule.origin,
-      strength: rule.strength,
-      sourceClasses: [...rule.sourceClasses],
-      bits: rule.bits,
-      useCount: rule.useCount,
-      stopped: store.isStopped(rule.id),
-      hedged: rule.origin !== 'authored' && !rule.sourceClasses.includes('world-feedback'),
-      denials: store.denialsOf(rule.id).length,
-      schema: rule.schema,
-      evidence: rule.evidence
-    })),
-    compiledCount: teacher.compiledRuleCount(),
-    resolutions: teacher.ruleResolutionsView()
-  };
-}
-
-export interface RulesPanelRule {
-  id: string;
-  name: string;
-  origin: string;
-  strength: number;
-  sourceClasses: string[];
-  bits: number;
-  useCount: number;
-  stopped: boolean;
-  hedged: boolean;
-  denials: number;
-  schema?: string;
-  evidence?: number;
-}
-
-export interface RulesPanelSnapshot {
-  rules: RulesPanelRule[];
-  compiledCount: number;
-  resolutions: string[];
-}
+export type { RulesPanelRule, RulesPanelSnapshot };
 
 const ORIGIN_LABEL: Record<string, string> = {
   authored: 'deck',

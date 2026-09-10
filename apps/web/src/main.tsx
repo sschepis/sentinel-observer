@@ -1,12 +1,12 @@
 import { createRoot } from 'react-dom/client';
-import { Buffer } from 'buffer';
 import App from './App';
 import './index.css';
 
-// The tinyaleph crypto backend references Buffer; the semantic kernel only
-// uses the oscillator/entropy surface, but the module graph is eager. Assign
-// on globalThis so worker/SSR contexts also resolve it.
-(globalThis as unknown as { Buffer: typeof Buffer }).Buffer = Buffer;
+// THE BUFFER SHIM IS GONE. It existed because the page's import graph
+// reached tinyaleph's crypto backend — which it did because the whole
+// TeacherAgent was in the bundle (109 modules, 91 of them under teacher/).
+// Nothing the page loads imports the cognitive core any more, and
+// `architecture.test.ts` walks the graph on every run to keep it that way.
 
 /**
  * THIS APP REGISTERS NO SERVICE WORKER — so if one is controlling the page,

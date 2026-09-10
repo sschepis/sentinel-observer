@@ -17,7 +17,7 @@ import {
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { MAX_CONCURRENCY } from '../teacher/chaperone';
-import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
+import type { ChaperoneProgressState } from '../learning/definitionsProgress';
 import { makeEvent, type LearningEvent } from '../learning/events';
 import type { PersistenceStore } from '../persistence/store';
 

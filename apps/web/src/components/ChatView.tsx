@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ConversationMessage } from '../teacher/conversations';
 import type { ChatController } from '../chat/useChat';
 import type { VoiceService } from '../speech/voice';
-import { CREATIVE_UNLOCK_THRESHOLD } from '../teacher/conversation';
+import { CREATIVE_UNLOCK_THRESHOLD } from '../learning/thresholds';
 
 export interface ChatViewProps {
   chat: ChatController;

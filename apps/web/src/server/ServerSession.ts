@@ -56,9 +56,9 @@ import {
   type ChaperoneSettings
 } from '../teacher/chaperone';
 import { DefinitionsRunner } from './definitionsRunner';
-import { ruleStoreSnapshot } from '../components/RulesPanel';
+import { ruleStoreSnapshot } from '../teacher/rulesSnapshot';
 import { extractUnknownSubject, tokenizeText } from '../teacher/context';
-import type { ChaperoneProgressState } from '../components/ChaperoneProgress';
+import type { ChaperoneProgressState } from '../learning/definitionsProgress';
 import type { LearningEvent } from '../learning/events';
 
 /**

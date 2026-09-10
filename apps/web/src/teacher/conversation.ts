@@ -2,6 +2,7 @@ import { tokenizeText } from './context';
 import { ALL_PACK_PAIRS } from './conversationPacks';
 import { ALL_ELOQUENCE_PAIRS } from './eloquence';
 import { calibratedGateScore } from './calibration';
+import { CREATIVE_UNLOCK_THRESHOLD as UNLOCK_THRESHOLD } from '../learning/thresholds';
 
 /**
  * The conversation curriculum: taught exchange cues and their expected
@@ -326,7 +327,9 @@ export function conversationRecallFloor(): number {
  */
 export const CONVERSATION_EXACT_RECALL_FLOOR = 0.4;
 /** Fraction of taught pairs recalled at least once needed to unlock creative mode. */
-export const CREATIVE_UNLOCK_THRESHOLD = 0.8;
+// Defined in learning/thresholds.ts — a leaf with no dependencies, so the
+// UI can name the number without importing the classroom (see that file).
+export { CREATIVE_UNLOCK_THRESHOLD } from '../learning/thresholds';
 
 /**
  * D.4 (§5.2 row 3): the unlock gate's LIVE fraction — the isotonic-fitted
@@ -335,7 +338,7 @@ export const CREATIVE_UNLOCK_THRESHOLD = 0.8;
  * the unlock with the bench.
  */
 export function creativeUnlockThreshold(): number {
-  return calibratedGateScore('creative-unlock', CREATIVE_UNLOCK_THRESHOLD);
+  return calibratedGateScore('creative-unlock', UNLOCK_THRESHOLD);
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -5,25 +5,9 @@
  * Presentational only: every value arrives via props.
  */
 
-export interface ChaperoneProgressState {
-  phase: 'running' | 'done';
-  /** Batches completed. */
-  batchIndex: number;
-  totalBatches: number;
-  wordsDone: number;
-  wordsTotal: number;
-  generated: number;
-  skipped: number;
-  errors: number;
-  /** Most recent failed request, shown immediately rather than only at completion. */
-  lastError: { batch: number; words: string[]; message: string } | null;
-  /** Words the model is currently being asked about. */
-  currentWords: string[];
-  startedAt: number;
-  elapsedMs: number;
-  /** The newest generated definitions, newest first (a live feed). */
-  feed: Array<{ word: string; definition: string }>;
-}
+import type { ChaperoneProgressState } from '../learning/definitionsProgress';
+
+export type { ChaperoneProgressState };
 
 export interface ChaperoneProgressProps {
   progress: ChaperoneProgressState | null;

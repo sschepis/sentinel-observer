@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EdgeRef, TeacherAgent } from '../teacher/TeacherAgent';
-import {
-  Chaperone,
-  OpenAICompatProvider,
-  semanticGrader,
-  type ChaperoneSettings
-} from '../teacher/chaperone';
-import { hybridAnswer } from '../teacher/hybrid';
+import type { ChaperoneSettings } from '../teacher/chaperone';
 import type { EpisodicFact } from '../teacher/episodic';
-import { awaitable, isHybridCapable, type ChatTeacher } from '../server/client';
+import { awaitable, type ChatTeacher } from '../server/client';
 import {
   loadConversations,
   loadActiveConversationId,
@@ -180,19 +174,13 @@ export function useChat(
         score = full.score;
         feedback = full.feedback;
         serverGraded = full.graded;
-      } else if (settings.endpoint.trim().length > 0) {
-        const grader = semanticGrader(new OpenAICompatProvider(settings));
-        if (grader !== null) {
-          try {
-            const outcome = await grader.grade(utterance, reply.sentence);
-            score = outcome?.score ?? null;
-            feedback = outcome?.feedback ?? null;
-          } catch (reason) {
-            feedback = `grading unavailable: ${reason instanceof Error ? reason.message : String(reason)}`;
-          }
-        }
       } else {
-        feedback = 'grading unavailable — configure a teacher model in Settings';
+        // THE BROWSER NEVER GRADES. It used to build a provider and call an
+        // LLM from here when the teacher had no server-side grader; a page
+        // that scores the model's answers is a page doing the model's work.
+        // A teacher without `gradeServerSide` is a teacher whose server has
+        // no chaperone configured, and the honest reply is to say so.
+        feedback = 'grading unavailable — the server has no teacher model configured';
       }
 
       // GRADER RELIABILITY: the grade is bucketed (creative × seed
@@ -313,46 +301,15 @@ export function useChat(
       setStatus('');
       onTeacherChanged();
 
-      // HYBRID ESCALATION: when the observer had to ask, the LLM drafts an
-      // answer conditioned on the observer's OWN memories; a strong draft
-      // becomes a memory so no LLM is needed next time. This path reads the
-      // teacher's memory internals (recallMemories / episodicRecall /
-      // recordGap), so it runs only against a teacher that has them — the
-      // remote teacher answers exactly what the server's observer knows and
-      // escalates to an honest ask.
-      if (answer.mode === 'ask' && settings.endpoint.trim().length > 0 && isHybridCapable(teacher)) {
-        setPending(true);
-        setStatus('the observer is asking its teacher…');
-        void (async () => {
-          try {
-            const provider = new OpenAICompatProvider(settings);
-            const hybrid = await hybridAnswer(
-              teacher,
-              new Chaperone(provider),
-              semanticGrader(provider),
-              utterance
-            );
-            if (hybrid !== null) {
-              appendObserver(conversationId, {
-                text: hybrid.answer,
-                mode: 'hybrid',
-                score: hybrid.score,
-                feedback: hybrid.feedback
-              });
-              setStatus(
-                hybrid.stored
-                  ? 'learned from the teacher — the observer can answer this from memory now'
-                  : 'suggested by the teacher (not strong enough to memorize)'
-              );
-            }
-          } catch (reason) {
-            setStatus(reason instanceof Error ? reason.message : String(reason));
-          } finally {
-            setPending(false);
-            onTeacherChanged();
-          }
-        })();
-      }
+      // HYBRID ESCALATION LIVES ON THE SERVER. When the observer has to ask,
+      // the escalation that drafts an answer from its own memories and keeps
+      // a strong one is `teacher.tryTeachReply` / the server's own path —
+      // reached through the "have the teacher answer" affordance. The
+      // browser used to do it here: it built an OpenAI-compatible provider,
+      // read the teacher's memory internals, graded the draft and STORED
+      // it. That is model processing in a page, and it does not belong here
+      // even when it cannot fire (the remote teacher exposes no memory
+      // internals, so `isHybridCapable` was already false).
         } catch (reason) {
           const message = reason instanceof Error ? reason.message : String(reason);
           appendObserver(conversationId, { text: message, mode: 'decline' });
