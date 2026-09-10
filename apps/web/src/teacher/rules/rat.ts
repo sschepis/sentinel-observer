@@ -16,11 +16,25 @@
  * makes `rat.eq` structural equality and keeps the numerals small enough for
  * unary arithmetic to stay inside its fuel.
  *
- * THE GCD IS AUTHORED HERE. `nat.gcd` was referenced by the drill parser and
- * authored nowhere — it existed only as a rule the observer might induce
- * from exercises. Euclid's algorithm is the example the engine's lazy `ite`
- * was built for (see rules/engine.ts): an eager strategy would reduce the
- * recursive branch even when the base case fires, and diverge.
+ * THE GCD HERE IS `rat.gcd`, NOT `nat.gcd`, AND THAT DISTINCTION IS
+ * LOAD-BEARING. `nat.gcd` is referenced by the drill parser and authored
+ * NOWHERE on purpose: the greatest-common-factor family is the flagship
+ * case for rule INDUCTION — the observer learns Euclid from graded
+ * exercises, the induced rule speaks hedged ("I think the answer is 12")
+ * until the world corroborates it, and a doubly-denied induced rule stops
+ * firing. Seven tests pin that story.
+ *
+ * Authoring `nat.gcd` here — which this deck did for a day — handed the
+ * observer the answer and quietly deleted the capability claim: the drill
+ * verdict fell from `rule-induced` to `induced`, gcf answers began speaking
+ * flatly through the authored deck, and stopping the induced rule no longer
+ * stopped anything. The rationals need *a* gcd; they do not need to be the
+ * one the observer is supposed to discover. So this one has its own name
+ * and its own rules, and the induction target is left alone.
+ *
+ * Euclid is still the example the engine's lazy `ite` was built for (see
+ * rules/engine.ts): an eager strategy would reduce the recursive branch
+ * even when the base case fires, and diverge.
  *
  * A DIVISION BY ZERO IS NOT A VALUE. `rat.div` by zero reduces to
  * `rat.undefined`, a symbol with no rules and no decoding — so it is stuck,
@@ -54,7 +68,7 @@ const rule = (id: string, lhs: Term, rhs: Term): RewriteRule => ({
 });
 
 const q = (numerator: Term, denominator: Term): Term => tSym('rat.q', [numerator, denominator]);
-const gcd = (left: Term, right: Term): Term => tSym('nat.gcd', [left, right]);
+const gcd = (left: Term, right: Term): Term => tSym('rat.gcd', [left, right]);
 const add = (left: Term, right: Term): Term => tSym('nat.add', [left, right]);
 const sub = (left: Term, right: Term): Term => tSym('nat.sub', [left, right]);
 const mul = (left: Term, right: Term): Term => tSym('nat.mul', [left, right]);
@@ -67,11 +81,12 @@ const ite = (condition: Term, then: Term, otherwise: Term): Term => tSym('ite', 
 export const RAT_UNDEFINED = tSym('rat.undefined');
 
 export const RAT_RULES: RewriteRule[] = [
-  // ── gcd (Euclid) ──────────────────────────────────────────────────────
+  // ── gcd (Euclid), the rationals' own ─────────────────────────────────
   // gcd(a, 0) = a is the base case; the recursive case only fires when the
-  // ite has already chosen it, which is why laziness is load-bearing.
-  rule('nat.gcd-z', gcd(x, z), x),
-  rule('nat.gcd-xy', gcd(x, y), ite(eq(y, z), x, gcd(y, mod(x, y)))),
+  // ite has already chosen it, which is why laziness is load-bearing. This
+  // is `rat.gcd`: `nat.gcd` belongs to the induction story (see the header).
+  rule('rat.gcd-z', gcd(x, z), x),
+  rule('rat.gcd-xy', gcd(x, y), ite(eq(y, z), x, gcd(y, mod(x, y)))),
 
   // ── normalisation ─────────────────────────────────────────────────────
   // A zero numerator is zero whatever the denominator says.

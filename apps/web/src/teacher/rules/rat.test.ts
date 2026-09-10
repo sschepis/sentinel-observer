@@ -88,14 +88,28 @@ describe('rationals — exact, and normalised after every step', () => {
     expect(ratTerm(rational(-1, 2))).toBe(null);
   });
 
-  test('the gcd is authored, and it is Euclid', () => {
+  test('the rationals have their own gcd, and it is Euclid', () => {
     expect(gcdOf(105, 2)).toBe(1);
     expect(gcdOf(48, 18)).toBe(6);
-    // `nat.gcd` was referenced by the drill parser and authored nowhere
-    // until this deck; the recursive case only terminates because `ite` is
-    // lazy (see rules/engine.ts).
-    const { outcome } = reduce(store(), tSym('nat.gcd', [natFromDecimal(48), natFromDecimal(18)]), { fuel: 200_000 });
+    // It is `rat.gcd`, deliberately NOT `nat.gcd`: that symbol is the
+    // greatest-common-factor family the observer is supposed to INDUCE from
+    // graded exercises, and authoring it deletes the capability claim (see
+    // the header of rat.ts). The recursive case only terminates because
+    // `ite` is lazy (see rules/engine.ts).
+    const { outcome } = reduce(store(), tSym('rat.gcd', [natFromDecimal(48), natFromDecimal(18)]), { fuel: 200_000 });
     expect(outcome.status === 'normal' ? natToDecimal(outcome.term) : null).toBe(6);
+  });
+
+  test('and it does NOT author nat.gcd — the induction target is left alone', () => {
+    // The regression this pins: for one day the rationals deck authored
+    // `nat.gcd`, so "what is the greatest common factor of 48 and 36"
+    // derived through the deck. Seven tests across honesty, the math bench,
+    // the chaperone supply and the analysis-defect suite depend on that
+    // family being learnable rather than given.
+    expect(RAT_RULES.some((rule) => rule.lhs.t === 'sym' && rule.lhs.head === 'nat.gcd')).toBe(false);
+    const { outcome } = reduce(store(), tSym('nat.gcd', [natFromDecimal(48), natFromDecimal(36)]), { fuel: 10_000 });
+    // Nothing reduces it: the term is stuck until the observer induces a rule.
+    expect(outcome.status === 'normal' && outcome.term.t === 'sym' ? outcome.term.head : null).toBe('nat.gcd');
   });
 
   test('reading decimals and fractions out of the corpus text', () => {
