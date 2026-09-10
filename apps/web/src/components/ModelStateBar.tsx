@@ -124,8 +124,8 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
           server === null
             ? 'no observer server reachable'
             : `server build ${server.build} · ${server.tickCount.toLocaleString()} ticks · state read ${ageText}${
-                stale ? ' — these numbers are NOT current; the app is retrying' : ''
-              }`
+                server.lastSaveMs !== null ? ` · last snapshot took ${(server.lastSaveMs / 1000).toFixed(1)} s (the server answers nothing while it writes one)` : ''
+              }${stale ? ' — these numbers are NOT current; the app is retrying' : ''}`
         }
       >
         <span className="relative flex h-2 w-2">

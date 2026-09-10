@@ -8,6 +8,14 @@ export interface ChatViewProps {
   chat: ChatController;
   /** Null until the observer is awake. */
   ready: boolean;
+  /** TRUE WHEN THE SERVER CANNOT BE REACHED AT ALL — a different thing from
+   *  an observer that is merely asleep, and the panel must not confuse
+   *  them: nothing in the browser can wake a process that is not running,
+   *  and offering a button that cannot work is the app lying about what it
+   *  knows. */
+  unreachable?: boolean;
+  /** Where the observer server is expected to be, for the offline panel. */
+  serverUrl?: string;
   creativeUnlocked: boolean;
   voice: VoiceService;
   onStartObserver?: () => void;
@@ -211,7 +219,7 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
  * to the bottom — the conventional assistant layout. The conversation list
  * lives in the app sidebar; the model summary lives in the strip above.
  */
-export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver, onTeacherAnswer }: ChatViewProps) {
+export function ChatView({ chat, ready, unreachable, serverUrl, creativeUnlocked, voice, onStartObserver, onTeacherAnswer }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [listening, setListening] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -255,12 +263,40 @@ export function ChatView({ chat, ready, creativeUnlocked, voice, onStartObserver
   };
 
   if (!ready) {
+    // UNREACHABLE IS NOT ASLEEP. The model lives in a server process; if
+    // that process is not running there is nothing to wake, and the honest
+    // panel says where the app is looking and what to start.
+    if (unreachable === true) {
+      return (
+        <div className="flex flex-1 items-center justify-center p-8">
+          <div className="max-w-md text-center">
+            <h2 className="text-lg font-medium text-slate-100">Can't reach the observer server</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              The model lives in a server process, not in this page. Nothing is answering at{' '}
+              <code className="rounded bg-slate-900 px-1 py-0.5 font-mono text-xs text-slate-300">{serverUrl ?? 'the configured address'}</code>.
+            </p>
+            <p className="mt-2 text-sm text-slate-500">
+              Start it with <code className="font-mono text-xs text-slate-400">npm run dev:all</code> (or{' '}
+              <code className="font-mono text-xs text-slate-400">npm run server</code>) — this page keeps probing and connects on its own the moment it comes up.
+            </p>
+            {onStartObserver !== undefined && (
+              <button
+                onClick={onStartObserver}
+                className="mt-5 rounded-lg border border-slate-700 px-5 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+              >
+                Retry now
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 items-center justify-center p-8">
         <div className="max-w-sm text-center">
           <h2 className="text-lg font-medium text-slate-100">The observer is asleep</h2>
           <p className="mt-2 text-sm text-slate-400">
-            Wake it to chat. Its memory is restored from this browser, so nothing is lost.
+            Wake it to chat. Its memory is restored from the server's own record, so nothing is lost.
           </p>
           {onStartObserver !== undefined && (
             <button

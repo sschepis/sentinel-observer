@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ObserverSignal, SerializedTrace } from '@sschepis/sentient-core';
 import type { WordState } from '../teacher/TeacherAgent';
@@ -41,13 +42,23 @@ export class FilePersistenceStore implements PersistenceStore {
     return this.dataDir;
   }
 
+  /**
+   * WRITING MUST NOT MAKE THE SERVER DEAF. These records are hundreds of
+   * megabytes at deck scale (measured 2026-09-10: traces.json 154 MB,
+   * word-states.json 118 MB), and `writeFileSync` blocked the event loop
+   * for the whole write — the HTTP server answered nothing while it ran, so
+   * the browser's reachability probe timed out and the app declared the
+   * server offline several times a minute. The write is now awaited, which
+   * hands the loop back between chunks. The `JSON.stringify` above it still
+   * blocks (docs/TASKS.md #85 is the fix for that).
+   */
   private atomicWrite(name: string, value: unknown): Promise<void> {
-    const run = this.writeChain.then(() => {
+    const run = this.writeChain.then(async () => {
       const target = join(this.dataDir, name);
       const tmp = `${target}.tmp`;
       mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(tmp, JSON.stringify(value), 'utf8');
-      renameSync(tmp, target);
+      await writeFile(tmp, JSON.stringify(value), 'utf8');
+      await rename(tmp, target);
     });
     this.writeChain = run.catch(() => {});
     return run;

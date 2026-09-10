@@ -8,7 +8,8 @@ export const SERVER_BUILD = '2026-09-09.2';
 export const RETENTION_SWEEP_MS = 5 * 60 * 1000;
 /** Task 39: the on-demand entropy readout is re-measured at most this often. */
 export const ENTROPY_CACHE_MS = 30 * 1000;
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ObserverSignal, SemanticObserverState } from '@sschepis/sentient-core';
 import { ObserverSession } from '../observer/engine';
@@ -620,8 +621,13 @@ export class ServerSession {
       // One serialization per snapshot (ANALYSIS.md §6 #15): the record is
       // ~50 MB at deck scale and stringify blocks the event loop.
       const serialized = JSON.stringify(record);
-      writeFileSync(tmp, serialized, 'utf8');
-      renameSync(tmp, target);
+      // AWAITED, NOT SYNC. model.json is 134 MB at deck scale (measured
+      // 2026-09-10) and a synchronous write of it made the server deaf for
+      // seconds at a time, every autosave — long enough that the browser's
+      // 1.5 s probe timed out and the app went "offline" while the server
+      // was in fact healthy and saving (docs/TASKS.md #85).
+      await writeFile(tmp, serialized, 'utf8');
+      await rename(tmp, target);
       const bytes = serialized.length;
       this.savedAt = started;
       this.lastSaveMs = Date.now() - started;

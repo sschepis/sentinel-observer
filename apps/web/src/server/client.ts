@@ -94,10 +94,19 @@ export class RemoteClient {
     this.base = base.replace(/\/$/, '');
   }
 
-  /** A reachability probe: resolves the server state, rejects when the
-   *  server is not there (a short timeout so the app can fall back to
-   *  running the observer locally). */
-  static async probe(base: string, timeoutMs = 1500): Promise<RemoteServerState> {
+  /**
+   * A reachability probe: resolves the server state, rejects when the
+   * server is not there.
+   *
+   * THE TIMEOUT IS ABOUT PATIENCE, NOT SPEED. It was 1.5 s, which is far
+   * less than the server needs while it is writing a snapshot — hundreds of
+   * megabytes of JSON at deck scale, during which it answers nothing (see
+   * docs/TASKS.md #85). Every autosave therefore looked like the server
+   * going away, and the app declared it offline several times a minute
+   * while it was in fact healthy. A server that answers in three seconds is
+   * busy, not absent.
+   */
+  static async probe(base: string, timeoutMs = 10_000): Promise<RemoteServerState> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {

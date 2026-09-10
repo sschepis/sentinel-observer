@@ -54,6 +54,7 @@ export default function App() {
   });
   const saveServerUrl = (next: string) => {
     setServerUrl(next);
+    setRemoteAvailable(null);
     try {
       localStorage.setItem(SERVER_URL_KEY, next);
     } catch {
@@ -63,15 +64,23 @@ export default function App() {
   const remote = useRemoteObserver(serverUrl);
   const [remoteAvailable, setRemoteAvailable] = useState<boolean | null>(null);
   const [probeEpoch, setProbeEpoch] = useState(0);
+  /** ONE MISSED PROBE IS NOT AN ABSENT SERVER. A snapshot write makes the
+   *  server deaf for seconds at a time (docs/TASKS.md #85), so a single
+   *  timeout used to tear the whole connection down and blank every number
+   *  on screen. Two in a row is a server that has actually gone. */
+  const probeMisses = useRef(0);
   useEffect(() => {
     let cancelled = false;
-    setRemoteAvailable(null);
     RemoteClient.probe(serverUrl).then(
       () => {
-        if (!cancelled) setRemoteAvailable(true);
+        if (cancelled) return;
+        probeMisses.current = 0;
+        setRemoteAvailable(true);
       },
       () => {
-        if (!cancelled) setRemoteAvailable(false);
+        if (cancelled) return;
+        probeMisses.current += 1;
+        if (probeMisses.current >= 2) setRemoteAvailable(false);
       }
     );
     return () => {
@@ -312,6 +321,8 @@ export default function App() {
           <ChatView
             chat={chat}
             ready={connected}
+            unreachable={remoteAvailable === false || remote.server === null}
+            serverUrl={serverUrl}
             creativeUnlocked={summary.creativeUnlocked}
             voice={voice}
             onStartObserver={() => {
