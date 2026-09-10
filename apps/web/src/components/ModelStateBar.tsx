@@ -78,7 +78,7 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
     return () => clearInterval(id);
   }, []);
   const age = stateAt === null ? null : now - stateAt;
-  const stale = server !== null && (age === null || age > STALE_AFTER_MS);
+  const stale = server !== null && server.status !== 'loading' && (age === null || age > STALE_AFTER_MS);
   const ageText = age === null ? 'never read' : age < 90_000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60_000)} min ago`;
 
   // The field: the tick stream is freshest; the state line's settled reading
@@ -114,7 +114,23 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
           : status === 'loading'
             ? 'bg-sky-400'
             : 'bg-slate-600';
-  const statusText = server === null ? 'offline' : stale ? 'stale' : status === 'idle' || !ticking ? 'asleep' : learning ? 'learning' : status === 'degraded' ? 'degraded' : 'awake';
+  // The server answers while it is still restoring the record, and that is
+  // not "asleep" — nothing can be woken, the model is on its way up.
+  const booting = server !== null && server.status === 'loading';
+  const statusText =
+    server === null
+      ? 'offline'
+      : booting
+        ? 'booting'
+        : stale
+          ? 'stale'
+          : status === 'idle' || !ticking
+            ? 'asleep'
+            : learning
+              ? 'learning'
+              : status === 'degraded'
+                ? 'degraded'
+                : 'awake';
 
   return (
     <header
@@ -134,7 +150,7 @@ export function ModelStateBar({ status, server, stateAt = null, metrics, learnin
       >
         <span className="relative flex h-2 w-2">
           {learning && server !== null && !stale && <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${statusTone} opacity-70`} />}
-          <span className={`relative inline-flex h-2 w-2 rounded-full ${server === null ? 'bg-slate-600' : stale ? 'bg-amber-400' : statusTone}`} />
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${server === null ? 'bg-slate-600' : booting ? 'bg-sky-400' : stale ? 'bg-amber-400' : statusTone}`} />
         </span>
         <span className={`text-xs font-medium ${stale ? 'text-amber-300' : 'text-slate-300'}`}>{statusText}</span>
         {stale && <span className="font-mono text-[10px] text-amber-400/80">{ageText}</span>}

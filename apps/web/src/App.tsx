@@ -323,6 +323,7 @@ export default function App() {
             ready={connected}
             unreachable={remoteAvailable === false || remote.server === null}
             serverUrl={serverUrl}
+            booting={remote.server?.status === 'loading'}
             creativeUnlocked={summary.creativeUnlocked}
             voice={voice}
             onStartObserver={() => {

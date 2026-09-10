@@ -41,7 +41,7 @@ const env = process.env;
 const smf = env.OBSERVER_SMF_WEIGHT;
 const gates = env.OBSERVER_GATES_FILE ?? '';
 const corpus = env.OBSERVER_CORPUS ?? (existsSync(join(webDir, 'corpus')) ? 'corpus (default)' : '');
-const store = env.OBSERVER_STORE ?? 'json (default)';
+const store = env.OBSERVER_STORE ?? 'sqlite (default)';
 const model = env.OBSERVER_CHAPERONE_MODEL ?? '';
 const warnings = [];
 if (!hadEnv) warnings.push(`no ${envPath} — copy .env.example to .env and fill it in`);

@@ -101,7 +101,10 @@ const CHAPERONE_KEY = process.env.OBSERVER_CHAPERONE_KEY ?? arg('--chaperone-key
 const CHAPERONE_MODEL = process.env.OBSERVER_CHAPERONE_MODEL ?? arg('--chaperone-model', '');
 const RESEARCH_TOPICS = process.env.OBSERVER_RESEARCH_TOPICS === '1' || process.argv.includes('--research-topics');
 const TRAIN = !process.argv.includes('--no-train');
-const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'json');
+// SQLITE IS THE DEFAULT since 2026-09-10 (it was written, tested, and then
+// never switched on: the default stayed 'json' and no script asked for
+// anything else). `--store json` still selects the legacy files.
+const STORE = process.env.OBSERVER_STORE ?? arg('--store', 'sqlite');
 const CORPUS_FLAG = process.env.OBSERVER_CORPUS ?? arg('--corpus', '');
 const CORPUS = CORPUS_FLAG.length > 0 ? resolve(CORPUS_FLAG) : existsSync(resolve('./corpus')) ? resolve('./corpus') : '';
 
@@ -156,13 +159,21 @@ async function main(): Promise<void> {
     autosaveMs: AUTOSAVE_MS,
     compositionSeed: SEED,
     train: TRAIN,
-    store: STORE === 'sqlite' ? 'sqlite' : 'json',
+    store: STORE === 'json' ? 'json' : 'sqlite',
     researchTopics: RESEARCH_TOPICS,
     corpusDir: CORPUS.length > 0 ? CORPUS : undefined,
     curriculumEvery: CURRICULUM_EVERY,
     curriculumBudget: CURRICULUM_BUDGET,
     chaperone: CHAPERONE_ENDPOINT.length > 0 ? { endpoint: CHAPERONE_ENDPOINT, apiKey: CHAPERONE_KEY, model: CHAPERONE_MODEL } : undefined
   });
+
+  // THE PORT OPENS BEFORE THE MODEL IS READY. Boot reads the whole record
+  // back — about a minute at 400 MB — and until this commit nothing was
+  // listening while it did, so every request in that window was REFUSED and
+  // the browser had no way to tell "still starting" from "not there at
+  // all". `state()` is safe with no teacher yet: it answers status
+  // 'loading', which is exactly what the app needs to say so.
+  const http = startHttpServer(server, PORT);
 
   const state = await server.boot();
   // eslint-disable-next-line no-console
@@ -174,8 +185,6 @@ async function main(): Promise<void> {
       (CORPUS.length > 0 ? ` · corpus ${CORPUS}` : ' · no corpus') +
       (CORPUS.length > 0 ? ` (feed ${CURRICULUM_BUDGET ?? 1000} rows every ${CURRICULUM_EVERY ?? 5} cycles)` : '')
   );
-
-  const http = startHttpServer(server, PORT);
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {

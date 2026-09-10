@@ -78,7 +78,11 @@ export function useRemoteObserver(url: string): RemoteObserverState {
       // model-state strip froze at whatever it last read (see the polling
       // effect below).
       setError(null);
-      setStatus(state.status === 'error' ? 'error' : 'ready');
+      // THE SERVER'S OWN STATUS DECIDES. It answers on the port while it is
+      // still reading the record back (a minute at 400 MB), and 'loading'
+      // must not be reported to the UI as 'ready' — an empty strip labelled
+      // ready is the same lie as a frozen one labelled live.
+      setStatus(state.status === 'error' ? 'error' : state.status === 'ready' ? 'ready' : 'loading');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setStatus('error');

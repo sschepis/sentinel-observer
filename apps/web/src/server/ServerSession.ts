@@ -100,8 +100,12 @@ export interface ServerSessionOptions {
   /** R17: the loop also researches the subjects of its unanswered gaps
    *  through the chaperone each cycle (default false). */
   researchTopics?: boolean;
-  /** Working store: 'json' (legacy, default) or 'sqlite' (recommended —
-   *  one-time migration imports the legacy JSON files when present). */
+  /** Working store: 'sqlite' (DEFAULT since 2026-09-10) or 'json' (legacy).
+   *  The SQLite store was written, tested and then never switched on — the
+   *  default stayed 'json' and no script passed OBSERVER_STORE, so the
+   *  server re-serialised 280 MB of JSON on every flush for weeks. On the
+   *  first SQLite boot over a JSON dataset the store imports the legacy
+   *  files in one transaction and leaves them in place as a backup. */
   store?: 'json' | 'sqlite';
   /** src/curriculum: corpus directory the classroom ingests from (absent = none). */
   corpusDir?: string;
@@ -216,7 +220,7 @@ export class ServerSession {
       trainCadenceMs: options.trainCadenceMs ?? 400,
       chaperone: options.chaperone ?? { endpoint: '', apiKey: '', model: '' },
       researchTopics: options.researchTopics ?? false,
-      store: options.store ?? 'json',
+      store: options.store ?? 'sqlite',
       corpusDir: options.corpusDir ?? '',
       // 0 means "unset": the measured defaults in trainingLoop.ts stand.
       curriculumEvery: options.curriculumEvery ?? 0,
@@ -679,9 +683,32 @@ export class ServerSession {
   /** Write the learning record + the portable model snapshot, atomically. */
   async saveNow(reason: string): Promise<ServerSnapshot> {
     if (this.teacher === null) throw new Error('server session not booted');
+    // THE STORE IS THE RECORD; model.json IS AN EXPORT. Boot restores from
+    // the store (`restoreFromPersistence`) and never reads model.json — the
+    // file exists so "Download trained model" has something to serve. It was
+    // being rebuilt and stringified (137 MB) on every interval save anyway,
+    // which is most of what made the server deaf: the single most expensive
+    // thing the process did was writing a file nothing reads. The interval
+    // now flushes the store and stops there; the export is written on
+    // shutdown, on "Save now", and on any other explicit reason.
+    const exportModel = reason !== 'interval';
     const run = this.saveChain.then(async () => {
       const started = Date.now();
       await this.teacher!.flush();
+      if (!exportModel) {
+        this.savedAt = started;
+        this.lastSaveMs = Date.now() - started;
+        const flushed: ServerSnapshot = {
+          kind: 'snapshot',
+          at: started,
+          traces: this.session?.observer.getMemoryBank().all().length ?? 0,
+          deck: 'en-20000',
+          // Nothing was exported: the store took the write, row by row.
+          bytes: 0
+        };
+        this.broadcast({ kind: 'snapshot', snapshot: flushed });
+        return flushed;
+      }
       const record = this.teacher!.exportBootstrap('en-20000');
       const target = join(this.options.dataDir, 'model.json');
       const tmp = `${target}.tmp`;

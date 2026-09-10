@@ -16,6 +16,8 @@ export interface ChatViewProps {
   unreachable?: boolean;
   /** Where the observer server is expected to be, for the offline panel. */
   serverUrl?: string;
+  /** The server is up and still restoring the record — on its way, not asleep. */
+  booting?: boolean;
   creativeUnlocked: boolean;
   voice: VoiceService;
   onStartObserver?: () => void;
@@ -219,7 +221,7 @@ function ObserverMessage({ message }: { message: ConversationMessage }) {
  * to the bottom — the conventional assistant layout. The conversation list
  * lives in the app sidebar; the model summary lives in the strip above.
  */
-export function ChatView({ chat, ready, unreachable, serverUrl, creativeUnlocked, voice, onStartObserver, onTeacherAnswer }: ChatViewProps) {
+export function ChatView({ chat, ready, unreachable, serverUrl, booting, creativeUnlocked, voice, onStartObserver, onTeacherAnswer }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [listening, setListening] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -287,6 +289,19 @@ export function ChatView({ chat, ready, unreachable, serverUrl, creativeUnlocked
                 Retry now
               </button>
             )}
+          </div>
+        </div>
+      );
+    }
+    if (booting === true) {
+      return (
+        <div className="flex flex-1 items-center justify-center p-8">
+          <div className="max-w-md text-center">
+            <h2 className="text-lg font-medium text-slate-100">The observer is coming up</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              The server is restoring its record from disk — hundreds of megabytes, about a minute. Nothing is lost and nothing needs
+              doing; this page connects the moment it is ready.
+            </p>
           </div>
         </div>
       );
