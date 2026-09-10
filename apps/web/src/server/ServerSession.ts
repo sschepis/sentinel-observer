@@ -6,6 +6,27 @@ export const SERVER_BUILD = '2026-09-10.1';
 const LOOP_PROBE_MS = 250;
 const LOOP_WINDOW_MS = 60_000;
 
+/**
+ * THE SAVE MUST NOT COST MORE THAN A FRACTION OF THE CLOCK.
+ *
+ * A snapshot is `flush()` (traces 154 MB, word states 121 MB, learning
+ * state 7 MB) followed by `exportBootstrap` and one `JSON.stringify` of
+ * 137 MB — and all of that building and serialising is synchronous, on the
+ * one thread that also answers HTTP. Measured on the live record
+ * (2026-09-10, by the server's own lag monitor): **a 60-second stall**. On a
+ * 30-second autosave the process was spending more time writing itself out
+ * than learning, and the UI was dark for most of every minute — which is
+ * what an entire afternoon of "the dashboard is broken" actually was.
+ *
+ * So the autosave now budgets itself: after a save that took `t`, the next
+ * one waits at least `t / SAVE_DUTY_CYCLE`. A one-second save keeps the
+ * plain cadence; a forty-second save earns four hundred seconds of quiet.
+ * The record is never at risk — a save still runs on shutdown, on demand
+ * ("Save now"), and the `.tmp`-then-rename means a skipped or interrupted
+ * save cannot corrupt what is already on disk.
+ */
+const SAVE_DUTY_CYCLE = 0.1;
+
 /** How often the live server applies the retention law (ANALYSIS.md §6 #3).
  *  Safety-class constant: the sweep is idempotent and the law is wall-clock,
  *  so the cadence only bounds how stale a strength reading can be. */
@@ -149,7 +170,7 @@ export interface ServerState {
    *  is time the server cannot answer anyone. Without this number the only
    *  evidence was the UI going quiet, which looks identical to a bug in
    *  the UI (docs/TASKS.md #87). */
-  loop: { maxLagMs: number; windowMs: number } | null;
+  loop: { maxLagMs: number; windowMs: number; skippedSaves: number } | null;
 }
 
 export class ServerSession {
@@ -170,6 +191,8 @@ export class ServerSession {
   private loopExpected = 0;
   private loopMaxLagMs = 0;
   private loopWindowStart = 0;
+  /** Autosaves skipped because the last one was expensive (see SAVE_DUTY_CYCLE). */
+  private skippedSaves = 0;
   private running = false;
   private restored = 0;
   private freshTrained = false;
@@ -186,7 +209,7 @@ export class ServerSession {
       bootstrapPath: options.bootstrapPath ?? '',
       words: options.words ?? 200,
       conversation: options.conversation ?? true,
-      autosaveMs: options.autosaveMs ?? 30000,
+      autosaveMs: options.autosaveMs ?? 120_000,
       compositionSeed: options.compositionSeed ?? 0,
       tickImmediately: options.tickImmediately ?? true,
       train: options.train ?? true,
@@ -316,6 +339,14 @@ export class ServerSession {
     this.loopTimer.unref?.();
 
     this.autosaveTimer = setInterval(() => {
+      const cost = this.lastSaveMs;
+      if (cost !== null && this.savedAt !== null) {
+        const quietFor = cost / SAVE_DUTY_CYCLE;
+        if (Date.now() - this.savedAt < quietFor) {
+          this.skippedSaves += 1;
+          return;
+        }
+      }
       void this.saveNow('interval').catch(() => {});
     }, this.options.autosaveMs);
     // The autosave cadence must never keep a process alive: the model is
@@ -758,7 +789,10 @@ export class ServerSession {
         this.definitionsRunner !== null
           ? { running: this.definitionsRunner.running, progress: this.definitionsRunner.progress(), result: this.definitionsRunner.result() }
           : null,
-      loop: this.loopTimer === null ? null : { maxLagMs: this.loopMaxLagMs, windowMs: Math.max(1, Date.now() - this.loopWindowStart) },
+      loop:
+        this.loopTimer === null
+          ? null
+          : { maxLagMs: this.loopMaxLagMs, windowMs: Math.max(1, Date.now() - this.loopWindowStart), skippedSaves: this.skippedSaves },
       field: this.fieldState(),
       drives: teacher !== null ? teacher.driveSignalsStatic() : null,
       knowledge: this.knowledgeState(teacher)

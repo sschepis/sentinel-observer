@@ -57,7 +57,7 @@ export interface RemoteServerState {
    *  worst event-loop delay in the last window. The observer and the HTTP
    *  server share a thread, so this is how long the server was unable to
    *  answer anything. */
-  loop?: { maxLagMs: number; windowMs: number } | null;
+  loop?: { maxLagMs: number; windowMs: number; skippedSaves?: number } | null;
 }
 
 export interface RemoteWordEntry {

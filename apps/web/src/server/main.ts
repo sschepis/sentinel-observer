@@ -90,7 +90,11 @@ const BOOTSTRAP_FLAG = process.env.OBSERVER_BOOTSTRAP ?? arg('--bootstrap', '');
 const BOOTSTRAP = BOOTSTRAP_FLAG.length > 0 ? resolve(BOOTSTRAP_FLAG) : SHIPPED_BOOTSTRAP;
 const WORDS = Number(process.env.OBSERVER_WORDS ?? arg('--words', '200'));
 const CONVERSATION = !process.argv.includes('--no-conversation');
-const AUTOSAVE_MS = Number(process.env.OBSERVER_AUTOSAVE_MS ?? arg('--autosave-ms', '30000'));
+// 30 s was the default until 2026-09-10, when the record reached 400 MB and
+// a single save measured 60 s of blocked event loop: the process spent more
+// time writing itself out than learning. The duty-cycle budget in
+// ServerSession is the real guard; this is just a sane floor.
+const AUTOSAVE_MS = Number(process.env.OBSERVER_AUTOSAVE_MS ?? arg('--autosave-ms', '120000'));
 const SEED = Number(process.env.OBSERVER_SEED ?? arg('--seed', '0'));
 const CHAPERONE_ENDPOINT = process.env.OBSERVER_CHAPERONE_ENDPOINT ?? arg('--chaperone-endpoint', '');
 const CHAPERONE_KEY = process.env.OBSERVER_CHAPERONE_KEY ?? arg('--chaperone-key', '');
