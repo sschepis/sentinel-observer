@@ -386,3 +386,31 @@ describe('drill rotation (the stuck-loop regression)', () => {
     session.dispose();
   });
 });
+
+describe('the drill never locks onto a family with an open rule question', () => {
+  it('a concept with an open rule question is skipped for the next ready family', async () => {
+    const families = ['multiplication', 'addition']
+      .map((word) => CHECKABLE_CONCEPTS.find((concept) => concept.word === word))
+      .filter((concept): concept is TechnicalConcept => concept !== undefined);
+    const deck = families.flatMap((concept) => [
+      concept,
+      ...concept.dependsOn.map((word) => ({ word, definition: `the concept ${word}`, example: `About ${word}.` }))
+    ]);
+    const session = new ObserverSession(
+      { ...OPTIONS, vocabulary: deckVocabulary([...deck, ...CONVERSATION_CUE_TOKENS.map((w) => ({ word: w }))], PRIME_SPACE) },
+      100
+    );
+    await session.initialize();
+    const teacher = new TeacherAgent(session, deck as never);
+    for (const entry of deck) teacher.teach(entry.word);
+
+    const first = nextDrillConcept(teacher);
+    expect(first).not.toBeNull();
+    // The first family's rule question is now OPEN — it must be skipped.
+    teacher.notePendingRuleQuestion(first!.word, first!.drill as string);
+    const second = nextDrillConcept(teacher);
+    expect(second).not.toBeNull();
+    expect(second!.word).not.toBe(first!.word);
+    session.dispose();
+  });
+});

@@ -18,6 +18,8 @@ import { DECK_100 } from '../teacher/decks/en-100';
 import { CONVERSATION_DECK } from '../teacher/conversation';
 import { PRIME_SPACE, deckVocabulary } from '../teacher/primeSignature';
 import { TrainingLoop, EMPTY_TRAINING_STATS, type TrainingStats } from './trainingLoop';
+import { runAutonomousCycle } from '../teacher/autonomous';
+import { Chaperone } from '../teacher/chaperone';
 import { ServerSession } from './ServerSession';
 import type { LearningEvent } from '../learning/events';
 import type { DeckWord } from '../teacher/deck';
@@ -200,4 +202,47 @@ describe('curiosity phrasing for sentence gaps', () => {
     expect(question).not.toContain('means');
     session.dispose();
   });
+});
+
+describe('cycle quality: rule proposals + no junk gap teaching', () => {
+  it('an open rule question is answered by a chaperone rule PROPOSAL (R14 step)', async () => {
+    const session = new ObserverSession(OPTIONS, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, DECK);
+    teacher.teachConversationDeck(CONVERSATION_DECK.slice(0, 2));
+    teacher.notePendingRuleQuestion('greatest common factor', 'gcf');
+
+    const stubProvider = { name: 'stub', complete: async () => '' } as never;
+    const chaperone = new Chaperone(stubProvider);
+    const controller = new AbortController();
+    const cycle = await runAutonomousCycle(teacher, chaperone, null, controller.signal, {
+      wordsPerCycle: 1,
+      reviewsPerCycle: 0
+    });
+    const ruleEvents = cycle.events.filter((event) => event.text.includes('rule proposal'));
+    expect(ruleEvents.length).toBe(1); // the open question was PROPOSED for
+    session.dispose();
+  }, 30000);
+
+  it('sentence gaps are never answered by the exchange generator (no junk teaching)', async () => {
+    const session = new ObserverSession(OPTIONS, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, DECK);
+    teacher.teachConversationDeck(CONVERSATION_DECK.slice(0, 2));
+    teacher.recordGap('the library has seventy-five science books on its shelves');
+
+    const stubProvider = {
+      name: 'stub',
+      complete: async () => '{"pairs":[{"cue":"the library has seventy-five science books on its shelves","response":"I need a second."}]}'
+    } as never;
+    const chaperone = new Chaperone(stubProvider);
+    const controller = new AbortController();
+    await runAutonomousCycle(teacher, chaperone, null, controller.signal, {
+      wordsPerCycle: 0,
+      reviewsPerCycle: 0
+    });
+    const cues = teacher.listConversationPairs().map((pair) => pair.cue);
+    expect(cues).not.toContain('the library has seventy-five science books on its shelves');
+    session.dispose();
+  }, 30000);
 });

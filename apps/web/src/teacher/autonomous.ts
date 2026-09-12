@@ -1,6 +1,8 @@
 import type { TeacherAgent } from './TeacherAgent';
 import type { Chaperone, SemanticGrader } from './chaperone';
-import { nextDrillConcept, runDrill, type DrillResult } from './technical/drill';
+import { nextDrillConcept, runDrill, proposeRuleForConcept, type DrillResult } from './technical/drill';
+import { CHECKABLE_CONCEPTS } from './technical';
+import { tokenizeText } from './context';
 import { computeDrives } from './drives';
 
 /**
@@ -104,7 +106,13 @@ export async function runAutonomousCycle(
   let drill: DrillResult | null = null;
 
   // 1. Gaps first — the observer learns from the conversations it had.
-  const gaps = teacher.listGaps();
+  //    WORD gaps only: sentence gaps (story problems) and rule questions
+  //    are never answered by the exchange generator — a junk reply like
+  //    "I need a second." must not be taught as the answer to a word
+  //    problem. Rule questions go through the R14 proposal step (4.5).
+  const gaps = teacher.listGaps().filter(
+    (gap) => tokenizeText(gap).length < 4 && !gap.toLowerCase().includes('what is the rule')
+  );
   if (gaps.length > 0) {
     llmCalls += 1;
     const run = await chaperone.answerGaps({
@@ -174,6 +182,24 @@ export async function runAutonomousCycle(
     // Held-out answers are the observer's own work: no LLM was consulted.
     selfAnswered += Math.round(drill.testAccuracy * 100) > 0 ? 1 : 0;
     events.push(...drill.events);
+  }
+
+  // 4.5 R14: ANSWER OPEN RULE QUESTIONS — the drill may open a question
+  //     ("what is the rule for commutative property?") that no human will
+  //     answer in an autonomous loop; the chaperone PROPOSES the rule and
+  //     the observer validates it against its own oracle before adoption.
+  //     One proposal per cycle keeps the loop moving instead of stalling
+  //     on a family whose question is open.
+  for (const question of teacher.pendingRuleQuestionsView()) {
+    if (signal?.aborted === true) break;
+    const concept = CHECKABLE_CONCEPTS.find((candidate) => candidate.word === question.concept);
+    if (concept === undefined) continue;
+    llmCalls += 1;
+    const ruleEvents = await proposeRuleForConcept(teacher, chaperone, concept, signal);
+    if (ruleEvents !== null) {
+      events.push(...ruleEvents);
+      break;
+    }
   }
 
   // 5. The LLM talks; the observer answers; teach if it did not know.

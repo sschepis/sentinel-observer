@@ -4,6 +4,8 @@ import { TokenCostModel } from '../mdl';
 import { SLOT_COST } from '../operators/learning';
 import { ACTIVE_DECK } from '../decks';
 import { CHECKABLE_CONCEPTS } from './index';
+import { taughtRuleSpecFor } from '../rules/instruction';
+import type { Chaperone } from '../chaperone';
 import { generateExercises, splitExercises, verify, chanceLevel, type Exercise } from './verify';
 import { induceRule, matchArgs, evaluate, conversionPairOf, type DSLExpr, type TrainInstance } from './dsl';
 import type { TechnicalConcept } from './types';
@@ -160,8 +162,13 @@ export function nextDrillConcept(
   drilledCounts: ReadonlyMap<string, number> = new Map(),
   drillFailures?: ReadonlyMap<string, number>
 ): TechnicalConcept | null {
+  // Concepts whose RULE QUESTION is open are waiting on an answer, not on
+  // another drill round — re-drilling them every cycle is the lock the
+  // training feed showed (commutative property drilled forever while its
+  // question went unanswered).
+  const openQuestions = new Set(teacher.pendingRuleQuestionsView().map((question) => question.drill));
   const ready = CHECKABLE_CONCEPTS.filter(
-    (concept) => isLearned(teacher, concept.word) && concept.dependsOn.every((p) => isLearned(teacher, p))
+    (concept) => isLearned(teacher, concept.word) && concept.dependsOn.every((p) => isLearned(teacher, p)) && !openQuestions.has(concept.drill as string)
   );
   if (ready.length === 0) return null;
   return ready.reduce((best, concept) => {
@@ -177,6 +184,44 @@ function askAndMark(teacher: TeacherAgent, exercise: Exercise): boolean {
   const answer = teacher.chatAnswer(exercise.prompt);
   const spoken = answer.mode === 'decline' ? '' : answer.response;
   return verify(exercise, spoken).correct;
+}
+
+/**
+ * R14: answer an OPEN rule question with a chaperone-proposed rule. The LLM
+ * is a proposer, never a programmer: the proposal must parse in the taught
+ * grammar and pass the family's own oracle before adoption — exactly the
+ * same gates as a human-taught rule.
+ */
+export async function proposeRuleForConcept(
+  teacher: TeacherAgent,
+  chaperone: Chaperone,
+  concept: TechnicalConcept,
+  signal?: AbortSignal
+): Promise<AutonomousEvent[] | null> {
+  const drill = concept.drill as string;
+  const spec = taughtRuleSpecFor(drill);
+  if (spec === null) return null;
+  const pool = generateExercises(drill, concept.word, {
+    count: TRAIN_SIZE * 2,
+    seed: seedFor(concept.word, 0)
+  });
+  const { train } = splitExercises(pool);
+  const instances = train.slice(0, TRAIN_SIZE).map((exercise) => ({
+    input: exercise.prompt,
+    output: exercise.answer
+  }));
+  if (instances.length === 0) return null;
+  const proposal = await chaperone.proposeRule({ spec, instances, signal });
+  const outcome = teacher.teachRewriteRule(proposal, drill);
+  return [
+    {
+      role: 'system',
+      text: outcome.adopted
+        ? `adopted a teacher-proposed rule for ${concept.word}`
+        : `rule proposal for ${concept.word} was not adopted: ${outcome.message}`,
+      meta: outcome.adopted ? 'drill-induced' : 'error'
+    }
+  ];
 }
 
 /**
