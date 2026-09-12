@@ -185,3 +185,19 @@ describe('TrainingLoop topic research (R17)', () => {
     session.dispose();
   }, 30000);
 });
+
+describe('curiosity phrasing for sentence gaps', () => {
+  it('a story-problem gap is asked about as a sentence, not an unknown word', async () => {
+    const session = new ObserverSession(OPTIONS, 100);
+    await session.initialize();
+    const teacher = new TeacherAgent(session, DECK);
+    teacher.recordGap('the library has 75 science books');
+    teacher.recordGap('the library has 75 science books'); // second miss → eligible
+    teacher.recordGap('the library has 75 science books');
+    const question = teacher.curiosityQuestion();
+    expect(question).not.toBeNull();
+    expect(question).toContain('I could not understand');
+    expect(question).not.toContain('means');
+    session.dispose();
+  });
+});

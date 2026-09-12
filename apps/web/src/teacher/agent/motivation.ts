@@ -309,6 +309,12 @@ export function MotivationMixin<TBase extends Constructor<TeacherAgentCore & Cro
       }
       if (bestGap !== null) {
         this.curiosityAsked.add(`gap:${bestGap}`);
+        // A SENTENCE is not a word: a story problem ("the library has 75
+        // science books...") must be asked about as a whole, never as an
+        // "unknown word" with a quoted fragment.
+        if (tokenizeText(bestGap).length >= 4) {
+          return `I could not understand: "${bestGap}" — can you explain it to me?`;
+        }
         const subject = extractUnknownSubject(bestGap, known) ?? bestGap;
         return `I do not know what "${subject}" means. Could you teach me about it?`;
       }

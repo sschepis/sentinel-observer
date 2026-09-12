@@ -359,3 +359,30 @@ describe('executable rule induction (P2)', () => {
     fresh.dispose();
   }, 40000);
 });
+
+describe('drill rotation (the stuck-loop regression)', () => {
+  it('a recently-drilled concept yields to the least-recently-drilled', async () => {
+    const families = ['multiplication', 'addition']
+      .map((word) => CHECKABLE_CONCEPTS.find((concept) => concept.word === word))
+      .filter((concept): concept is TechnicalConcept => concept !== undefined);
+    const deck = families.flatMap((concept) => [
+      concept,
+      ...concept.dependsOn.map((word) => ({ word, definition: `the concept ${word}`, example: `About ${word}.` }))
+    ]);
+    const session = new ObserverSession(
+      { ...OPTIONS, vocabulary: deckVocabulary([...deck, ...CONVERSATION_CUE_TOKENS.map((w) => ({ word: w }))], PRIME_SPACE) },
+      100
+    );
+    await session.initialize();
+    const teacher = new TeacherAgent(session, deck as never);
+    for (const entry of deck) teacher.teach(entry.word);
+
+    const first = nextDrillConcept(teacher);
+    expect(first).not.toBeNull();
+    const drilled = new Map([[first!.word, 5]]);
+    const second = nextDrillConcept(teacher, drilled);
+    expect(second).not.toBeNull();
+    expect(second!.word).not.toBe(first!.word);
+    session.dispose();
+  });
+});

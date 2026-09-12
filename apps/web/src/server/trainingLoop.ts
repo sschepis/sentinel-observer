@@ -165,6 +165,12 @@ export interface TrainingLoopOptions {
 export class TrainingLoop {
   private controller: AbortController | null = null;
   private readonly stats: TrainingStats = { ...EMPTY_TRAINING_STATS };
+  /** Persists across cycles so the drill ROTATES (least-recently-drilled)
+   *  instead of re-drilling the first concept every cycle. */
+  private readonly drillCounts = new Map<string, number>();
+  /** Cues the chaperone proposed recently — bounded — so the teacher stops
+   *  re-asking the same question every cycle. */
+  private readonly proposedCues = new Set<string>();
   private feeder: CurriculumFeeder | null = null;
 
   constructor(
@@ -243,9 +249,15 @@ export class TrainingLoop {
             if (controller.signal.aborted) break;
           }
           await yieldToLoop();
+          if (this.proposedCues.size > 400) {
+            const keep = 200;
+            for (const cue of [...this.proposedCues].slice(0, this.proposedCues.size - keep)) this.proposedCues.delete(cue);
+          }
           const cycle = await runAutonomousCycle(this.teacher, chaperone, grader, controller.signal, {
             wordsPerCycle: this.options.wordsPerCycle ?? 3,
-            reviewsPerCycle: this.options.reviewsPerCycle ?? 2
+            reviewsPerCycle: this.options.reviewsPerCycle ?? 2,
+            drillCounts: this.drillCounts,
+            proposedCues: this.proposedCues
           });
           if (controller.signal.aborted) break;
           const at = Date.now();

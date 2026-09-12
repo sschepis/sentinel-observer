@@ -82,6 +82,10 @@ export async function runAutonomousCycle(
   signal?: AbortSignal,
   options: {
     drillCounts?: Map<string, number>;
+    /** Cues the chaperone has already PROPOSED in recent cycles (bounded by
+     *  the caller) — merged into the dedup set so the teacher stops asking
+     *  the same question every cycle when the observer never memorized it. */
+    proposedCues?: Set<string>;
     round?: number;
     wordsPerCycle?: number;
     reviewsPerCycle?: number;
@@ -175,12 +179,15 @@ export async function runAutonomousCycle(
   // 5. The LLM talks; the observer answers; teach if it did not know.
   const level = `memorized ${teacher.listConversationPairs().length} exchanges`;
   llmCalls += 1;
+  const proposedCues = options.proposedCues;
+  const existingCues = [...teacher.listConversationPairs().map((pair) => pair.cue), ...(proposedCues ?? [])];
   const run = await chaperone.generateConversationPairs({
     count: 1,
-    existingCues: teacher.listConversationPairs().map((pair) => pair.cue),
+    existingCues,
     level,
     signal
   });
+  for (const pair of run.pairs) proposedCues?.add(pair.cue);
   if (run.error !== null && run.error !== 'aborted') {
     events.push({ role: 'system', text: `exchange proposal failed: ${run.error}`, meta: 'error' });
   } else {
